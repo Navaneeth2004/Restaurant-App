@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body, #root { height: 100%; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: #18181b;
+    color: #ffffff;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 99px; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
+  input[type="color"] { -webkit-appearance: none; border: none; padding: 0; cursor: pointer; }
+  input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+  input[type="color"]::-webkit-color-swatch { border: none; border-radius: 6px; }
+}
+
+@layer components {
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm transition-all duration-150 cursor-pointer select-none border border-surface-border bg-surface-raised text-white hover:bg-zinc-600 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100;
+  }
+  .btn-brand  { @apply bg-brand-500 border-brand-600 text-white hover:bg-brand-600 shadow-sm shadow-brand-500/20; }
+  .btn-ghost  { @apply bg-transparent border-transparent hover:bg-surface-raised; }
+  .btn-danger { @apply bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20; }
+  .btn-success{ @apply bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20; }
+  .btn-sm     { @apply px-3 py-1.5 text-xs rounded-lg; }
+  .btn-icon   { @apply p-2 rounded-lg; }
+
+  /* Form */
+  .input {
+    @apply w-full px-3 py-2.5 bg-surface-raised border border-surface-border rounded-xl text-sm text-white placeholder-zinc-500 outline-none transition-all duration-150 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20;
+  }
+  .label {
+    @apply block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5;
+  }
+
+  /* Misc */
+  .gradient-brand { background: linear-gradient(135deg, #f97316, #ea580c); }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
+
+@layer utilities {
+  .bg-brand-500\/8 { background-color: rgb(249 115 22 / 0.08); }
+  .bg-emerald-500\/8 { background-color: rgb(16 185 129 / 0.08); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; } to { opacity: 1; }
+}
+.animate-slide-up { animation: slideUp 0.2s ease-out; }
+.animate-fade-in  { animation: fadeIn 0.15s ease-out; }
+
+@media print {
+  body { background: white !important; color: black !important; }
+  .no-print { display: none !important; }
+}

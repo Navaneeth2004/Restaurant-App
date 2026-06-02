@@ -1,0 +1,51 @@
+{
+  "name": "restaurant-pos-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@types/node": "^16.18.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "axios": "^1.6.8",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "socket.io-client": "^4.7.4",
+    "typescript": "^4.9.5"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.17",
+    "cross-env": "^10.1.0",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1"
+  },
+  "scripts": {
+    "start": "cross-env HOST=0.0.0.0 DANGEROUSLY_DISABLE_HOST_CHECK=true react-scripts start",
+    "build": "react-scripts build"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app"
+    ],
+    "rules": {
+      "react-hooks/exhaustive-deps": "off",
+      "@typescript-eslint/no-unused-vars": "off",
+      "no-unused-vars": "off"
+    }
+  },
+  "resolutions": {
+    "ajv": "^8.0.0"
+  }
+}
