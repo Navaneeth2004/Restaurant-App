@@ -1,21 +1,30 @@
 const express = require('express');
-const router = express.Router();
-const db = require('../db/database');
+const router  = express.Router();
+const db      = require('../db/database');
+
+// Ensure sort_order column exists (migration)
+try {
+  db.exec('ALTER TABLE tables ADD COLUMN sort_order INTEGER DEFAULT 0');
+  // Initialize sort_order based on id
+  const tables = db.prepare('SELECT id FROM tables').all();
+  const upd = db.prepare('UPDATE tables SET sort_order = ? WHERE id = ?');
+  tables.forEach((t, i) => upd.run(i, t.id));
+} catch(e) { /* column already exists */ }
 
 router.get('/', (req, res) => {
-  const tables = db.prepare('SELECT * FROM tables ORDER BY id').all();
+  const tables = db.prepare('SELECT * FROM tables ORDER BY sort_order ASC, id ASC').all();
   res.json(tables);
 });
 
 router.post('/', (req, res) => {
   const { label, seats } = req.body;
   if (!label) return res.status(400).json({ error: 'Label required' });
-  // Auto-generate ID
   const existing = db.prepare('SELECT id FROM tables').all().map(t => t.id);
   let n = existing.length + 1;
   let newId = `T${n}`;
   while (existing.includes(newId)) { n++; newId = `T${n}`; }
-  db.prepare('INSERT INTO tables (id, label, seats) VALUES (?, ?, ?)').run(newId, label.trim(), parseInt(seats) || 4);
+  const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM tables').get().m ?? 0;
+  db.prepare('INSERT INTO tables (id, label, seats, sort_order) VALUES (?, ?, ?, ?)').run(newId, label.trim(), parseInt(seats) || 4, maxOrder + 1);
   const table = db.prepare('SELECT * FROM tables WHERE id = ?').get(newId);
   req.io.emit('tables_updated');
   res.status(201).json(table);
@@ -28,6 +37,17 @@ router.put('/:id', (req, res) => {
   const table = db.prepare('SELECT * FROM tables WHERE id = ?').get(req.params.id);
   req.io.emit('tables_updated', { table });
   res.json(table);
+});
+
+// PATCH reorder tables
+router.patch('/reorder', (req, res) => {
+  const { order } = req.body; // array of { id, sort_order }
+  if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
+  const upd = db.prepare('UPDATE tables SET sort_order = ? WHERE id = ?');
+  const reorder = db.transaction(() => { order.forEach(({ id, sort_order }) => upd.run(sort_order, id)); });
+  reorder();
+  req.io.emit('tables_updated');
+  res.json({ success: true });
 });
 
 router.delete('/:id', (req, res) => {

@@ -10,90 +10,81 @@ const API = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 interface ModalProps { item?: MenuItem; categories: Category[]; onSave: (fd: FormData) => void; onClose: () => void; }
 
 function MenuItemModal({ item, categories, onSave, onClose }: ModalProps) {
-  const [name,       setName]       = useState(item?.name || '');
-  const [desc,       setDesc]       = useState(item?.description || '');
-  const [price,      setPrice]      = useState(String(item?.price || ''));
-  const [catId,      setCatId]      = useState(String(item?.category_id || categories[0]?.id || ''));
-  const [available,  setAvailable]  = useState(item ? Boolean(item.available) : true);
-  const [imageFile,  setImageFile]  = useState<File | null>(null);
-  const [preview,    setPreview]    = useState<string | null>(item?.image_path ? `${API}${item.image_path}` : null);
+  const [name,      setName]      = useState(item?.name || '');
+  const [desc,      setDesc]      = useState(item?.description || '');
+  const [price,     setPrice]     = useState(String(item?.price || ''));
+  const [catId,     setCatId]     = useState(String(item?.category_id || categories[0]?.id || ''));
+  const [available, setAvailable] = useState(item ? Boolean(item.available) : true);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [preview,   setPreview]   = useState<string | null>(item?.image_path ? `${API}${item.image_path}` : null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleImage = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setImageFile(f);
-    setPreview(URL.createObjectURL(f));
+    const f = e.target.files?.[0]; if (!f) return;
+    setImageFile(f); setPreview(URL.createObjectURL(f));
   };
-
-  const handleSubmit = () => {
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0]; if (!f || !f.type.startsWith('image/')) return;
+    setImageFile(f); setPreview(URL.createObjectURL(f));
+  };
+  const submit = () => {
     if (!name || !price) return;
     const fd = new FormData();
-    fd.append('name',        name);
-    fd.append('description', desc);
-    fd.append('price',       price);
-    fd.append('category_id', catId);
-    fd.append('available',   String(available));
+    fd.append('name', name); fd.append('description', desc); fd.append('price', price);
+    fd.append('category_id', catId); fd.append('available', String(available));
     if (imageFile) fd.append('image', imageFile);
     onSave(fd);
   };
 
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="card p-5 w-full max-w-lg animate-slide-up" onClick={e => e.stopPropagation()}>
-        <h3 className="font-display font-700 text-white text-base mb-4">{item ? 'Edit Item' : 'Add Menu Item'}</h3>
-
+      <div className="rounded-xl border border-surface-border bg-surface-card p-5 w-full max-w-lg animate-slide-up" onClick={e => e.stopPropagation()}>
+        <h3 className="font-bold text-white text-base mb-4">{item ? 'Edit Item' : 'Add Menu Item'}</h3>
         <div className="grid grid-cols-2 gap-4">
-          {/* Left */}
           <div className="space-y-3">
             <div><label className="label">Name</label><input className="input" placeholder="Crispy Wings" value={name} onChange={e => setName(e.target.value)} autoFocus /></div>
             <div><label className="label">Description</label><textarea className="input resize-none" rows={2} placeholder="Short description…" value={desc} onChange={e => setDesc(e.target.value)} /></div>
             <div className="grid grid-cols-2 gap-2">
               <div><label className="label">Price</label><input className="input" type="number" step="0.01" min="0" placeholder="0.00" value={price} onChange={e => setPrice(e.target.value)} /></div>
-              <div>
-                <label className="label">Category</label>
+              <div><label className="label">Category</label>
                 <select className="input" value={catId} onChange={e => setCatId(e.target.value)}>
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
             </div>
-            <label className="flex items-center gap-2.5 cursor-pointer select-none group">
-              <div className={`toggle-track ${available ? 'on' : ''}`} onClick={() => setAvailable(v => !v)}>
-                <div className="toggle-thumb" />
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <div className={`relative w-9 h-5 rounded-full border transition-colors ${available ? 'bg-brand-500 border-brand-600' : 'bg-zinc-700 border-zinc-600'}`}
+                onClick={() => setAvailable(v => !v)}>
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${available ? 'translate-x-4' : 'translate-x-0.5'}`} />
               </div>
-              <span className="text-sm text-zinc-300 group-hover:text-white transition-colors">Available to order</span>
+              <span className="text-sm text-zinc-300">Available to order</span>
             </label>
           </div>
-
-          {/* Right — image */}
           <div>
-            <label className="label">Item Photo</label>
+            <label className="label">Photo</label>
             <div
-              className={`relative border-2 border-dashed rounded-xl overflow-hidden cursor-pointer transition-colors hover:border-brand-500/60 ${preview ? 'border-surface-border' : 'border-surface-border h-44 flex flex-col items-center justify-center'}`}
+              className={`relative border-2 border-dashed rounded-xl overflow-hidden cursor-pointer transition-colors hover:border-brand-500/60 ${preview ? 'border-surface-border' : 'border-surface-border bg-surface-raised flex flex-col items-center justify-center gap-2 py-8'}`}
               onClick={() => fileRef.current?.click()}
+              onDrop={handleDrop}
+              onDragOver={e => e.preventDefault()}
             >
-              {preview ? (
-                <img src={preview} alt="preview" className="w-full h-44 object-cover" />
-              ) : (
-                <>
-                  <svg className="w-8 h-8 text-zinc-600 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
-                  <p className="text-zinc-500 text-xs">Click to upload</p>
-                  <p className="text-zinc-700 text-[10px] mt-1">JPG, PNG up to 5MB</p>
-                </>
-              )}
+              {preview
+                ? <img src={preview} alt="preview" className="w-full h-48 object-cover" />
+                : <>
+                    <svg className="w-8 h-8 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                    <p className="text-zinc-500 text-xs">Click or drag to upload</p>
+                    <p className="text-zinc-700 text-[10px]">JPG, PNG up to 5MB</p>
+                  </>
+              }
             </div>
-            {preview && (
-              <button className="btn btn-danger btn-sm mt-2 w-full text-xs" onClick={e => { e.stopPropagation(); setPreview(null); setImageFile(null); }}>
-                Remove image
-              </button>
-            )}
+            {preview && <button className="btn btn-danger btn-sm mt-2 w-full text-xs" onClick={e => { e.stopPropagation(); setPreview(null); setImageFile(null); }}>Remove</button>}
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImage} />
           </div>
         </div>
-
         <div className="flex gap-2 mt-5">
           <button className="btn flex-1" onClick={onClose}>Cancel</button>
-          <button className="btn btn-brand flex-1" onClick={handleSubmit} disabled={!name || !price}>{item ? 'Save Changes' : 'Add Item'}</button>
+          <button className="btn btn-brand flex-1" onClick={submit} disabled={!name || !price}>{item ? 'Save Changes' : 'Add Item'}</button>
         </div>
       </div>
     </div>
@@ -103,91 +94,107 @@ function MenuItemModal({ item, categories, onSave, onClose }: ModalProps) {
 export default function AdminMenu() {
   const [items,      setItems]      = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [filterCat,  setFilterCat]  = useState<'all' | number>('all');
-  const [modal,      setModal]      = useState<{ item?: MenuItem } | null>(null);
+  const [filterCat,  setFilterCat]  = useState<'all'|number>('all');
+  const [modal,      setModal]      = useState<{item?: MenuItem}|null>(null);
   const toast    = useToast();
   const settings = useSettings();
   const sym      = settings.currency_symbol || '₹';
 
   const load = useCallback(async () => {
-    try {
-      const [m, c] = await Promise.all([getMenuItems(), getCategories()]);
-      setItems(m);
-      setCategories(c);
-    } catch { }
+    try { const [m,c] = await Promise.all([getMenuItems(), getCategories()]); setItems(m); setCategories(c); } catch {}
   }, []);
-
   useEffect(() => { load(); }, []);
-  useSocket('menu_updated',       load);
-  useSocket('categories_updated', load);
+  useSocket('menu_updated', load); useSocket('categories_updated', load);
 
   const toggleAvail = async (item: MenuItem) => {
-    const fd = new FormData();
-    fd.append('available', String(!item.available));
-    try { await updateMenuItem(item.id, fd); load(); }
-    catch { toast('Failed to update', 'error'); }
+    const fd = new FormData(); fd.append('available', String(!item.available));
+    try { await updateMenuItem(item.id, fd); load(); } catch { toast('Failed','error'); }
   };
-
   const handleSave = async (fd: FormData) => {
     try {
-      if (modal?.item) { await updateMenuItem(modal.item.id, fd); toast('Item updated', 'success'); }
-      else             { await createMenuItem(fd);               toast('Item added',   'success'); }
+      if (modal?.item) { await updateMenuItem(modal.item.id, fd); toast('Updated','success'); }
+      else             { await createMenuItem(fd);               toast('Added','success'); }
       setModal(null); load();
-    } catch (e: any) { toast(e.response?.data?.error || 'Failed', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.error||'Failed','error'); }
   };
-
   const handleDelete = async (id: number) => {
     if (!window.confirm('Delete this item?')) return;
-    try { await deleteMenuItem(id); toast('Deleted', 'success'); load(); }
-    catch { toast('Failed to delete', 'error'); }
+    try { await deleteMenuItem(id); toast('Deleted','success'); load(); } catch { toast('Failed','error'); }
   };
 
   const filtered = filterCat === 'all' ? items : items.filter(i => i.category_id === filterCat);
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <h3 className="font-display font-700 text-white text-base">Menu Items</h3>
-        <span className="badge badge-gray">{items.length}</span>
-        <div className="flex gap-1.5 flex-wrap">
-          <button className={`pill-tab text-xs ${filterCat==='all'?'pill-tab-active':''}`} onClick={() => setFilterCat('all')}>All</button>
-          {categories.map(c => (
-            <button key={c.id} className={`pill-tab text-xs ${filterCat===c.id?'pill-tab-active':''}`} onClick={() => setFilterCat(c.id)}>{c.name}</button>
-          ))}
+      {/* Header — FIX #7: category filter in a proper pill bar, not inline with title */}
+      <div className="mb-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-white text-base">Menu Items</h3>
+            <span className="text-xs font-semibold text-zinc-500 bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded-full">{items.length}</span>
+          </div>
+          <button className="btn btn-brand btn-sm" onClick={() => setModal({})}>+ Add Item</button>
         </div>
-        <button className="btn btn-brand btn-sm ml-auto" onClick={() => setModal({})}>+ Add Item</button>
+        {/* Category filter bar - scrollable */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+          <button onClick={() => setFilterCat('all')}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${filterCat==='all' ? 'bg-brand-500 text-white border-brand-600' : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'}`}>
+            All ({items.length})
+          </button>
+          {categories.map(c => {
+            const count = items.filter(i => i.category_id === c.id).length;
+            return (
+              <button key={c.id} onClick={() => setFilterCat(c.id)}
+                className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${filterCat===c.id ? 'bg-brand-500 text-white border-brand-600' : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'}`}>
+                {c.name} ({count})
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {filtered.map(item => (
-          <div key={item.id} className={`card-sm overflow-hidden ${!item.available ? 'opacity-60' : ''}`}>
-            <div className="relative h-28 bg-surface-raised">
+          <div key={item.id} className={`rounded-xl border bg-surface-card overflow-hidden transition-colors hover:border-zinc-600 ${item.available ? 'border-surface-border' : 'border-surface-border opacity-60'}`}>
+            <div className="relative h-36 bg-surface-raised">
               {item.image_path
                 ? <img src={`${API}${item.image_path}`} alt={item.name} className="w-full h-full object-cover" />
-                : <div className="w-full h-full flex items-center justify-center text-zinc-700 text-xs">No image</div>
+                : <div className="w-full h-full flex flex-col items-center justify-center gap-1 text-zinc-700">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5z" /></svg>
+                    <span className="text-xs">No image</span>
+                  </div>
               }
               {!item.available && (
                 <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
                   <span className="text-[10px] font-bold text-white uppercase tracking-widest bg-red-500/80 px-2 py-0.5 rounded-full">Sold Out</span>
                 </div>
               )}
+              {/* Toggle overlay */}
+              <div className="absolute top-2 right-2">
+                <div className={`relative w-9 h-5 rounded-full border cursor-pointer transition-colors shadow-md ${item.available ? 'bg-brand-500 border-brand-600' : 'bg-zinc-700 border-zinc-600'}`}
+                  onClick={() => toggleAvail(item)}>
+                  <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${item.available ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </div>
+              </div>
             </div>
             <div className="p-3">
               <div className="flex items-start gap-2">
                 <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm font-medium truncate">{item.name}</p>
-                  {item.description && <p className="text-zinc-500 text-[10px] mt-0.5 truncate">{item.description}</p>}
-                  <p className="font-mono text-brand-400 text-sm font-medium mt-1">{sym}{parseFloat(String(item.price)).toFixed(2)}</p>
-                  <p className="text-zinc-600 text-[10px] mt-0.5">{item.category_name}</p>
+                  <p className="text-white text-sm font-semibold truncate">{item.name}</p>
+                  {item.description && <p className="text-zinc-500 text-xs mt-0.5 truncate">{item.description}</p>}
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <span className="font-mono text-brand-400 text-sm font-semibold">{sym}{parseFloat(String(item.price)).toFixed(2)}</span>
+                    <span className="text-zinc-600 text-[10px]">·</span>
+                    <span className="text-zinc-600 text-[10px]">{item.category_name}</span>
+                  </div>
                 </div>
-                <div className="flex flex-col items-end gap-2">
-                  <label className={`toggle-track cursor-pointer ${item.available ? 'on' : ''}`} onClick={() => toggleAvail(item)}>
-                    <div className="toggle-thumb" />
-                  </label>
-                  <button className="btn btn-icon btn-sm btn-ghost" onClick={() => setModal({ item })}>
-                    <svg className="w-3.5 h-3.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+                <div className="flex flex-col gap-1.5 flex-shrink-0">
+                  <button className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-raised transition-colors"
+                    onClick={() => setModal({item})}>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
                   </button>
-                  <button className="btn btn-icon btn-sm btn-danger" onClick={() => handleDelete(item.id)}>
+                  <button className="w-7 h-7 rounded-lg flex items-center justify-center text-red-500/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    onClick={() => handleDelete(item.id)}>
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                   </button>
                 </div>

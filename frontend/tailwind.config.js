@@ -6,7 +6,7 @@ module.exports = {
       fontFamily: {
         display: ["'Syne'", "system-ui", "sans-serif"],
         body:    ["'Inter'", "system-ui", "sans-serif"],
-        mono:    ["'DM Mono'", "'Courier New'", "monospace"],
+        mono:    ["'DM Mono'", "monospace"],
       },
       colors: {
         brand: {
@@ -29,26 +29,23 @@ module.exports = {
           muted:   "#52525b",
         },
       },
-      animation: {
-        "slide-up":  "slideUp 0.2s ease-out",
-        "fade-in":   "fadeIn 0.15s ease-out",
-      },
-      keyframes: {
-        slideUp: { from: { opacity: "0", transform: "translateY(8px)" }, to: { opacity: "1", transform: "translateY(0)" } },
-        fadeIn:  { from: { opacity: "0" }, to: { opacity: "1" } },
-      },
-      backgroundOpacity: { 8: "0.08" },
-      opacity: { 8: "0.08" },
     },
   },
   plugins: [],
+  // Safelist ensures these dynamic classes are always generated
   safelist: [
-    // Ensure these dynamic classes are always included
-    "bg-brand-500/8",
-    "bg-emerald-500/8",
-    "shadow-brand-500/10",
-    "shadow-brand-500/20",
-    "shadow-brand-500/30",
-    "ring-offset-surface-card",
+    { pattern: /bg-brand-\d+\/(8|10|15|20|25|30)/ },
+    { pattern: /bg-emerald-\d+\/(8|10|15|20)/ },
+    { pattern: /bg-red-\d+\/(8|10|15|20)/ },
+    { pattern: /border-brand-\d+\/(25|30|60)/ },
+    { pattern: /border-emerald-\d+\/(25|30|60)/ },
+    { pattern: /text-brand-\d+/ },
+    { pattern: /ring-brand-\d+/ },
+    { pattern: /shadow-brand-\d+\/(10|20|30)/ },
+    'ring-offset-surface-card',
+    'animate-slide-up',
+    'animate-fade-in',
+    'gradient-brand',
+    'no-scrollbar',
   ],
 };

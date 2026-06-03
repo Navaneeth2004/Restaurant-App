@@ -5,10 +5,11 @@ const db      = require('../db/database');
 router.get('/today', (req, res) => {
   const today = new Date().toISOString().split('T')[0];
 
+  // FIX #6: include BOTH delivered and closed orders in revenue
   const revenue = db.prepare(`
     SELECT COALESCE(SUM(total),0) as total, COUNT(*) as count
     FROM orders
-    WHERE status != 'active' AND substr(created_at,1,10) = ?
+    WHERE status IN ('delivered','closed') AND substr(created_at,1,10) = ?
   `).get(today);
 
   const activeOrders   = db.prepare("SELECT COUNT(*) as count FROM orders WHERE status='active'").get();
@@ -18,7 +19,7 @@ router.get('/today', (req, res) => {
     SELECT oi.name, SUM(oi.quantity) as total_qty, SUM(oi.price*oi.quantity) as total_rev
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
-    WHERE o.status != 'active' AND substr(o.created_at,1,10) = ?
+    WHERE o.status IN ('delivered','closed') AND substr(o.created_at,1,10) = ?
     GROUP BY oi.name
     ORDER BY total_qty DESC
     LIMIT 5
@@ -29,7 +30,7 @@ router.get('/today', (req, res) => {
 
 router.get('/history', (req, res) => {
   const { from, to, limit = 200 } = req.query;
-  let q = "SELECT * FROM orders WHERE status != 'active'";
+  let q = "SELECT * FROM orders WHERE status IN ('delivered','closed')";
   const p = [];
   if (from) { q += " AND substr(created_at,1,10) >= ?"; p.push(from); }
   if (to)   { q += " AND substr(created_at,1,10) <= ?"; p.push(to); }
@@ -44,7 +45,7 @@ router.get('/revenue', (req, res) => {
   const rows = db.prepare(`
     SELECT substr(created_at,1,10) as day, SUM(total) as revenue, COUNT(*) as orders
     FROM orders
-    WHERE status != 'active'
+    WHERE status IN ('delivered','closed')
       AND created_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 days')
     GROUP BY day
     ORDER BY day ASC

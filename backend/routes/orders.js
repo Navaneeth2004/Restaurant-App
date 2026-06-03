@@ -1,7 +1,7 @@
 const express = require('express');
-const router = express.Router();
+const router  = express.Router();
 const { v4: uuidv4 } = require('uuid');
-const db = require('../db/database');
+const db      = require('../db/database');
 
 function getOrderWithItems(orderId) {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
@@ -17,25 +17,30 @@ function recalcTotal(orderId) {
   return total;
 }
 
-// GET all active orders (for kitchen)
+// GET all active orders (kitchen)
 router.get('/active', (req, res) => {
   const orders = db.prepare("SELECT * FROM orders WHERE status = 'active' ORDER BY created_at ASC").all();
   orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
   res.json(orders);
 });
 
-// GET orders for a specific table
+// GET order for a specific table
 router.get('/table/:tableId', (req, res) => {
-  const order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(req.params.tableId);
+  // First try active order
+  let order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(req.params.tableId);
+  // If no active order, get the most recent delivered order (for waiting_bill tables so bill can be generated)
+  if (!order) {
+    order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY delivered_at DESC LIMIT 1").get(req.params.tableId);
+  }
   if (!order) return res.json(null);
   order.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
   res.json(order);
 });
 
-// GET order history (delivered/closed)
+// GET order history
 router.get('/history', (req, res) => {
   const limit = parseInt(req.query.limit) || 100;
-  const orders = db.prepare("SELECT * FROM orders WHERE status != 'active' ORDER BY created_at DESC LIMIT ?").all(limit);
+  const orders = db.prepare("SELECT * FROM orders WHERE status IN ('delivered','closed') ORDER BY created_at DESC LIMIT ?").all(limit);
   orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
   res.json(orders);
 });
@@ -47,11 +52,12 @@ router.get('/:id', (req, res) => {
   res.json(order);
 });
 
-// POST create or update order for a table
+// POST create or update order
 router.post('/', (req, res) => {
   const { table_id, items } = req.body;
   if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
 
+  // Only merge with ACTIVE orders - never modify delivered orders
   const existing = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
 
   const saveOrder = db.transaction(() => {
@@ -61,15 +67,14 @@ router.post('/', (req, res) => {
       db.prepare('DELETE FROM order_items WHERE order_id = ?').run(orderId);
     } else {
       orderId = uuidv4();
-      db.prepare('INSERT INTO orders (id, table_id, status) VALUES (?, ?, ?)').run(orderId, table_id, 'active');
+      const now = new Date().toISOString();
+      db.prepare('INSERT INTO orders (id, table_id, status, created_at) VALUES (?, ?, ?, ?)').run(orderId, table_id, 'active', now);
       db.prepare("UPDATE tables SET status = 'occupied' WHERE id = ?").run(table_id);
     }
-
     const insertItem = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
     for (const it of items) {
       insertItem.run(orderId, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
     }
-
     recalcTotal(orderId);
     return getOrderWithItems(orderId);
   });
@@ -81,11 +86,13 @@ router.post('/', (req, res) => {
   res.status(isNew ? 201 : 200).json(order);
 });
 
-// PATCH mark delivered
+// PATCH mark delivered — FIX #2: table goes to waiting_bill but waiter can STILL add new orders
 router.patch('/:id/deliver', (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
   if (!order) return res.status(404).json({ error: 'Not found' });
-  db.prepare("UPDATE orders SET status = 'delivered', delivered_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?").run(req.params.id);
+  const now = new Date().toISOString();
+  db.prepare("UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = ?").run(now, req.params.id);
+  // Set table to waiting_bill — but waiter can still create NEW orders on this table
   db.prepare("UPDATE tables SET status = 'waiting_bill' WHERE id = ?").run(order.table_id);
   const updated = getOrderWithItems(req.params.id);
   req.io.emit('order_delivered', { order: updated });
@@ -93,7 +100,7 @@ router.patch('/:id/deliver', (req, res) => {
   res.json(updated);
 });
 
-// PATCH close order (after bill paid)
+// PATCH close order (bill paid) — table goes empty
 router.patch('/:id/close', (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
   if (!order) return res.status(404).json({ error: 'Not found' });
