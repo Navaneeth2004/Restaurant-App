@@ -24,7 +24,16 @@ router.get('/active', (req, res) => {
   res.json(orders);
 });
 
-// GET order for a specific table
+// GET ALL non-closed orders for a table (used for billing across multiple rounds)
+router.get('/table/:tableId/all', (req, res) => {
+  const orders = db.prepare(
+    "SELECT * FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at ASC"
+  ).all(req.params.tableId);
+  orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
+  res.json(orders);
+});
+
+// GET most recent active or delivered order for a specific table
 router.get('/table/:tableId', (req, res) => {
   let order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(req.params.tableId);
   if (!order) {
@@ -55,25 +64,17 @@ router.post('/', (req, res) => {
   const { table_id, items } = req.body;
   if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
 
-  // Only merge with ACTIVE orders — never modify delivered orders
   const existing = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
 
-  // FIX 2: compute which items are truly NEW (added this submission)
-  // The frontend sends the full merged list; we compare against what's already in DB
-  // to find the delta so kitchen only sees additions.
-  let newItems = items; // default: all items are new (new order)
+  let newItems = items;
 
   if (existing) {
     const prevItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(existing.id);
-
-    // Build a map of existing items: "menu_item_id|note" -> quantity
     const prevMap = {};
     for (const pi of prevItems) {
       const key = `${pi.menu_item_id}|${pi.note || ''}`;
       prevMap[key] = (prevMap[key] || 0) + pi.quantity;
     }
-
-    // Find genuinely new/increased items
     newItems = [];
     for (const item of items) {
       const key = `${item.menu_item_id}|${item.note || ''}`;
@@ -108,15 +109,11 @@ router.post('/', (req, res) => {
   const isNew = !existing;
 
   if (isNew) {
-    // Brand new order — kitchen sees full order
     req.io.emit('new_order', { order });
     req.io.emit('order_updated', { order, isNew: true });
   } else {
-    // Update to existing order — emit full order for billing,
-    // but also emit a separate event with ONLY the new additions for kitchen display
     req.io.emit('order_updated', { order, isNew: false });
     if (newItems.length > 0) {
-      // Kitchen gets a separate "order_additions" event with only the delta
       req.io.emit('order_additions', {
         orderId: order.id,
         tableId: order.table_id,
@@ -142,11 +139,12 @@ router.patch('/:id/deliver', (req, res) => {
   res.json(updated);
 });
 
-// PATCH close order (bill paid) — table goes empty
+// PATCH close order (bill paid) — closes ALL non-closed orders for this table
 router.patch('/:id/close', (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
   if (!order) return res.status(404).json({ error: 'Not found' });
-  db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
+  // Close ALL active/delivered orders for this table (multi-round support)
+  db.prepare("UPDATE orders SET status = 'closed' WHERE table_id = ? AND status IN ('active','delivered')").run(order.table_id);
   db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
   req.io.emit('order_closed', { orderId: req.params.id, tableId: order.table_id });
   req.io.emit('tables_updated');

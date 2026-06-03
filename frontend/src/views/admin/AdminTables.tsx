@@ -13,9 +13,9 @@ const STATUS_LABEL: Record<string, string> = {
   occupied: 'Occupied', waiting_bill: 'Bill', empty: 'Empty',
 };
 
-interface ModalProps { table?: Table; onSave: (f:{label:string;seats:number}) => void; onClose: () => void; }
-function TableModal({ table, onSave, onClose }: ModalProps) {
-  const [label, setLabel] = useState(table?.label || '');
+interface ModalProps { table?: Table; defaultLabel?: string; onSave: (f:{label:string;seats:number}) => void; onClose: () => void; }
+function TableModal({ table, defaultLabel, onSave, onClose }: ModalProps) {
+  const [label, setLabel] = useState(table?.label || defaultLabel || '');
   const [seats, setSeats] = useState(String(table?.seats || 4));
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -73,7 +73,19 @@ export default function AdminTables() {
     catch (e: any) { toast(e.response?.data?.error||'Active order — cannot delete','error'); }
   };
 
-  // Drag-to-reorder handlers
+  // Compute what the next table number/label should be
+  // Extract numeric suffixes from existing labels like "Table 1", "Table 2" etc
+  const getNextDefaultLabel = () => {
+    const nums = tables
+      .map(t => {
+        const m = t.label.match(/\d+$/);
+        return m ? parseInt(m[0]) : 0;
+      })
+      .filter(n => n > 0);
+    const nextNum = nums.length > 0 ? Math.max(...nums) + 1 : tables.length + 1;
+    return `Table ${nextNum}`;
+  };
+
   const handleDragStart = (id: string) => setDragging(id);
   const handleDragEnd   = async () => {
     if (!dragging || !dragOver || dragging === dragOver) { setDragging(null); setDragOver(null); return; }
@@ -152,7 +164,6 @@ export default function AdminTables() {
             </span>
           </div>
         ))}
-        {/* Add shortcut */}
         <button onClick={() => setModal({type:'add'})}
           className="rounded-xl border-2 border-dashed border-surface-border hover:border-brand-500/40 bg-transparent p-4 flex flex-col items-center justify-center gap-2 text-zinc-600 hover:text-zinc-400 transition-all min-h-[120px]">
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
@@ -160,8 +171,20 @@ export default function AdminTables() {
         </button>
       </div>
 
-      {modal?.type === 'add'  && <TableModal onSave={handleAdd} onClose={() => setModal(null)} />}
-      {modal?.type === 'edit' && <TableModal table={modal.table} onSave={f => handleEdit(modal.table!.id, f)} onClose={() => setModal(null)} />}
+      {modal?.type === 'add'  && (
+        <TableModal
+          defaultLabel={getNextDefaultLabel()}
+          onSave={handleAdd}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.type === 'edit' && (
+        <TableModal
+          table={modal.table}
+          onSave={f => handleEdit(modal.table!.id, f)}
+          onClose={() => setModal(null)}
+        />
+      )}
     </div>
   );
 }

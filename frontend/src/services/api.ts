@@ -1,7 +1,6 @@
 import axios from 'axios';
 import type { Settings, Category, MenuItem, Table, Order, Staff, ReportSummary, RevenueDay, AuthUser } from '../types';
 
-// In production (served from backend), use same origin. In dev, use env var.
 const ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 const BASE = ORIGIN + '/api';
 
@@ -36,6 +35,8 @@ export const deleteTable       = (id: string): Promise<void> => api.delete(`/tab
 
 export const getActiveOrders   = (): Promise<Order[]>     => api.get('/orders/active').then(r => r.data);
 export const getTableOrder     = (tableId: string): Promise<Order | null> => api.get(`/orders/table/${tableId}`).then(r => r.data);
+// Returns ALL non-closed orders for a table — used for billing across multiple rounds
+export const getTableOrders    = (tableId: string): Promise<Order[]> => api.get(`/orders/table/${tableId}/all`).then(r => r.data);
 export const getOrderHistory   = (params?: Record<string, string>): Promise<Order[]> => api.get('/orders/history', { params }).then(r => r.data);
 export const submitOrder       = (data: { table_id: string; items: any[] }): Promise<Order> => api.post('/orders', data).then(r => r.data);
 export const deliverOrder      = (id: string): Promise<Order> => api.patch(`/orders/${id}/deliver`).then(r => r.data);

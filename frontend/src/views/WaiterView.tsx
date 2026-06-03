@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getTables, getMenuItems, getCategories, getTableOrder, submitOrder } from '../services/api';
+import { getTables, getMenuItems, getCategories, getTableOrder, getTableOrders, submitOrder } from '../services/api';
 import { useSocket } from '../hooks/useSocket';
 import { useToast } from '../context/ToastContext';
 import { useSettings } from '../context/SettingsContext';
@@ -17,8 +17,9 @@ export default function WaiterView() {
   const [categories,    setCategories]    = useState<Category[]>([]);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   const [activeOrder,   setActiveOrder]   = useState<Order | null>(null);
-  // FIX: track previously delivered order so we can still show it alongside a new round
-  const [prevDeliveredOrder, setPrevDeliveredOrder] = useState<Order | null>(null);
+  // allOrders holds every non-closed order for the selected table (all rounds)
+  // This is the source of truth for billing — avoids any React state desync
+  const [allOrders,     setAllOrders]     = useState<Order[]>([]);
   const [cart,          setCart]          = useState<CartItem[]>([]);
   const [activeCatId,   setActiveCatId]   = useState<number | null>(null);
   const [billModal,     setBillModal]     = useState(false);
@@ -40,35 +41,58 @@ export default function WaiterView() {
     } catch {}
   }, []);
 
+  // Load all orders for the currently selected table (all rounds from DB)
+  const loadTableOrders = useCallback(async (tableId: string) => {
+    try {
+      const orders = await getTableOrders(tableId);
+      setAllOrders(orders);
+      // activeOrder = the one active order (if any), else most recent delivered
+      const active = orders.find(o => o.status === 'active') || null;
+      const delivered = orders.filter(o => o.status === 'delivered');
+      setActiveOrder(active ?? (delivered.length > 0 ? delivered[delivered.length - 1] : null));
+    } catch {
+      setAllOrders([]);
+      setActiveOrder(null);
+    }
+  }, []);
+
   useEffect(() => { loadTables(); loadMenu(); }, []);
-  useSocket('tables_updated',     loadTables);
-  useSocket('menu_updated',       loadMenu);
+
+  useSocket('tables_updated', loadTables);
+  useSocket('menu_updated', loadMenu);
   useSocket('categories_updated', loadMenu);
+
   useSocket('order_updated', ({ order }: { order: Order }) => {
-    if (selectedTable && order.table_id === selectedTable.id) setActiveOrder(order);
+    if (selectedTable && order.table_id === selectedTable.id) {
+      loadTableOrders(selectedTable.id);
+    }
     loadTables();
   });
-  // FIX 1: When order is closed (bill paid), clear everything including selectedTable
-  useSocket('order_closed', () => {
+
+  useSocket('order_closed', ({ tableId }: { tableId: string }) => {
     loadTables();
-    setActiveOrder(null);
-    setPrevDeliveredOrder(null);
-    setCart([]);
-    setSelectedTable(null);
+    if (selectedTable && tableId === selectedTable.id) {
+      setActiveOrder(null);
+      setAllOrders([]);
+      setCart([]);
+      setSelectedTable(null);
+    }
   });
-  useSocket('order_delivered', loadTables);
+
+  useSocket('order_delivered', ({ order }: { order: Order }) => {
+    loadTables();
+    if (selectedTable && order.table_id === selectedTable.id) {
+      loadTableOrders(selectedTable.id);
+    }
+  });
 
   const selectTable = async (table: Table) => {
     setSelectedTable(table);
     setCart([]);
     setActiveOrder(null);
-    setPrevDeliveredOrder(null);
+    setAllOrders([]);
     setMobileTab('menu');
-    try {
-      const ord = await getTableOrder(table.id);
-      setActiveOrder(ord);
-      setCart([]);
-    } catch { setActiveOrder(null); setCart([]); }
+    await loadTableOrders(table.id);
   };
 
   const addToCart = (item: MenuItem) => {
@@ -89,38 +113,39 @@ export default function WaiterView() {
     if (!selectedTable || !cart.length) { toast('Add items first', 'error'); return; }
     setLoading(true);
     try {
-      // FIX 3: Only merge with ACTIVE orders, never with delivered ones.
-      // If the previous order was delivered, we start a fresh new order (just cart items).
-      // The backend will also create a new order since there's no active order for this table.
+      // Only merge with ACTIVE orders. If none active, start fresh (backend creates new order).
       const activeItems = activeOrder?.status === 'active'
         ? activeOrder.items.map(i => ({ menu_item_id: i.menu_item_id, name: i.name, price: i.price, quantity: i.quantity, note: i.note }))
         : [];
 
-      // If previous order was delivered, save it so we can still display it
-      if (activeOrder?.status === 'delivered') {
-        setPrevDeliveredOrder(activeOrder);
-      }
-
       const order = await submitOrder({ table_id: selectedTable.id, items: [...activeItems, ...cart] });
-      setActiveOrder(order);
       setCart([]);
       toast(`Order sent for ${selectedTable.label}`, 'success');
       setMobileTab('order');
+      // Reload all orders from DB — single source of truth
+      await loadTableOrders(selectedTable.id);
     } catch (e: any) { toast(e.response?.data?.error||'Failed','error'); }
     finally { setLoading(false); }
   };
 
-  const cartTotal  = cart.reduce((s,i)=>s+i.price*i.quantity,0);
-  const prevTotal  = (activeOrder?.status === 'active' ? activeOrder.items.reduce((s,i)=>s+i.price*i.quantity,0) : 0);
-  // For billing, sum the active order + any previous delivered order that's now a separate round
-  const activeOrderTotal = activeOrder ? activeOrder.items.reduce((s,i)=>s+i.price*i.quantity,0) : 0;
-  const prevDeliveredTotal = prevDeliveredOrder ? prevDeliveredOrder.items.reduce((s,i)=>s+i.price*i.quantity,0) : 0;
-  const grandTotal = activeOrderTotal + prevDeliveredTotal + cartTotal;
+  // Derive totals from all DB orders + cart
+  // allOrders = every non-closed order for this table
+  const allOrdersTotal = allOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0);
+  const cartTotal      = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+  const grandTotal     = allOrdersTotal + cartTotal;
+
+  // For billing, use allOrders from DB (includes all rounds)
+  const hasBillableOrder = allOrders.length > 0;
+  // The "primary" order id for the close endpoint — use the most recent one
+  const billOrderId = allOrders.length > 0 ? allOrders[allOrders.length - 1].id : null;
+
   const filtered   = menuItems.filter(m => m.category_id === activeCatId);
   const isDelivered = activeOrder?.status === 'delivered';
 
-  // The order to use for billing: prefer active, fall back to delivered
-  const billOrder = activeOrder;
+  // Rounds for display in the order sidebar
+  // Split allOrders into "past rounds" (all but the active one) and "current"
+  const pastRounds  = allOrders.filter(o => o.status === 'delivered');
+  const activeRound = allOrders.find(o => o.status === 'active') || null;
 
   // Shared menu grid
   const MenuGrid = ({ cols = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5' }: { cols?: string }) => (
@@ -166,7 +191,6 @@ export default function WaiterView() {
     </div>
   );
 
-  // Shared category tabs
   const CatTabs = () => (
     <div className="flex items-center gap-1.5 overflow-x-auto pb-2" style={{ scrollbarWidth:'none', WebkitOverflowScrolling:'touch' }}
       onWheel={e => { e.currentTarget.scrollLeft += e.deltaY; }}>
@@ -180,17 +204,16 @@ export default function WaiterView() {
     </div>
   );
 
-  // Shared order content
   const OrderContent = () => (
     <>
-      {/* FIX 3: Show previously delivered order (round 1) when a new round is active */}
-      {prevDeliveredOrder && prevDeliveredOrder.items.length > 0 && (
-        <div className="px-3 pt-3 pb-1">
+      {/* Past delivered rounds — fetched from DB, always accurate */}
+      {pastRounds.map((round, roundIdx) => (
+        <div key={round.id} className="px-3 pt-3 pb-1">
           <p className="text-[9px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5 text-zinc-600">
             <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
-            Round 1 — Delivered
+            Round {roundIdx + 1} — Delivered
           </p>
-          {prevDeliveredOrder.items.map((item,i) => (
+          {round.items.map((item, i) => (
             <div key={i} className="flex items-center justify-between py-1.5 opacity-50">
               <div className="flex-1 min-w-0">
                 <span className="text-zinc-500 text-xs">{item.name}</span>
@@ -204,19 +227,16 @@ export default function WaiterView() {
           ))}
           <div className="border-t border-surface-border mt-2 mb-0" />
         </div>
-      )}
+      ))}
 
-      {/* Active or delivered order items */}
-      {activeOrder && activeOrder.items.length > 0 && (
+      {/* Active round (in kitchen) */}
+      {activeRound && activeRound.items.length > 0 && (
         <div className="px-3 pt-3 pb-1">
-          <p className={`text-[9px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5 ${isDelivered ? 'text-emerald-600' : 'text-zinc-600'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${isDelivered ? 'bg-emerald-500' : 'bg-brand-500'}`} />
-            {prevDeliveredOrder
-              ? isDelivered ? 'Round 2 — Delivered' : 'Round 2 — In Kitchen'
-              : isDelivered ? 'Delivered — Generate Bill or Add More' : 'Active Order'
-            }
+          <p className="text-[9px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5 text-zinc-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-brand-500" />
+            {pastRounds.length > 0 ? `Round ${pastRounds.length + 1} — In Kitchen` : 'Active Order'}
           </p>
-          {activeOrder.items.map((item,i) => (
+          {activeRound.items.map((item, i) => (
             <div key={i} className="flex items-center justify-between py-1.5 opacity-60">
               <div className="flex-1 min-w-0">
                 <span className="text-zinc-400 text-xs">{item.name}</span>
@@ -232,20 +252,31 @@ export default function WaiterView() {
         </div>
       )}
 
+      {/* Delivered but no active — all delivered */}
+      {!activeRound && pastRounds.length > 0 && cart.length === 0 && (
+        <div className="px-3 pt-2 pb-1">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-600 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            All delivered — tap items to add more or generate bill
+          </p>
+        </div>
+      )}
+
+      {/* Cart (new items being added) */}
       {cart.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-8 px-4 text-zinc-600">
           <div className="w-10 h-10 rounded-xl border border-surface-border flex items-center justify-center mb-2">
             <svg className="w-5 h-5 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-1.684 2.032-3.501 2.032-5.25a6 6 0 00-6-6 6 6 0 00-6 6c0 1.749.911 3.566 2.032 5.25z" /></svg>
           </div>
           <p className="text-xs text-center">
-            {!selectedTable ? 'Select a table to start' : isDelivered ? 'Tap items to add another round' : activeOrder ? 'Tap items to add more' : 'Tap menu items to add'}
+            {!selectedTable ? 'Select a table to start' : allOrders.length > 0 ? 'Tap items to add another round' : 'Tap menu items to add'}
           </p>
         </div>
       ) : (
         <div className="divide-y divide-surface-border">
           {cart.length > 0 && (
             <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 px-3 pt-2.5 pb-1">
-              {activeOrder ? (prevDeliveredOrder ? 'Round 3 — New Items' : 'New Items') : 'Order'}
+              {allOrders.length > 0 ? `Round ${pastRounds.length + (activeRound ? 1 : 0) + 1} — New Items` : 'Order'}
             </p>
           )}
           {cart.map((item, idx) => (
@@ -270,15 +301,15 @@ export default function WaiterView() {
     </>
   );
 
-  // Shared action buttons
   const ActionButtons = () => (
     <div className="p-3 flex flex-col gap-2 border-t border-surface-border flex-shrink-0">
       <button onClick={sendToKitchen} disabled={loading || !cart.length || !selectedTable}
         className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 border bg-brand-500 hover:bg-brand-600 text-white border-brand-600 disabled:opacity-35 disabled:cursor-not-allowed disabled:bg-surface-raised disabled:border-surface-border disabled:text-zinc-600">
-        {loading ? 'Sending…' : activeOrder && !isDelivered ? 'Add to Order' : 'Send to Kitchen'}
+        {loading ? 'Sending…' : activeRound ? 'Add to Order' : 'Send to Kitchen'}
       </button>
-      <button onClick={() => { if (!billOrder) { toast('No order for this table','error'); return; } setBillModal(true); }}
-        disabled={!billOrder}
+      <button
+        onClick={() => { if (!hasBillableOrder) { toast('No order for this table','error'); return; } setBillModal(true); }}
+        disabled={!hasBillableOrder}
         className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 border bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border-emerald-500/30 disabled:opacity-30 disabled:cursor-not-allowed disabled:bg-surface-raised disabled:border-surface-border disabled:text-zinc-600">
         Generate Bill
       </button>
@@ -290,24 +321,21 @@ export default function WaiterView() {
     </div>
   );
 
-  // Totals bar — shows all rounds + cart
   const TotalsBar = () => {
-    const hasContent = cart.length > 0 || (activeOrder && activeOrder.items.length > 0) || (prevDeliveredOrder && prevDeliveredOrder.items.length > 0);
+    const hasContent = cart.length > 0 || allOrders.length > 0;
     if (!hasContent) return null;
     return (
       <div className="border-t border-surface-border px-3 py-2 space-y-1 flex-shrink-0">
-        {prevDeliveredOrder && prevDeliveredOrder.items.length > 0 && (
-          <div className="flex justify-between text-xs text-zinc-600">
-            <span>Round 1</span>
-            <span className="font-mono">{sym}{prevDeliveredTotal.toFixed(2)}</span>
-          </div>
-        )}
-        {activeOrder && activeOrder.items.length > 0 && (
-          <div className="flex justify-between text-xs text-zinc-600">
-            <span>{prevDeliveredOrder ? 'Round 2' : isDelivered ? 'Delivered' : 'Previous'}</span>
-            <span className="font-mono">{sym}{activeOrderTotal.toFixed(2)}</span>
-          </div>
-        )}
+        {/* Show each round subtotal */}
+        {allOrders.map((o, i) => {
+          const roundTotal = o.items.reduce((s, it) => s + it.price * it.quantity, 0);
+          return (
+            <div key={o.id} className="flex justify-between text-xs text-zinc-600">
+              <span>{allOrders.length > 1 ? `Round ${i + 1}` : o.status === 'delivered' ? 'Delivered' : 'Previous'}</span>
+              <span className="font-mono">{sym}{roundTotal.toFixed(2)}</span>
+            </div>
+          );
+        })}
         {cart.length > 0 && (
           <div className="flex justify-between text-xs text-zinc-400">
             <span>New items</span>
@@ -375,7 +403,6 @@ export default function WaiterView() {
         {/* Order panel */}
         <aside className="w-64 xl:w-72 flex-shrink-0 border-l border-surface-border bg-surface-card flex flex-col">
           <div className="px-4 py-3 border-b border-surface-border flex items-center justify-between flex-shrink-0">
-            {/* FIX 1: Only show table name when a table IS selected */}
             <p className="font-semibold text-sm text-white">
               {selectedTable ? `Order — ${selectedTable.label}` : 'Order'}
             </p>
@@ -385,7 +412,6 @@ export default function WaiterView() {
               </span>
             )}
           </div>
-          {/* FIX 1: Show empty state when no table selected instead of stale order */}
           {!selectedTable ? (
             <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 px-4">
               <div className="w-10 h-10 rounded-xl border border-surface-border flex items-center justify-center mb-2">
@@ -405,7 +431,6 @@ export default function WaiterView() {
 
       {/* ── MOBILE LAYOUT ── */}
       <div className="flex md:hidden flex-col h-full w-full overflow-hidden">
-        {/* Mobile tab bar */}
         <div className="flex-shrink-0 flex border-b border-surface-border bg-surface-card">
           {([
             { key: 'tables', label: 'Tables' },
@@ -422,7 +447,6 @@ export default function WaiterView() {
           ))}
         </div>
 
-        {/* Tables tab */}
         {mobileTab === 'tables' && (
           <div className="flex-1 overflow-y-auto p-3">
             <p className="text-zinc-500 text-xs mb-3 text-center">Tap a table to select it, then go to Menu</p>
@@ -451,7 +475,6 @@ export default function WaiterView() {
           </div>
         )}
 
-        {/* Menu tab */}
         {mobileTab === 'menu' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-shrink-0 px-3 pt-2.5 border-b border-surface-border bg-surface-card/50">
@@ -471,7 +494,6 @@ export default function WaiterView() {
           </div>
         )}
 
-        {/* Order tab */}
         {mobileTab === 'order' && (
           <div className="flex-1 flex flex-col overflow-hidden bg-surface-card">
             <div className="px-4 py-2.5 border-b border-surface-border flex items-center justify-between flex-shrink-0">
@@ -497,16 +519,21 @@ export default function WaiterView() {
         )}
       </div>
 
-      {billModal && billOrder && selectedTable && (
-        <BillModal order={billOrder} table={selectedTable} onClose={() => setBillModal(false)}
+      {billModal && hasBillableOrder && billOrderId && selectedTable && (
+        <BillModal
+          orders={allOrders}
+          orderId={billOrderId}
+          table={selectedTable}
+          onClose={() => setBillModal(false)}
           onClosed={() => {
             setBillModal(false);
             setSelectedTable(null);
             setCart([]);
             setActiveOrder(null);
-            setPrevDeliveredOrder(null);
+            setAllOrders([]);
             loadTables();
-          }} />
+          }}
+        />
       )}
     </div>
   );

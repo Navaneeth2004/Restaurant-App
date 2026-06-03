@@ -5,24 +5,42 @@ import { useToast } from '../context/ToastContext';
 import type { Order, Table } from '../types';
 
 interface Props {
-  order: Order;
+  orders: Order[];      // ALL rounds for this table
+  orderId: string;      // ID to close (backend closes all for the table)
   table: Table | null;
   onClose: () => void;
   onClosed: () => void;
 }
 
-export default function BillModal({ order, table, onClose, onClosed }: Props) {
+export default function BillModal({ orders, orderId, table, onClose, onClosed }: Props) {
   const settings = useSettings();
   const toast    = useToast();
   const sym      = settings.currency_symbol || '₹';
   const taxPct   = parseFloat(settings.tax_percent || '5') / 100;
-  const subtotal = order.items.reduce((s, i) => s + i.price * i.quantity, 0);
+
+  // Flatten all items from all rounds for display
+  // Group by item name+note+price to merge duplicates across rounds
+  const itemMap = new Map<string, { name: string; price: number; quantity: number; note: string }>();
+  for (const order of orders) {
+    for (const item of order.items) {
+      const key = `${item.name}||${item.note || ''}||${item.price}`;
+      const existing = itemMap.get(key);
+      if (existing) {
+        existing.quantity += item.quantity;
+      } else {
+        itemMap.set(key, { name: item.name, price: item.price, quantity: item.quantity, note: item.note || '' });
+      }
+    }
+  }
+  const allItems = Array.from(itemMap.values());
+
+  const subtotal = allItems.reduce((s, i) => s + i.price * i.quantity, 0);
   const tax      = subtotal * taxPct;
   const total    = subtotal + tax;
 
   const handleMarkPaid = async () => {
     try {
-      await closeOrder(order.id);
+      await closeOrder(orderId);
       toast('Table cleared — enjoy!', 'success');
       onClosed();
     } catch {
@@ -42,10 +60,10 @@ export default function BillModal({ order, table, onClose, onClosed }: Props) {
 
         {/* Receipt body */}
         <div className="px-5 py-4 font-mono text-xs">
-          <div className="font-bold text-sm mb-3 font-sans">{table?.label || order.table_id}</div>
+          <div className="font-bold text-sm mb-3 font-sans">{table?.label || orders[0]?.table_id}</div>
 
           <div className="space-y-1.5 mb-3">
-            {order.items.map((item, i) => (
+            {allItems.map((item, i) => (
               <div key={i}>
                 <div className="flex justify-between">
                   <span className="flex-1 pr-2">{item.quantity}× {item.name}</span>
