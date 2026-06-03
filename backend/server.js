@@ -70,7 +70,7 @@ server.listen(PORT, '0.0.0.0', () => {
   }
   console.log('');
   console.log('  ╔══════════════════════════════════════╗');
-  console.log('  ║   ABC Chicken POS — Server Running   ║');
+  console.log('  ║   Restaurant APP — Server Running   ║');
   console.log('  ╠══════════════════════════════════════╣');
   console.log(`  ║  Local:   http://localhost:${PORT}      ║`);
   if (lanIp) {

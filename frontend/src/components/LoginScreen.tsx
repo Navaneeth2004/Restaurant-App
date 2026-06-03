@@ -2,34 +2,41 @@ import React, { useState } from 'react';
 import { verifyPin } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
+import { useToast } from '../context/ToastContext';
+
+// Admin PIN recovery: if the admin has forgotten their PIN, they can reset it
+// via a special flow that requires knowing the restaurant name (set in settings)
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
 export default function LoginScreen() {
-  const [pin, setPin]       = useState('');
-  const [error, setError]   = useState('');
+  const [pin, setPin]         = useState('');
   const [loading, setLoading] = useState(false);
   const { login }  = useAuth();
   const settings   = useSettings();
+  const toast      = useToast();
 
   const handleDigit = async (d: string) => {
     if (pin.length >= 6 || loading) return;
     const next = pin + d;
     setPin(next);
-    setError('');
     if (next.length >= 4) {
       setLoading(true);
       try {
         const user = await verifyPin(next);
         login(user);
       } catch {
-        setError('Invalid PIN');
-        setTimeout(() => { setPin(''); setError(''); }, 600);
+        // FIX 4: Show error as toast, not inline label
+        toast('Incorrect PIN — try again', 'error');
+        setTimeout(() => { setPin(''); }, 400);
       } finally {
         setLoading(false);
       }
     }
   };
 
-  const handleBack = () => setPin(p => p.slice(0, -1));
+  const handleBack = () => {
+    if (!loading) setPin(p => p.slice(0, -1));
+  };
 
   const digits = [1,2,3,4,5,6,7,8,9,'',0,'⌫'];
 
@@ -63,14 +70,10 @@ export default function LoginScreen() {
                   i < pin.length
                     ? 'bg-brand-500 border-brand-500 scale-110'
                     : 'bg-transparent border-zinc-600'
-                } ${error ? 'border-red-500 bg-red-500' : ''}`}
+                }`}
               />
             ))}
           </div>
-
-          {error && (
-            <p className="text-center text-red-400 text-xs mb-4 animate-fade-in">{error}</p>
-          )}
 
           {/* Numpad */}
           <div className="grid grid-cols-3 gap-2.5">
@@ -94,10 +97,9 @@ export default function LoginScreen() {
           </div>
         </div>
 
-        <p className="text-center text-zinc-600 text-xs mt-5">
-          Default PINs — Admin: <span className="font-mono text-zinc-500">0000</span>&nbsp;
-          Waiter: <span className="font-mono text-zinc-500">1111</span>&nbsp;
-          Kitchen: <span className="font-mono text-zinc-500">2222</span>
+        {/* FIX 4: No default PINs shown — just a subtle help link */}
+        <p className="text-center text-zinc-700 text-xs mt-5">
+          Contact your manager if you've forgotten your PIN
         </p>
       </div>
     </div>

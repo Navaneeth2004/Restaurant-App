@@ -62,36 +62,32 @@ echo.
 
 :: ── Get IP ───────────────────────────────────────────────────────────────
 set LOCAL_IP=localhost
-for /f "tokens=2 delims=:" %%a in ('ipconfig 2^>nul ^| findstr /R "IPv4.*192\."') do set LOCAL_IP=%%a&goto :got_ip
-for /f "tokens=2 delims=:" %%a in ('ipconfig 2^>nul ^| findstr /R "IPv4.*10\."') do set LOCAL_IP=%%a&goto :got_ip
+:: Try 192.x, 10.x, and 172.x ranges
+for /f "tokens=2 delims=:" %%a in ('ipconfig 2^>nul ^| findstr /R "IPv4.*192\."') do (set LOCAL_IP=%%a & goto :got_ip)
+for /f "tokens=2 delims=:" %%a in ('ipconfig 2^>nul ^| findstr /R "IPv4.*10\."')  do (set LOCAL_IP=%%a & goto :got_ip)
+for /f "tokens=2 delims=:" %%a in ('ipconfig 2^>nul ^| findstr /R "IPv4.*172\."') do (set LOCAL_IP=%%a & goto :got_ip)
 :got_ip
 set LOCAL_IP=%LOCAL_IP:~1%
 
-:: ── Start server ─────────────────────────────────────────────────────────
-echo  [START] Server starting...
-
-REM Create a temp batch file to start the server in the backend folder
-set BACKEND_PATH=%APP_ROOT%\backend
-(
-    echo @echo off
-    echo cd /d "%BACKEND_PATH%"
-    echo node server.js
-) > "%temp%\start_server.bat"
-
-start "POS Server" cmd /k "%temp%\start_server.bat"
-
-timeout /t 2 /nobreak >nul
-
+:: ── Start server in THIS window so closing it stops the server ───────────
+echo  [START] Server starting on port 4000...
 echo.
 echo  ==========================================
 echo.
-echo   ✓ POS is running!
+echo   OK  POS is running!
 echo.
 echo   Local:   http://localhost:4000
 echo   Network: http://%LOCAL_IP%:4000
 echo.
+echo   Keep this window open while using the POS.
+echo   Close it to shut down the server.
+echo.
 echo  ==========================================
 echo.
 
-start http://localhost:4000
-timeout /t 2 /nobreak >nul
+:: Open browser after a short delay
+start "" /b cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:4000"
+
+:: Start server in foreground — window stays open, Ctrl+C stops it
+cd /d "%APP_ROOT%\backend"
+node server.js

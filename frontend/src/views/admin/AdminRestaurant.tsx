@@ -65,7 +65,7 @@ export default function AdminRestaurant() {
           <h3 className="font-bold text-white text-sm mb-4">Restaurant Details</h3>
           <div className="space-y-3">
             {([
-              ['restaurant_name', 'Restaurant Name', 'ABC Chicken'],
+              ['restaurant_name', 'Restaurant Name', ' ABC Restaurant'],
               ['address',         'Address',         '123 Main Street'],
               ['phone',           'Phone Number',    '+91 98765 43210'],
               ['bill_footer',     'Bill Footer',     'Thank you for dining with us!'],

@@ -73,7 +73,7 @@ function initDb() {
 
   const ins = db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`);
   [
-    ['restaurant_name', 'ABC Chicken'],
+    ['restaurant_name', 'ABC Restaurant'],
     ['address',         '123 Main Street, City'],
     ['phone',           '+91 98765 43210'],
     ['bill_footer',     'Thank you for dining with us!'],

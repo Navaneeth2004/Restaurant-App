@@ -64,7 +64,7 @@ npm start
 
 You should see:
 ```
-ABC Chicken POS — Backend running
+Restaurant APP — Backend running
 http://localhost:4000
 ```
 

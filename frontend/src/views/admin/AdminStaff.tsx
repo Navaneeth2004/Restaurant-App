@@ -4,11 +4,71 @@ import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import type { Staff } from '../../types';
 
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
+
 const ROLE_STYLES: Record<string, string> = {
   admin:   'bg-red-500/15 text-red-400 border-red-500/25',
   kitchen: 'bg-blue-500/15 text-blue-400 border-blue-500/25',
   waiter:  'bg-brand-500/15 text-brand-400 border-brand-500/25',
 };
+
+// FIX 4: Modal for changing a staff member's PIN
+function ChangePinModal({ staff, onSave, onClose }: { staff: Staff; onSave: (newPin: string) => void; onClose: () => void }) {
+  const [newPin,    setNewPin]    = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [error,     setError]    = useState('');
+
+  const handleSave = () => {
+    if (newPin.length < 4) { setError('PIN must be at least 4 digits'); return; }
+    if (newPin !== confirmPin) { setError('PINs do not match'); return; }
+    onSave(newPin);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="rounded-xl border border-surface-border bg-surface-card p-5 w-full max-w-sm animate-slide-up" onClick={e => e.stopPropagation()}>
+        <h3 className="font-bold text-white text-base mb-1">Change PIN</h3>
+        <p className="text-zinc-500 text-xs mb-4">Setting new PIN for <span className="text-white font-medium">{staff.name}</span></p>
+        <div className="space-y-3">
+          <div>
+            <label className="label">New PIN (4–6 digits)</label>
+            <input
+              className="input font-mono tracking-widest"
+              type="password"
+              maxLength={6}
+              placeholder="••••"
+              value={newPin}
+              onChange={e => { setNewPin(e.target.value.replace(/\D/g,'')); setError(''); }}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="label">Confirm PIN</label>
+            <input
+              className="input font-mono tracking-widest"
+              type="password"
+              maxLength={6}
+              placeholder="••••"
+              value={confirmPin}
+              onChange={e => { setConfirmPin(e.target.value.replace(/\D/g,'')); setError(''); }}
+            />
+          </div>
+          {error && <p className="text-red-400 text-xs">{error}</p>}
+        </div>
+        <div className="flex gap-2 mt-5">
+          <button className="btn flex-1" onClick={onClose}>Cancel</button>
+          <button
+            className="btn btn-brand flex-1"
+            onClick={handleSave}
+            disabled={newPin.length < 4 || confirmPin.length < 4}
+          >
+            Save PIN
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function StaffModal({ onSave, onClose }: { onSave: (f:{name:string;pin:string;role:string}) => void; onClose: () => void }) {
   const [name, setName] = useState('');
@@ -48,8 +108,9 @@ function StaffModal({ onSave, onClose }: { onSave: (f:{name:string;pin:string;ro
 }
 
 export default function AdminStaff() {
-  const [staff, setStaff] = useState<Staff[]>([]);
-  const [modal, setModal] = useState(false);
+  const [staff,         setStaff]         = useState<Staff[]>([]);
+  const [modal,         setModal]         = useState(false);
+  const [changePinFor,  setChangePinFor]  = useState<Staff | null>(null);
   const toast = useToast();
   const { user } = useAuth();
 
@@ -68,7 +129,23 @@ export default function AdminStaff() {
     catch { toast('Failed','error'); }
   };
 
-  // FIX #13: 2-col layout
+  // FIX 4: Change PIN via PUT /api/staff/:id
+  const handleChangePin = async (newPin: string) => {
+    if (!changePinFor) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/staff/${changePinFor.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: newPin }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      toast(`PIN updated for ${changePinFor.name}`, 'success');
+      setChangePinFor(null);
+    } catch {
+      toast('Failed to update PIN', 'error');
+    }
+  };
+
   const byRole = { admin: staff.filter(s=>s.role==='admin'), kitchen: staff.filter(s=>s.role==='kitchen'), waiter: staff.filter(s=>s.role==='waiter') };
 
   return (
@@ -93,6 +170,14 @@ export default function AdminStaff() {
                     {s.name[0].toUpperCase()}
                   </div>
                   <span className="flex-1 text-white text-sm font-medium">{s.name}</span>
+                  {/* FIX 4: Change PIN button */}
+                  <button
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-brand-400 hover:bg-brand-500/10 transition-colors"
+                    onClick={() => setChangePinFor(s)}
+                    title="Change PIN"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" /></svg>
+                  </button>
                   <button
                     className="w-7 h-7 rounded-lg flex items-center justify-center text-red-500/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
                     onClick={() => handleDelete(s.id)} disabled={s.id === user?.id}>
@@ -106,7 +191,25 @@ export default function AdminStaff() {
         ))}
       </div>
 
+      {/* FIX 4: PIN recovery info for admin */}
+      <div className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+        <div className="flex items-start gap-3">
+          <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
+          <div>
+            <p className="text-amber-400 text-xs font-semibold mb-1">Forgot your admin PIN?</p>
+            <p className="text-zinc-500 text-xs leading-relaxed">
+              If you're locked out, run this command on the server to reset the admin PIN to <span className="font-mono text-zinc-300">0000</span>:
+            </p>
+            <code className="block mt-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-green-400 text-[11px] font-mono select-all">
+              cd backend && node -e "const db=require('./db/database'); db.prepare(\"UPDATE staff SET pin='0000' WHERE role='admin'\").run(); console.log('Done');"
+            </code>
+            <p className="text-zinc-600 text-[10px] mt-1.5">Then log in with PIN 0000 and change it from this page.</p>
+          </div>
+        </div>
+      </div>
+
       {modal && <StaffModal onSave={handleAdd} onClose={() => setModal(false)} />}
+      {changePinFor && <ChangePinModal staff={changePinFor} onSave={handleChangePin} onClose={() => setChangePinFor(null)} />}
     </div>
   );
 }
