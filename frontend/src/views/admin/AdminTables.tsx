@@ -98,14 +98,20 @@ export default function AdminTables() {
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <h3 className="font-bold text-white text-base">Tables</h3>
-        <span className="text-xs font-semibold text-zinc-500 bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded-full">{tables.length} total</span>
-        {Object.entries(counts).map(([k, v]) => v > 0 && (
-          <span key={k} className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_STYLE[k]}`}>{v} {STATUS_LABEL[k]}</span>
-        ))}
-        <p className="text-zinc-600 text-xs ml-1 hidden sm:block">Drag cards to reorder</p>
-        <button className="btn btn-brand btn-sm ml-auto" onClick={() => setModal({type:'add'})}>+ Add Table</button>
+      <div className="mb-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-white text-base">Tables</h3>
+            <span className="text-xs font-semibold text-zinc-500 bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded-full">{tables.length} total</span>
+          </div>
+          <button className="btn btn-brand btn-sm" onClick={() => setModal({type:'add'})}>+ Add Table</button>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {Object.entries(counts).map(([k, v]) => v > 0 && (
+            <span key={k} className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_STYLE[k]}`}>{v} {STATUS_LABEL[k]}</span>
+          ))}
+          <p className="text-zinc-600 text-xs ml-1">Drag cards to reorder</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">

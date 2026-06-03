@@ -1,6 +1,8 @@
 import { io, Socket } from 'socket.io-client';
 
-const BACKEND = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+// In production (served from backend), connect to same origin.
+// In dev, use REACT_APP_API_URL.
+const BACKEND = process.env.REACT_APP_API_URL || window.location.origin;
 
 let socket: Socket | null = null;
 

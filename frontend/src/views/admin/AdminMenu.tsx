@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getMenuItems, getCategories, createMenuItem, updateMenuItem, deleteMenuItem } from '../../services/api';
+import { getMenuItems, getCategories, createMenuItem, updateMenuItem, deleteMenuItem, importMenu } from '../../services/api';
 import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
 import type { MenuItem, Category } from '../../types';
 
-const API = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+const API = process.env.REACT_APP_API_URL || window.location.origin;
 
 interface ModalProps { item?: MenuItem; categories: Category[]; onSave: (fd: FormData) => void; onClose: () => void; }
 
@@ -206,6 +206,75 @@ export default function AdminMenu() {
       </div>
 
       {modal && <MenuItemModal item={modal.item} categories={categories} onSave={handleSave} onClose={() => setModal(null)} />}
+    </div>
+  );
+}
+
+// ── Export / Import panel (rendered by AdminMenu as a separate export) ──────
+export function MenuExportImport() {
+  const [importing,   setImporting]   = React.useState(false);
+  const [importResult, setImportResult] = React.useState<string | null>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const toast   = useToast();
+  const BASE    = process.env.REACT_APP_API_URL || window.location.origin;
+
+  const handleExport = () => {
+    window.open(`${BASE}/api/export/menu`, '_blank');
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const res  = await importMenu(data);
+      setImportResult(`Done — ${res.categories_added} categories added, ${res.items_added} items added, ${res.items_skipped} skipped (already exist)`);
+      toast('Menu imported successfully', 'success');
+    } catch (e: any) {
+      toast(e.response?.data?.error || 'Import failed — check file format', 'error');
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-surface-border bg-surface-card p-5">
+      <h3 className="font-bold text-white text-sm mb-1">Export / Import Menu</h3>
+      <p className="text-zinc-500 text-xs mb-4">Move your menu to another device or create a backup</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Export */}
+        <div className="rounded-lg bg-surface-raised border border-surface-border p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+            <span className="text-white text-xs font-semibold">Export Menu</span>
+          </div>
+          <p className="text-zinc-600 text-xs mb-3">Downloads a .json file with all categories and menu items (without images)</p>
+          <button className="btn btn-brand btn-sm w-full" onClick={handleExport}>
+            Download menu.json
+          </button>
+        </div>
+        {/* Import */}
+        <div className="rounded-lg bg-surface-raised border border-surface-border p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5m0 0L7.5 12m4.5-4.5V21" /></svg>
+            <span className="text-white text-xs font-semibold">Import Menu</span>
+          </div>
+          <p className="text-zinc-600 text-xs mb-3">Upload a previously exported menu.json. Existing items are kept, duplicates are skipped</p>
+          <button className="btn btn-sm w-full border-surface-border" onClick={() => fileRef.current?.click()} disabled={importing}>
+            {importing ? 'Importing…' : 'Choose menu.json'}
+          </button>
+          <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={handleImportFile} />
+        </div>
+      </div>
+      {importResult && (
+        <div className="mt-3 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs">
+          {importResult}
+        </div>
+      )}
     </div>
   );
 }

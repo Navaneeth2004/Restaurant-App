@@ -1,12 +1,16 @@
 import axios from 'axios';
 import type { Settings, Category, MenuItem, Table, Order, Staff, ReportSummary, RevenueDay, AuthUser } from '../types';
 
-const BASE = (process.env.REACT_APP_API_URL || 'http://localhost:4000') + '/api';
+// In production (served from backend), use same origin. In dev, use env var.
+const ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
+const BASE = ORIGIN + '/api';
 
 const api = axios.create({ baseURL: BASE, timeout: 10000 });
 
 api.interceptors.request.use(req => { console.log('[API]', req.method?.toUpperCase(), req.url); return req; });
 api.interceptors.response.use(res => res, err => { console.error('[API Error]', err.response?.status, err.response?.data || err.message); return Promise.reject(err); });
+
+export const API_ORIGIN = ORIGIN;
 
 export const getSettings       = (): Promise<Settings>    => api.get('/settings').then(r => r.data);
 export const updateSettings    = (data: Partial<Settings>): Promise<void> => api.put('/settings', data).then(r => r.data);
@@ -48,3 +52,6 @@ export const getRevenueChart   = (): Promise<RevenueDay[]> => api.get('/reports/
 
 export const reorderTables = (order: { id: string; sort_order: number }[]): Promise<void> =>
   api.patch('/tables/reorder', { order }).then(r => r.data);
+
+export const importMenu = (data: any): Promise<{ success: boolean; categories_added: number; items_added: number; items_skipped: number }> =>
+  api.post('/export/menu/import', data).then(r => r.data);

@@ -26,9 +26,7 @@ router.get('/active', (req, res) => {
 
 // GET order for a specific table
 router.get('/table/:tableId', (req, res) => {
-  // First try active order
   let order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(req.params.tableId);
-  // If no active order, get the most recent delivered order (for waiting_bill tables so bill can be generated)
   if (!order) {
     order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY delivered_at DESC LIMIT 1").get(req.params.tableId);
   }
@@ -57,8 +55,35 @@ router.post('/', (req, res) => {
   const { table_id, items } = req.body;
   if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
 
-  // Only merge with ACTIVE orders - never modify delivered orders
+  // Only merge with ACTIVE orders — never modify delivered orders
   const existing = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
+
+  // FIX 2: compute which items are truly NEW (added this submission)
+  // The frontend sends the full merged list; we compare against what's already in DB
+  // to find the delta so kitchen only sees additions.
+  let newItems = items; // default: all items are new (new order)
+
+  if (existing) {
+    const prevItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(existing.id);
+
+    // Build a map of existing items: "menu_item_id|note" -> quantity
+    const prevMap = {};
+    for (const pi of prevItems) {
+      const key = `${pi.menu_item_id}|${pi.note || ''}`;
+      prevMap[key] = (prevMap[key] || 0) + pi.quantity;
+    }
+
+    // Find genuinely new/increased items
+    newItems = [];
+    for (const item of items) {
+      const key = `${item.menu_item_id}|${item.note || ''}`;
+      const prevQty = prevMap[key] || 0;
+      const addedQty = item.quantity - prevQty;
+      if (addedQty > 0) {
+        newItems.push({ ...item, quantity: addedQty });
+      }
+    }
+  }
 
   const saveOrder = db.transaction(() => {
     let orderId;
@@ -81,18 +106,35 @@ router.post('/', (req, res) => {
 
   const order = saveOrder();
   const isNew = !existing;
-  req.io.emit('order_updated', { order, isNew });
-  if (isNew) req.io.emit('new_order', { order });
+
+  if (isNew) {
+    // Brand new order — kitchen sees full order
+    req.io.emit('new_order', { order });
+    req.io.emit('order_updated', { order, isNew: true });
+  } else {
+    // Update to existing order — emit full order for billing,
+    // but also emit a separate event with ONLY the new additions for kitchen display
+    req.io.emit('order_updated', { order, isNew: false });
+    if (newItems.length > 0) {
+      // Kitchen gets a separate "order_additions" event with only the delta
+      req.io.emit('order_additions', {
+        orderId: order.id,
+        tableId: order.table_id,
+        additions: newItems,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
   res.status(isNew ? 201 : 200).json(order);
 });
 
-// PATCH mark delivered — FIX #2: table goes to waiting_bill but waiter can STILL add new orders
+// PATCH mark delivered
 router.patch('/:id/deliver', (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
   if (!order) return res.status(404).json({ error: 'Not found' });
   const now = new Date().toISOString();
   db.prepare("UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = ?").run(now, req.params.id);
-  // Set table to waiting_bill — but waiter can still create NEW orders on this table
   db.prepare("UPDATE tables SET status = 'waiting_bill' WHERE id = ?").run(order.table_id);
   const updated = getOrderWithItems(req.params.id);
   req.io.emit('order_delivered', { order: updated });

@@ -3,7 +3,7 @@ import { getSettings, updateSettings, uploadLogo } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import type { Settings } from '../../types';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 const PRESETS = ['#f97316','#e11d48','#8b5cf6','#0ea5e9','#10b981','#eab308','#6366f1','#f43f5e','#0f172a'];
 
 export default function AdminRestaurant() {

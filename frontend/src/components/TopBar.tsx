@@ -11,7 +11,7 @@ const NAV: NavItem[] = [
   { key: 'reports', label: 'Reports', roles: ['admin'] },
 ];
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
 interface Props { view: ViewType; setView: (v: ViewType) => void; }
 
