@@ -88,11 +88,6 @@ echo.
 echo   This computer:  http://localhost:4000
 echo   Phones/tablets: http://%LOCAL_IP%:4000
 echo.
-echo   Default PINs:
-echo     Admin   - 0000
-echo     Waiter  - 1111
-echo     Kitchen - 2222
-echo.
 echo   Keep this window open.
 echo   Close it to shut down.
 echo.
