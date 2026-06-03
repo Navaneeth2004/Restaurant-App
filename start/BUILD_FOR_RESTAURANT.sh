@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Restaurant POS for deployment
+# Build Restaurant APP POS for deployment
 # Run this on YOUR computer (developer machine), not the restaurant computer.
 # After this runs, the folder is ready to copy to the restaurant PC.
 
@@ -7,7 +7,7 @@ set -e
 clear
 echo ""
 echo " =========================================="
-echo "   Building Restaurant POS for deployment"
+echo "   Building Restaurant APP POS for deployment"
 echo "   Run this on YOUR computer, not the"
 echo "   restaurant computer."
 echo " =========================================="

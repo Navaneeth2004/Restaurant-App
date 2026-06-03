@@ -5,7 +5,7 @@ color 0B
 
 echo.
 echo  ==========================================
-echo    Restaurant POS — Build for Deployment
+echo    Restaurant APP POS — Build for Deployment
 echo  ==========================================
 echo.
 echo  Run this on YOUR computer (not the
