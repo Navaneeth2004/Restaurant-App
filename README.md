@@ -1,4 +1,4 @@
-# ABC Chicken — Restaurant POS
+# Restaurant POS
 
 A full-stack Point of Sale system with real-time kitchen display, order management, and admin panel.
 
