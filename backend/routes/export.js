@@ -1,76 +1,116 @@
-const express = require('express');
-const router  = express.Router();
-const multer  = require('multer');
-const AdmZip  = require('adm-zip');
-const path    = require('path');
-const fs      = require('fs');
-const db      = require('../db/database');
+const express  = require('express');
+const router   = express.Router();
+const multer   = require('multer');
+const AdmZip   = require('adm-zip');
+const archiver = require('archiver');
+const path     = require('path');
+const fs       = require('fs');
+const db       = require('../db/database');
 
-// ── Multer for zip uploads ────────────────────────────────────────────────
+// ── Paths ─────────────────────────────────────────────────────────────────
 const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-const zipStorage = multer.memoryStorage(); // keep zip in memory for parsing
-const zipUpload  = multer({
-  storage: zipStorage,
+// ── Multer for zip uploads (memory storage — parse in-memory) ─────────────
+const zipUpload = multer({
+  storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
   fileFilter: (req, file, cb) => {
-    const ok = file.mimetype === 'application/zip' ||
-               file.mimetype === 'application/x-zip-compressed' ||
-               file.originalname.endsWith('.zip');
+    const ok =
+      file.mimetype === 'application/zip' ||
+      file.mimetype === 'application/x-zip-compressed' ||
+      file.originalname.endsWith('.zip');
     ok ? cb(null, true) : cb(new Error('ZIP files only'));
   },
 });
 
-// ── MENU EXPORT ──────────────────────────────────────────────────────────
-// GET /api/export/menu — downloads full menu as JSON
+// ── MENU EXPORT — streams a .zip with menu.json + images/ ─────────────────
+// GET /api/export/menu
 router.get('/menu', (req, res) => {
   const categories = db.prepare('SELECT * FROM categories ORDER BY sort_order, id').all();
   const items      = db.prepare(`
-    SELECT m.*, c.name as category_name
-    FROM menu_items m JOIN categories c ON m.category_id = c.id
+    SELECT m.*, c.name AS category_name
+    FROM menu_items m
+    JOIN categories c ON m.category_id = c.id
     ORDER BY c.sort_order, m.name
   `).all();
 
-  const payload = {
-    exported_at: new Date().toISOString(),
-    version: 1,
-    categories: categories.map(c => ({ id: c.id, name: c.name, sort_order: c.sort_order })),
-    items: items.map(i => ({
-      name:          i.name,
-      description:   i.description,
-      price:         i.price,
-      category_name: i.category_name,
-      available:     i.available,
-    })),
-  };
+  // Build the JSON payload that goes inside the zip
+  const payload = JSON.stringify(
+    {
+      exported_at: new Date().toISOString(),
+      version:     1,
+      categories:  categories.map(c => ({ id: c.id, name: c.name, sort_order: c.sort_order })),
+      items:       items.map(i => ({
+        name:          i.name,
+        description:   i.description,
+        price:         i.price,
+        category_name: i.category_name,
+        available:     i.available,
+        image_path:    i.image_path, // keep so import can match filenames
+      })),
+    },
+    null,
+    2
+  );
 
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Content-Disposition', `attachment; filename="menu_export_${new Date().toISOString().split('T')[0]}.json"`);
-  res.json(payload);
+  // Collect image files that exist on disk
+  const imageFiles = items
+    .filter(i => i.image_path)
+    .map(i => ({
+      disk: path.join(__dirname, '..', '..', i.image_path),
+      zip:  `images/${path.basename(i.image_path)}`,
+    }))
+    .filter(f => fs.existsSync(f.disk));
+
+  const dateStr = new Date().toISOString().split('T')[0];
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="menu_export_${dateStr}.zip"`
+  );
+
+  const archive = archiver('zip', { zlib: { level: 6 } });
+
+  archive.on('error', err => {
+    console.error('[export/menu] archiver error:', err.message);
+    // Headers already sent — just end the response
+    res.end();
+  });
+
+  archive.pipe(res);
+
+  // Add menu.json
+  archive.append(payload, { name: 'menu.json' });
+
+  // Add each image
+  imageFiles.forEach(f => archive.file(f.disk, { name: f.zip }));
+
+  archive.finalize();
 });
 
-// ── MENU IMPORT ──────────────────────────────────────────────────────────
-// POST /api/export/menu/import — accepts JSON body OR zip file (field: menuzip)
-router.post('/menu/import',
+// ── MENU IMPORT — accepts .zip (with images) or plain .json ───────────────
+// POST /api/export/menu/import
+router.post(
+  '/menu/import',
   (req, res, next) => {
-    // Detect content type and route to correct parser
     const ct = req.headers['content-type'] || '';
     if (ct.includes('multipart/form-data')) {
-      // ZIP upload
       zipUpload.single('menuzip')(req, res, next);
     } else {
-      // JSON body
       express.json({ limit: '2mb' })(req, res, next);
     }
   },
   async (req, res) => {
     try {
-      let categories, items, images = {};
+      let categories, items;
+      let imagesImported = 0;
+      const imageMap = {}; // original filename → /uploads/filename
 
       if (req.file) {
-        // ── ZIP import ───────────────────────────────────────────────
-        const zip  = new AdmZip(req.file.buffer);
+        // ── ZIP import ─────────────────────────────────────────────────
+        const zip       = new AdmZip(req.file.buffer);
         const jsonEntry = zip.getEntry('menu.json');
         if (!jsonEntry) {
           return res.status(400).json({ error: 'ZIP must contain menu.json' });
@@ -79,8 +119,7 @@ router.post('/menu/import',
         categories = parsed.categories;
         items      = parsed.items;
 
-        // Extract images from zip → save to uploads/
-        let imagesImported = 0;
+        // Extract images → save to uploads/
         zip.getEntries().forEach(entry => {
           if (entry.entryName.startsWith('images/') && !entry.isDirectory) {
             const filename = path.basename(entry.entryName);
@@ -89,33 +128,40 @@ router.post('/menu/import',
               fs.writeFileSync(dest, entry.getData());
               imagesImported++;
             }
-            // Map original filename → new path for item matching
-            images[filename] = `/uploads/${filename}`;
+            imageMap[filename] = `/uploads/${filename}`;
           }
         });
-        req._imagesImported = imagesImported;
-        req._imageMap       = images;
       } else {
-        // ── JSON import ──────────────────────────────────────────────
+        // ── JSON import ────────────────────────────────────────────────
         categories = req.body?.categories;
         items      = req.body?.items;
       }
 
       if (!categories || !items) {
-        return res.status(400).json({ error: 'Invalid export file — missing categories or items' });
+        return res
+          .status(400)
+          .json({ error: 'Invalid export file — missing categories or items' });
       }
 
-      const results = { categories_added: 0, items_added: 0, items_skipped: 0, images_imported: req._imagesImported || 0 };
+      const results = {
+        categories_added: 0,
+        items_added:      0,
+        items_skipped:    0,
+        images_imported:  imagesImported,
+      };
 
       const doImport = db.transaction(() => {
-        // Build category name → id map
+        // Build category name → id map from existing categories
         const catMap = {};
-        db.prepare('SELECT id, name FROM categories').all()
+        db.prepare('SELECT id, name FROM categories')
+          .all()
           .forEach(c => { catMap[c.name.toLowerCase()] = c.id; });
 
         // Add missing categories
-        const maxOrder  = db.prepare('SELECT MAX(sort_order) as m FROM categories').get().m ?? 0;
-        const insertCat = db.prepare('INSERT INTO categories (name, sort_order) VALUES (?, ?)');
+        const maxOrder  = db.prepare('SELECT MAX(sort_order) as m FROM categories').get()?.m ?? 0;
+        const insertCat = db.prepare(
+          'INSERT INTO categories (name, sort_order) VALUES (?, ?)'
+        );
         categories.forEach((c, i) => {
           const key = c.name.toLowerCase();
           if (!catMap[key]) {
@@ -125,7 +171,7 @@ router.post('/menu/import',
           }
         });
 
-        // Add items (skip exact name+category duplicates)
+        // Add items — skip exact name+category duplicates
         const insertItem = db.prepare(
           'INSERT INTO menu_items (name, description, price, category_id, available, image_path) VALUES (?, ?, ?, ?, ?, ?)'
         );
@@ -138,14 +184,21 @@ router.post('/menu/import',
           if (!catId) { results.items_skipped++; return; }
           if (checkItem.get(item.name.toLowerCase(), catId)) { results.items_skipped++; return; }
 
-          // Try to match image from zip by item name
+          // Resolve image path from zip map
           let imagePath = null;
-          if (req._imageMap && item.image_path) {
+          if (item.image_path) {
             const fname = path.basename(item.image_path);
-            imagePath   = req._imageMap[fname] || null;
+            imagePath   = imageMap[fname] || null;
           }
 
-          insertItem.run(item.name, item.description || '', parseFloat(item.price), catId, item.available ? 1 : 0, imagePath);
+          insertItem.run(
+            item.name,
+            item.description || '',
+            parseFloat(item.price),
+            catId,
+            item.available ? 1 : 0,
+            imagePath
+          );
           results.items_added++;
         });
       });
@@ -154,7 +207,6 @@ router.post('/menu/import',
       req.io.emit('menu_updated');
       req.io.emit('categories_updated');
       res.json({ success: true, ...results });
-
     } catch (e) {
       console.error('[export/import]', e.message);
       res.status(500).json({ error: e.message || 'Import failed' });
@@ -171,11 +223,12 @@ router.get('/revenue', (req, res) => {
   const dateTo   = to   || today;
 
   const orders = db.prepare(`
-    SELECT o.*, t.label as table_label
+    SELECT o.*, t.label AS table_label
     FROM orders o
     LEFT JOIN tables t ON o.table_id = t.id
     WHERE o.status IN ('delivered','closed')
-      AND substr(o.created_at,1,10) >= ? AND substr(o.created_at,1,10) <= ?
+      AND substr(o.created_at,1,10) >= ?
+      AND substr(o.created_at,1,10) <= ?
     ORDER BY o.created_at ASC
   `).all(dateFrom, dateTo);
 
@@ -183,11 +236,12 @@ router.get('/revenue', (req, res) => {
     o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id);
   });
 
-  // Aggregates
+  // ── Aggregates ──────────────────────────────────────────────────────────
   const dailyMap = {};
   orders.forEach(o => {
     const day = o.created_at.split('T')[0];
-    if (!dailyMap[day]) dailyMap[day] = { date: day, revenue: 0, orders: 0, items_sold: 0 };
+    if (!dailyMap[day])
+      dailyMap[day] = { date: day, revenue: 0, orders: 0, items_sold: 0 };
     dailyMap[day].revenue    += o.total;
     dailyMap[day].orders     += 1;
     dailyMap[day].items_sold += o.items.reduce((s, i) => s + i.quantity, 0);
@@ -204,14 +258,16 @@ router.get('/revenue', (req, res) => {
 
   const totalRevenue   = orders.reduce((s, o) => s + o.total, 0);
   const totalOrders    = orders.length;
-  const totalItemsSold = orders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.quantity, 0), 0);
+  const totalItemsSold = orders.reduce(
+    (s, o) => s + o.items.reduce((ss, i) => ss + i.quantity, 0), 0
+  );
   const avgOrderValue  = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
   const settingsRows = db.prepare('SELECT key, value FROM settings').all();
   const S            = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
   const currency     = S.currency_symbol || '₹';
   const taxPct       = parseFloat(S.tax_percent || '5') / 100;
-  const taxCollected = totalRevenue - (totalRevenue / (1 + taxPct));
+  const taxCollected = totalRevenue - totalRevenue / (1 + taxPct);
   const revenueExTax = totalRevenue - taxCollected;
 
   if (format === 'csv') {
@@ -236,9 +292,11 @@ router.get('/revenue', (req, res) => {
     lines.push('');
     lines.push('ITEMS SOLD');
     lines.push('Item,Qty Sold,Revenue');
-    Object.values(itemMap).sort((a, b) => b.revenue - a.revenue).forEach(i =>
-      lines.push(`"${i.name}",${i.qty_sold},${currency}${i.revenue.toFixed(2)}`)
-    );
+    Object.values(itemMap)
+      .sort((a, b) => b.revenue - a.revenue)
+      .forEach(i =>
+        lines.push(`"${i.name}",${i.qty_sold},${currency}${i.revenue.toFixed(2)}`)
+      );
     lines.push('');
     lines.push('ORDER DETAIL');
     lines.push('Date,Time,Table,Items,Total,Status');
@@ -252,13 +310,19 @@ router.get('/revenue', (req, res) => {
     });
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="revenue_${dateFrom}_to_${dateTo}.csv"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="revenue_${dateFrom}_to_${dateTo}.csv"`
+    );
     return res.send('\uFEFF' + lines.join('\n'));
   }
 
-  // JSON
+  // JSON response
   res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Content-Disposition', `attachment; filename="revenue_${dateFrom}_to_${dateTo}.json"`);
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="revenue_${dateFrom}_to_${dateTo}.json"`
+  );
   res.json({
     generated_at: new Date().toISOString(),
     restaurant:   S.restaurant_name,

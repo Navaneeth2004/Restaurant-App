@@ -216,6 +216,7 @@ export function MenuExportImport() {
   const toast   = useToast();
   const BASE    = process.env.REACT_APP_API_URL || window.location.origin;
 
+  // Opens the ZIP download directly — backend streams the zip
   const handleExport = () => {
     window.open(`${BASE}/api/export/menu`, '_blank');
   };

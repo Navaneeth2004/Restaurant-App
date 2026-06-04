@@ -18,8 +18,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   const sym      = settings.currency_symbol || '₹';
   const taxPct   = parseFloat(settings.tax_percent || '5') / 100;
 
-  // Flatten all items from all rounds for display
-  // Group by item name+note+price to merge duplicates across rounds
+  // Flatten all items from all rounds, merging duplicates by name+note+price
   const itemMap = new Map<string, { name: string; price: number; quantity: number; note: string }>();
   for (const order of orders) {
     for (const item of order.items) {
@@ -49,12 +48,21 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white text-gray-900 rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+    /* bill-modal-overlay: targeted by print CSS to strip the dark backdrop */
+    <div
+      className="bill-modal-overlay fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      {/* bill-print-area: the only element shown when printing */}
+      <div
+        className="bill-print-area bg-white text-gray-900 rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="bg-gray-900 text-white px-5 py-4 text-center">
-          <div className="text-lg font-display font-700 tracking-tight">{settings.restaurant_name}</div>
+          <div className="text-lg font-bold tracking-tight">{settings.restaurant_name}</div>
           {settings.address && <div className="text-xs text-gray-400 mt-0.5">{settings.address}</div>}
+          {(settings as any).phone && <div className="text-xs text-gray-500 mt-0.5">{(settings as any).phone}</div>}
           <div className="text-xs text-gray-500 mt-0.5">{new Date().toLocaleString()}</div>
         </div>
 
@@ -90,7 +98,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
             <div className="border-t border-dashed border-gray-300 my-1.5" />
             <div className="flex justify-between font-bold text-sm font-sans">
               <span>TOTAL</span>
-              <span className="text-brand-600">{sym}{total.toFixed(2)}</span>
+              <span>{sym}{total.toFixed(2)}</span>
             </div>
           </div>
 
@@ -102,8 +110,8 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
           )}
         </div>
 
-        {/* Actions */}
-        <div className="px-5 pb-5 flex flex-col gap-2 no-print">
+        {/* Actions — hidden when printing */}
+        <div className="no-print px-5 pb-5 flex flex-col gap-2">
           <button
             onClick={handleMarkPaid}
             className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium transition-colors"
@@ -115,7 +123,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
               onClick={() => window.print()}
               className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium transition-colors"
             >
-              Print
+              🖨️ Print
             </button>
             <button
               onClick={onClose}
@@ -124,6 +132,9 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
               Close
             </button>
           </div>
+          <p className="text-center text-gray-400 text-[10px] mt-1">
+            Tip: set paper size to <strong>80mm</strong> in your printer dialog for thermal receipts
+          </p>
         </div>
       </div>
     </div>

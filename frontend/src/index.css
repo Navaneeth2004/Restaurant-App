@@ -80,7 +80,56 @@
 .cat-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .cat-scroll::-webkit-scrollbar { display: none; }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   PRINT STYLES — optimised for 80mm thermal receipt printers
+   (also degrades gracefully to A4/letter if the printer is bigger)
+   ───────────────────────────────────────────────────────────────────────── */
 @media print {
-  body { background: white !important; color: black !important; }
+  /* 1. Page setup — 80mm wide, auto height, zero margins */
+  @page {
+    size: 80mm auto;   /* thermal standard; ignored by A4 printers, they use their default */
+    margin: 0;
+  }
+
+  /* 2. Hide everything on the page … */
+  body > * { display: none !important; }
+
+  /* 3. … except the bill modal receipt card */
+  /*    The modal uses a fixed overlay; for print we pull the inner white card
+        out of the overlay and let it flow naturally on the page.              */
+  .bill-print-area {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 4mm 4mm 6mm !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  /* 4. The dark overlay wrapper — make it transparent/static so only the
+        white card shows */
+  .bill-modal-overlay {
+    display: block !important;
+    position: static !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+  }
+
+  /* 5. Hide the action buttons (Print / Close / Mark Paid) on the receipt */
   .no-print { display: none !important; }
+
+  /* 6. Typography — compact for thermal */
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+  }
+
+  /* 7. Keep dashed dividers visible */
+  .border-dashed { border-style: dashed !important; border-color: #999 !important; }
 }
