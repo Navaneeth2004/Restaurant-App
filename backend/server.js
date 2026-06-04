@@ -33,13 +33,12 @@ app.use('/api/tables',     require('./routes/tables'));
 app.use('/api/orders',     require('./routes/orders'));
 app.use('/api/staff',      require('./routes/staff'));
 app.use('/api/reports',    require('./routes/reports'));
-app.use('/api/export',     require('./routes/export'));   // ← was missing!
+app.use('/api/export',     require('./routes/export'));
 
 // ── Serve React frontend build (production) ────────────────────────────────
 const buildDir = path.join(__dirname, '..', 'frontend', 'build');
 if (fs.existsSync(buildDir)) {
   app.use(express.static(buildDir));
-  // SPA fallback — any non-API route returns index.html
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
       res.sendFile(path.join(buildDir, 'index.html'));
@@ -57,26 +56,36 @@ io.on('connection', socket => {
   socket.on('disconnect', () => console.log('[Socket] Disconnected:', socket.id));
 });
 
-// ── Start — listen on 0.0.0.0 so LAN devices can reach it ─────────────────
-server.listen(PORT, '0.0.0.0', () => {
-  // Print LAN IP for convenience
-  const { networkInterfaces } = require('os');
-  const nets = networkInterfaces();
-  let lanIp = null;
-  for (const iface of Object.values(nets)) {
-    for (const net of iface) {
-      if (net.family === 'IPv4' && !net.internal) { lanIp = net.address; break; }
+// ── Start: initialise DB first, then listen ────────────────────────────────
+async function start() {
+  // Initialise sql.js database before handling any requests
+  const db = require('./db/database');
+  await db.init();
+
+  server.listen(PORT, '0.0.0.0', () => {
+    const { networkInterfaces } = require('os');
+    const nets = networkInterfaces();
+    let lanIp = null;
+    for (const iface of Object.values(nets)) {
+      for (const net of iface) {
+        if (net.family === 'IPv4' && !net.internal) { lanIp = net.address; break; }
+      }
+      if (lanIp) break;
     }
-    if (lanIp) break;
-  }
-  console.log('');
-  console.log('  ╔══════════════════════════════════════╗');
-  console.log('  ║   Restaurant APP — Server Running    ║');
-  console.log('  ╠══════════════════════════════════════╣');
-  console.log(`  ║  Local:   http://localhost:${PORT}      ║`);
-  if (lanIp) {
-  console.log(`  ║  Network: http://${lanIp}:${PORT}  ║`);
-  }
-  console.log('  ╚══════════════════════════════════════╝');
-  console.log('');
+    console.log('');
+    console.log('  ╔══════════════════════════════════════╗');
+    console.log('  ║   Restaurant APP — Server Running    ║');
+    console.log('  ╠══════════════════════════════════════╣');
+    console.log(`  ║  Local:   http://localhost:${PORT}      ║`);
+    if (lanIp) {
+    console.log(`  ║  Network: http://${lanIp}:${PORT}  ║`);
+    }
+    console.log('  ╚══════════════════════════════════════╝');
+    console.log('');
+  });
+}
+
+start().catch(err => {
+  console.error('[Server] Failed to start:', err);
+  process.exit(1);
 });
