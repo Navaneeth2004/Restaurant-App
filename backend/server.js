@@ -33,6 +33,7 @@ app.use('/api/tables',     require('./routes/tables'));
 app.use('/api/orders',     require('./routes/orders'));
 app.use('/api/staff',      require('./routes/staff'));
 app.use('/api/reports',    require('./routes/reports'));
+app.use('/api/export',     require('./routes/export'));   // ← was missing!
 
 // ── Serve React frontend build (production) ────────────────────────────────
 const buildDir = path.join(__dirname, '..', 'frontend', 'build');
@@ -44,7 +45,7 @@ if (fs.existsSync(buildDir)) {
       res.sendFile(path.join(buildDir, 'index.html'));
     }
   });
-  console.log('[Server] Serving frontend from', buildDir);
+  console.log(' [Server] Serving frontend from', buildDir);
 } else {
   console.log('[Server] No frontend build found. Run: cd frontend && npm run build');
   console.log('[Server] Or start React dev server separately: cd frontend && npm start');
@@ -70,7 +71,7 @@ server.listen(PORT, '0.0.0.0', () => {
   }
   console.log('');
   console.log('  ╔══════════════════════════════════════╗');
-  console.log('  ║   Restaurant APP — Server Running   ║');
+  console.log('  ║   Restaurant APP — Server Running    ║');
   console.log('  ╠══════════════════════════════════════╣');
   console.log(`  ║  Local:   http://localhost:${PORT}      ║`);
   if (lanIp) {

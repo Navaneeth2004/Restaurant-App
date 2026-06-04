@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getMenuItems, getCategories, createMenuItem, updateMenuItem, deleteMenuItem, importMenu } from '../../services/api';
+import { getMenuItems, getCategories, createMenuItem, updateMenuItem, deleteMenuItem } from '../../services/api';
 import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -126,7 +126,6 @@ export default function AdminMenu() {
 
   return (
     <div>
-      {/* Header — FIX #7: category filter in a proper pill bar, not inline with title */}
       <div className="mb-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -135,7 +134,6 @@ export default function AdminMenu() {
           </div>
           <button className="btn btn-brand btn-sm" onClick={() => setModal({})}>+ Add Item</button>
         </div>
-        {/* Category filter bar - scrollable */}
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
           <button onClick={() => setFilterCat('all')}
             className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${filterCat==='all' ? 'bg-brand-500 text-white border-brand-600' : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'}`}>
@@ -169,7 +167,6 @@ export default function AdminMenu() {
                   <span className="text-[10px] font-bold text-white uppercase tracking-widest bg-red-500/80 px-2 py-0.5 rounded-full">Sold Out</span>
                 </div>
               )}
-              {/* Toggle overlay */}
               <div className="absolute top-2 right-2">
                 <div className={`relative w-9 h-5 rounded-full border cursor-pointer transition-colors shadow-md ${item.available ? 'bg-brand-500 border-brand-600' : 'bg-zinc-700 border-zinc-600'}`}
                   onClick={() => toggleAvail(item)}>
@@ -210,10 +207,11 @@ export default function AdminMenu() {
   );
 }
 
-// ── Export / Import panel (rendered by AdminMenu as a separate export) ──────
+// ── Export / Import panel ────────────────────────────────────────────────────
 export function MenuExportImport() {
-  const [importing,   setImporting]   = React.useState(false);
+  const [importing,    setImporting]    = React.useState(false);
   const [importResult, setImportResult] = React.useState<string | null>(null);
+  const [importError,  setImportError]  = React.useState<string | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
   const toast   = useToast();
   const BASE    = process.env.REACT_APP_API_URL || window.location.origin;
@@ -225,16 +223,44 @@ export function MenuExportImport() {
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     setImporting(true);
     setImportResult(null);
+    setImportError(null);
+
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      const res  = await importMenu(data);
-      setImportResult(`Done — ${res.categories_added} categories added, ${res.items_added} items added, ${res.items_skipped} skipped (already exist)`);
+      let res;
+
+      if (file.name.endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
+        const fd = new FormData();
+        fd.append('menuzip', file);
+        res = await fetch(`${BASE}/api/export/menu/import`, { method: 'POST', body: fd });
+      } else if (file.name.endsWith('.json') || file.type === 'application/json') {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        res = await fetch(`${BASE}/api/export/menu/import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+      } else {
+        throw new Error('Please choose a .zip or .json file');
+      }
+
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Import failed');
+
+      const imgNote = result.images_imported > 0 ? `, ${result.images_imported} images` : '';
+      setImportResult(
+        `Done — ${result.categories_added} categories added, ` +
+        `${result.items_added} items added${imgNote}, ` +
+        `${result.items_skipped} skipped (already exist)`
+      );
       toast('Menu imported successfully', 'success');
     } catch (e: any) {
-      toast(e.response?.data?.error || 'Import failed — check file format', 'error');
+      const msg = e.message || 'Import failed — check file format';
+      setImportError(msg);
+      toast(msg, 'error');
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -244,35 +270,75 @@ export function MenuExportImport() {
   return (
     <div className="rounded-xl border border-surface-border bg-surface-card p-5">
       <h3 className="font-bold text-white text-sm mb-1">Export / Import Menu</h3>
-      <p className="text-zinc-500 text-xs mb-4">Move your menu to another device or create a backup</p>
+      <p className="text-zinc-500 text-xs mb-4">
+        Move your full menu — including item photos — to another device or create a backup
+      </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {/* Export */}
         <div className="rounded-lg bg-surface-raised border border-surface-border p-4">
           <div className="flex items-center gap-2 mb-2">
             <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
             <span className="text-white text-xs font-semibold">Export Menu</span>
           </div>
-          <p className="text-zinc-600 text-xs mb-3">Downloads a .json file with all categories and menu items (without images)</p>
+          <p className="text-zinc-600 text-xs mb-1">
+            Downloads a <span className="text-zinc-400 font-mono">.zip</span> file containing:
+          </p>
+          <ul className="text-zinc-600 text-xs mb-3 space-y-0.5 pl-2">
+            <li className="flex items-center gap-1.5">
+              <svg className="w-3 h-3 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+              menu.json — all categories &amp; items
+            </li>
+            <li className="flex items-center gap-1.5">
+              <svg className="w-3 h-3 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+              images/ — all item photos
+            </li>
+          </ul>
           <button className="btn btn-brand btn-sm w-full" onClick={handleExport}>
-            Download menu.json
+            Download menu.zip
           </button>
         </div>
-        {/* Import */}
+
         <div className="rounded-lg bg-surface-raised border border-surface-border p-4">
           <div className="flex items-center gap-2 mb-2">
             <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5m0 0L7.5 12m4.5-4.5V21" /></svg>
             <span className="text-white text-xs font-semibold">Import Menu</span>
           </div>
-          <p className="text-zinc-600 text-xs mb-3">Upload a previously exported menu.json. Existing items are kept, duplicates are skipped</p>
-          <button className="btn btn-sm w-full border-surface-border" onClick={() => fileRef.current?.click()} disabled={importing}>
-            {importing ? 'Importing…' : 'Choose menu.json'}
+          <p className="text-zinc-600 text-xs mb-3">
+            Upload a <span className="text-zinc-400 font-mono">.zip</span> exported from this app.
+            Existing items are kept; duplicates are skipped.
+            Also accepts old <span className="text-zinc-400 font-mono">.json</span> files (no images).
+          </p>
+          <button
+            className="btn btn-sm w-full border-surface-border"
+            onClick={() => fileRef.current?.click()}
+            disabled={importing}
+          >
+            {importing ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="w-3.5 h-3.5 border-2 border-zinc-400/40 border-t-zinc-400 rounded-full animate-spin" />
+                Importing…
+              </span>
+            ) : 'Choose .zip or .json'}
           </button>
-          <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={handleImportFile} />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".zip,.json,application/zip,application/x-zip-compressed,application/json"
+            className="hidden"
+            onChange={handleImportFile}
+          />
         </div>
       </div>
+
       {importResult && (
-        <div className="mt-3 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs">
+        <div className="mt-3 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-start gap-2">
+          <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
           {importResult}
+        </div>
+      )}
+      {importError && (
+        <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-start gap-2">
+          <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+          {importError}
         </div>
       )}
     </div>

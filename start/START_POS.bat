@@ -1,86 +1,89 @@
 @echo off
-setlocal enabledelayedexpansion
 title Restaurant POS
 color 0A
 
 echo.
 echo  ==========================================
-echo    Restaurant POS — Starting up...
+echo    Restaurant POS -- Starting up...
 echo  ==========================================
 echo.
 
-:: ── Kill any process on port 4000 ─────────────────────────────────────────
-echo  [CLEANUP] Clearing port 4000...
-for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr :4000') do (
-    taskkill /PID %%a /F >nul 2>&1
-)
-timeout /t 1 /nobreak >nul
+:: ── Locate project root ───────────────────────────────────────────────────
+set "SCRIPT_DIR=%~dp0"
+set "APP_ROOT=%SCRIPT_DIR%.."
+pushd "%APP_ROOT%"
+set "APP_ROOT=%CD%"
+popd
+echo  [INFO] App root: %APP_ROOT%
 
-:: ── Check Node.js ────────────────────────────────────────────────────────
+:: ── Check Node.js ─────────────────────────────────────────────────────────
+echo  [DEBUG] Checking for node...
 where node >nul 2>&1
-if %errorlevel% neq 0 (
-    echo.
-    echo  [ERROR] Node.js is not installed!
-    echo.
-    echo  Please install Node.js from:
-    echo    https://nodejs.org
-    echo.
-    echo  Choose the LTS version ^(e.g. v20^).
-    echo  After installing, restart this file.
-    echo.
+echo  [DEBUG] where node errorlevel: %errorlevel%
+if errorlevel 1 (
+    echo  [ERROR] Node.js not found in PATH
     pause
     exit /b 1
 )
-
 for /f "tokens=*" %%v in ('node -v') do set NODE_VER=%%v
 echo  [OK] Node.js %NODE_VER%
 
-:: ── Setup ────────────────────────────────────────────────────────────────
-set APP_ROOT=%~dp0..
-cd /d "%APP_ROOT%"
+:: ── Kill anything on port 4000 ────────────────────────────────────────────
+echo  [DEBUG] Clearing port 4000...
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":4000 "') do (
+    taskkill /PID %%a /F >nul 2>&1
+)
+timeout /t 1 /nobreak >nul
+echo  [DEBUG] Port cleared
 
-:: Backend: install only if node_modules missing
-if not exist "backend\node_modules" (
-    echo  [SETUP] Installing backend packages (first run only)...
-    cd backend
-    call npm install >nul 2>&1
-    if !errorlevel! neq 0 (
-        echo  [ERROR] Backend install failed. Check internet connection.
-        pause & exit /b 1
+:: ── Backend node_modules ──────────────────────────────────────────────────
+echo  [DEBUG] Checking backend node_modules...
+if not exist "%APP_ROOT%\backend\node_modules" (
+    echo  [SETUP] Installing backend packages...
+    cd /d "%APP_ROOT%\backend"
+    call npm install
+    if errorlevel 1 (
+        echo  [ERROR] Backend install failed.
+        pause
+        exit /b 1
     )
-    cd ..
     echo  [OK] Backend packages installed
+) else (
+    echo  [DEBUG] node_modules exists, skipping install
 )
 
-:: Frontend: build only if no build folder
-if not exist "frontend\build" (
-    echo  [SETUP] Building frontend (first run — takes 1-2 minutes)...
-    cd frontend
+:: ── Frontend build ────────────────────────────────────────────────────────
+echo  [DEBUG] Checking frontend build...
+if not exist "%APP_ROOT%\frontend\build" (
+    echo  [SETUP] Building frontend...
+    cd /d "%APP_ROOT%\frontend"
     if not exist "node_modules" (
-        call npm install --legacy-peer-deps >nul 2>&1
+        call npm install --legacy-peer-deps
+        if errorlevel 1 (
+            echo  [ERROR] Frontend npm install failed.
+            pause
+            exit /b 1
+        )
     )
-    call npm run build >nul 2>&1
-    if !errorlevel! neq 0 (
+    call npm run build
+    if errorlevel 1 (
         echo  [ERROR] Frontend build failed.
-        cd ..
-        pause & exit /b 1
+        pause
+        exit /b 1
     )
-    cd ..
     echo  [OK] Frontend built
+) else (
+    echo  [DEBUG] build folder exists, skipping build
 )
 
 echo  [OK] All ready
 echo.
 
 :: ── Get local IP ─────────────────────────────────────────────────────────
-set LOCAL_IP=localhost
-for /f "tokens=2 delims=:" %%a in ('ipconfig 2^>nul ^| findstr /R "IPv4.*192\."') do (set LOCAL_IP=%%a & goto :got_ip)
-for /f "tokens=2 delims=:" %%a in ('ipconfig 2^>nul ^| findstr /R "IPv4.*10\."')  do (set LOCAL_IP=%%a & goto :got_ip)
-for /f "tokens=2 delims=:" %%a in ('ipconfig 2^>nul ^| findstr /R "IPv4.*172\."') do (set LOCAL_IP=%%a & goto :got_ip)
-:got_ip
-set LOCAL_IP=%LOCAL_IP:~1%
+set "LOCAL_IP=unknown"
+for /f "tokens=2 delims=:" %%I in ('ipconfig ^| findstr /i "IPv4"') do set "LOCAL_IP=%%I"
+set "LOCAL_IP=%LOCAL_IP: =%"
 
-:: ── Print info ───────────────────────────────────────────────────────────
 echo  ==========================================
 echo.
 echo   POS is RUNNING!
@@ -94,9 +97,14 @@ echo.
 echo  ==========================================
 echo.
 
-:: Open browser
-start "" /b cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:4000"
+echo  [DEBUG] About to start browser...
+start "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:4000"
 
-:: Start server (foreground — window stays open)
+echo  [DEBUG] About to run node server.js from %APP_ROOT%\backend
 cd /d "%APP_ROOT%\backend"
+echo  [DEBUG] Current dir: %CD%
 node server.js
+
+echo.
+echo  Server has stopped. Press any key to close.
+pause
