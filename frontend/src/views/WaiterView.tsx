@@ -4,6 +4,7 @@ import { useSocket } from '../hooks/useSocket';
 import { useToast } from '../context/ToastContext';
 import { useSettings } from '../context/SettingsContext';
 import { useTick } from '../hooks/useTick';
+import { playChime, playDeliveryChime } from '../utils/sound';
 import BillModal from '../components/BillModal';
 import type { Table, MenuItem, Category, Order } from '../types';
 
@@ -373,7 +374,8 @@ export default function WaiterView() {
     if (selectedTable && order.table_id === selectedTable.id) {
       loadTableOrders(selectedTable.id);
     }
-    // Find table label for a friendly message
+    // Distinct "ding-dong" sound — different from kitchen new-order chime
+    playDeliveryChime();
     const tableLabel =
       tables.find(t => t.id === order.table_id)?.label || `Table ${order.table_id}`;
     toast(`🍽️ Order ready — ${tableLabel}`, 'success');

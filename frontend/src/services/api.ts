@@ -6,8 +6,42 @@ const BASE = ORIGIN + '/api';
 
 const api = axios.create({ baseURL: BASE, timeout: 10000 });
 
-api.interceptors.request.use(req => { console.log('[API]', req.method?.toUpperCase(), req.url); return req; });
-api.interceptors.response.use(res => res, err => { console.error('[API Error]', err.response?.status, err.response?.data || err.message); return Promise.reject(err); });
+// ── Auth token bootstrap ──────────────────────────────────────────────────
+// The server generates a random token on first run (saved to backend/data/api_token.txt).
+// The browser fetches it once from /api/auth/token (that endpoint itself is unprotected),
+// then attaches it automatically to every subsequent request as "Authorization: Bearer <token>".
+// This stops other devices on the same Wi-Fi from accessing the API without the token.
+let _token: string | null = null;
+
+async function ensureToken(): Promise<void> {
+  if (_token !== null) return;
+  try {
+    const res = await fetch(`${ORIGIN}/api/auth/token`);
+    const data = await res.json();
+    _token = data.token ?? '';   // null if auth is disabled
+  } catch {
+    _token = '';                 // network error — proceed without token (LAN-only)
+  }
+}
+
+// Attach token to every request
+api.interceptors.request.use(async config => {
+  await ensureToken();
+  if (_token) {
+    config.headers ||= {} as any;
+    config.headers['Authorization'] = `Bearer ${_token}`;
+  }
+  console.log('[API]', config.method?.toUpperCase(), config.url);
+  return config;
+});
+
+api.interceptors.response.use(
+  res => res,
+  err => {
+    console.error('[API Error]', err.response?.status, err.response?.data || err.message);
+    return Promise.reject(err);
+  }
+);
 
 export const API_ORIGIN = ORIGIN;
 
@@ -35,7 +69,6 @@ export const deleteTable       = (id: string): Promise<void> => api.delete(`/tab
 
 export const getActiveOrders   = (): Promise<Order[]>     => api.get('/orders/active').then(r => r.data);
 export const getTableOrder     = (tableId: string): Promise<Order | null> => api.get(`/orders/table/${tableId}`).then(r => r.data);
-// Returns ALL non-closed orders for a table — used for billing across multiple rounds
 export const getTableOrders    = (tableId: string): Promise<Order[]> => api.get(`/orders/table/${tableId}/all`).then(r => r.data);
 export const getOrderHistory   = (params?: Record<string, string>): Promise<Order[]> => api.get('/orders/history', { params }).then(r => r.data);
 export const submitOrder       = (data: { table_id: string; items: any[] }): Promise<Order> => api.post('/orders', data).then(r => r.data);

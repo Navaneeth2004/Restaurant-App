@@ -9,6 +9,8 @@
   "dependencies": {
     "adm-zip": "^0.5.10",
     "archiver": "^6.0.2",
+    "bcryptjs": "^2.4.3",
+    "bonjour-service": "^1.2.1",
     "sql.js": "^1.12.0",
     "cors": "^2.8.5",
     "express": "^4.18.2",

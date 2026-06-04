@@ -3,6 +3,7 @@ import { getReportToday, getReportHistory, getRevenueChart } from '../services/a
 import { useSettings } from '../context/SettingsContext';
 import type { Order, ReportSummary, RevenueDay } from '../types';
 
+const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 type Section = 'analytics' | 'history';
 
 export default function ReportsView() {
@@ -12,7 +13,7 @@ export default function ReportsView() {
   const [chart,         setChart]         = useState<RevenueDay[]>([]);
   const [dateFrom,      setDateFrom]      = useState('');
   const [dateTo,        setDateTo]        = useState('');
-  const [exportOpen,    setExportOpen]    = useState(false);   // FIX 1: collapsed by default
+  const [exportOpen,    setExportOpen]    = useState(false);
   const [exportFrom,    setExportFrom]    = useState('');
   const [exportTo,      setExportTo]      = useState('');
   const settings = useSettings();
@@ -41,49 +42,18 @@ export default function ReportsView() {
   const avgRev    = chart.length ? totalRev/chart.length : 0;
   const histTotal = history.reduce((s,o)=>s+o.items.reduce((ss,i)=>ss+i.price*i.quantity,0),0);
 
-  // ── Export helpers ────────────────────────────────────────────────────────
-  const buildExportData = async () => {
-    const p: Record<string,string> = {};
-    if (exportFrom) p.from = exportFrom;
-    if (exportTo)   p.to   = exportTo;
-    return getReportHistory(p);
+  // ── Professional export — delegates to backend /api/export/revenue ────────
+  // The backend produces a well-structured CSV with summary block, daily breakdown,
+  // top items, and full order detail — ready for accounting / tax filing.
+  const buildExportUrl = (fmt: 'csv' | 'json') => {
+    const params = new URLSearchParams({ format: fmt });
+    if (exportFrom) params.set('from', exportFrom);
+    if (exportTo)   params.set('to',   exportTo);
+    return `${API_ORIGIN}/api/export/revenue?${params.toString()}`;
   };
 
-  const exportCSV = async () => {
-    const orders = await buildExportData();
-    const taxPct = parseFloat(settings.tax_percent || '5') / 100;
-    const rows: string[][] = [
-      ['Order ID','Table','Date','Items','Subtotal','Tax','Total','Status']
-    ];
-    for (const o of orders) {
-      const sub = o.items.reduce((s,i)=>s+i.price*i.quantity,0);
-      rows.push([
-        o.id,
-        o.table_id,
-        new Date(o.created_at).toLocaleString(),
-        o.items.map(i=>`${i.quantity}x ${i.name}`).join('; '),
-        sub.toFixed(2),
-        (sub*taxPct).toFixed(2),
-        (sub*(1+taxPct)).toFixed(2),
-        o.status,
-      ]);
-    }
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    download(csv, 'text/csv', `revenue_report_${exportFrom||'all'}_${exportTo||'all'}.csv`);
-  };
-
-  const exportJSON = async () => {
-    const orders = await buildExportData();
-    download(JSON.stringify(orders, null, 2), 'application/json', `revenue_report.json`);
-  };
-
-  const download = (content: string, type: string, filename: string) => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([content], { type }));
-    a.download = filename;
-    a.click();
-  };
-  // ─────────────────────────────────────────────────────────────────────────
+  const exportCSV  = () => { window.open(buildExportUrl('csv'),  '_blank'); };
+  const exportJSON = () => { window.open(buildExportUrl('json'), '_blank'); };
 
   const RevenueChart = () => (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
@@ -299,7 +269,7 @@ export default function ReportsView() {
             )}
           </div>
 
-          {/* ── FIX 1: Export panel — collapsible, closed by default ── */}
+          {/* ── Export panel ── */}
           <div className="rounded-xl border border-surface-border bg-surface-card mb-4 overflow-hidden">
             <button
               className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-raised transition-colors"
@@ -308,7 +278,7 @@ export default function ReportsView() {
               <div className="flex items-center gap-2.5">
                 <svg className="w-4 h-4 text-zinc-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                 <span className="font-semibold text-white text-sm">Export Revenue Report</span>
-                <span className="text-zinc-600 text-xs hidden sm:block">CSV or JSON for accounting / tax filing</span>
+                <span className="text-zinc-600 text-xs hidden sm:block">Professional CSV with summary, daily & item breakdown</span>
               </div>
               <svg className={`w-4 h-4 text-zinc-500 transition-transform flex-shrink-0 ${exportOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
             </button>
@@ -333,13 +303,16 @@ export default function ReportsView() {
                   </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {['Total revenue','Tax collected','Avg order value','Items sold','Revenue excl. tax','Number of orders','Daily breakdown','Full order detail'].map(f => (
+                  {['Summary block','Tax collected','Avg order value','Items sold','Revenue excl. tax','Daily breakdown','Top items ranking','Full order detail'].map(f => (
                     <div key={f} className="flex items-center gap-1.5 text-[11px] text-zinc-500">
                       <svg className="w-3 h-3 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
                       {f}
                     </div>
                   ))}
                 </div>
+                <p className="text-zinc-600 text-xs mt-3">
+                  Leave dates blank to export all history. The CSV includes a full summary block at the top, making it ready for tax filing or accountant review.
+                </p>
               </div>
             )}
           </div>

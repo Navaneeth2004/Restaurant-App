@@ -1,0 +1,30 @@
+PROPRIETARY SOFTWARE LICENSE
+============================
+
+Copyright (c) 2025 Navaneeth. All Rights Reserved.
+
+This software ("Restaurant APP POS") is proprietary and confidential.
+
+GRANT OF LICENSE
+You are granted a non-exclusive, non-transferable license to install
+and use this software solely on the premises of the restaurant for
+which it was provided.
+
+RESTRICTIONS
+You may NOT, without prior written permission:
+  - Copy, redistribute, sell, sublicense, or share this software
+    with any third party.
+  - Modify, decompile, reverse-engineer, or create derivative works.
+  - Remove or alter any copyright, trademark, or proprietary notices.
+  - Use this software for any commercial purpose other than operating
+    the restaurant for which it was licensed.
+
+NO WARRANTY
+This software is provided "as is" without warranty of any kind.
+The author accepts no liability for any damages arising from its use.
+
+VIOLATIONS
+Unauthorised redistribution or commercial use will be pursued to the
+fullest extent permitted by applicable law.
+
+Contact: https://github.com/Navaneeth2004

@@ -11,10 +11,17 @@ const io     = new Server(server, { cors: { origin: '*' } });
 
 const PORT = process.env.PORT || 4000;
 
+// ── Auth (shared-secret token) ────────────────────────────────────────────
+const auth = require('./middleware/auth');
+auth.init();
+
 // ── Middleware ──────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Auth check on every API request (before routes)
+app.use(auth.middleware);
 
 // ── Attach io to every request ─────────────────────────────────────────────
 const attachIo = require('./middleware/attachIo')(io);
@@ -24,6 +31,9 @@ app.use(attachIo);
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
+
+// ── Auth token endpoint (unauthenticated — lets browser bootstrap itself) ──
+app.use('/api/auth', auth.tokenRouter());
 
 // ── API routes ─────────────────────────────────────────────────────────────
 app.use('/api/settings',   require('./routes/settings'));
@@ -56,9 +66,23 @@ io.on('connection', socket => {
   socket.on('disconnect', () => console.log('[Socket] Disconnected:', socket.id));
 });
 
+// ── mDNS / Bonjour — broadcast as restaurant.local ────────────────────────
+function startMdns() {
+  try {
+    // Try bonjour-service (pure JS, no build tools needed)
+    const { Bonjour } = require('bonjour-service');
+    const bonjour = new Bonjour();
+    bonjour.publish({ name: 'Restaurant POS', type: 'http', port: PORT });
+    console.log(`  [mDNS] Advertising as http://restaurant.local:${PORT}`);
+    process.on('exit', () => bonjour.destroy());
+  } catch (_) {
+    // bonjour-service not installed — mDNS just won't be available
+    // App still works fine via IP address
+  }
+}
+
 // ── Start: initialise DB first, then listen ────────────────────────────────
 async function start() {
-  // Initialise sql.js database before handling any requests
   const db = require('./db/database');
   await db.init();
 
@@ -80,8 +104,14 @@ async function start() {
     if (lanIp) {
     console.log(`  ║  Network: http://${lanIp}:${PORT}  ║`);
     }
+    console.log(`  ║  Easy URL: http://restaurant.local:${PORT} ║`);
     console.log('  ╚══════════════════════════════════════╝');
     console.log('');
+    console.log('  Tip: Waiters can bookmark http://restaurant.local:4000');
+    console.log('       (works on Windows 10+, macOS, iOS, Android)');
+    console.log('');
+
+    startMdns();
   });
 }
 
