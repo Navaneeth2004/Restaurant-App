@@ -4,17 +4,15 @@
  * Drop-in replacement for better-sqlite3.
  * Works on Node.js v18, v20, v22 — any version, no C++ build tools needed.
  *
- * Exposes the same synchronous API used throughout the routes:
+ * API mirrors better-sqlite3 (synchronous):
  *   db.prepare(sql).get(...params)
  *   db.prepare(sql).all(...params)
  *   db.prepare(sql).run(...params)
  *   db.exec(sql)
- *   db.pragma(...)
+ *   db.pragma(str)
  *   db.transaction(fn)
  *
- * Initialisation is async (sql.js uses asm.js/WASM under the hood).
- * server.js calls `await db.init()` before starting Express so that
- * all routes get a fully-ready db object via require().
+ * Call `await db.init()` once in server.js before app.listen().
  */
 
 'use strict';
@@ -31,15 +29,16 @@ const DB_PATH = path.join(dataDir, 'restaurant.db');
 let _raw           = null;   // sql.js Database instance
 let _inTransaction = false;  // prevents save() during transactions
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// ── Save helper ───────────────────────────────────────────────────────────
 function save() {
   if (_inTransaction) return;
-  const data    = _raw.export();
-  const tmp     = DB_PATH + '.tmp';
+  const data = _raw.export();
+  const tmp  = DB_PATH + '.tmp';
   fs.writeFileSync(tmp, Buffer.from(data));
   fs.renameSync(tmp, DB_PATH);
 }
 
+// ── Row helper ────────────────────────────────────────────────────────────
 function execToRows(results) {
   if (!results || !results.length) return [];
   const { columns, values } = results[0];
@@ -48,24 +47,46 @@ function execToRows(results) {
   );
 }
 
+// ── Param helper ──────────────────────────────────────────────────────────
 /**
- * Normalise variadic params to an array or named-param object.
- * Mirrors better-sqlite3's behaviour:
- *   .get(1, 2)   → [1, 2]
- *   .get([1, 2]) → [1, 2]
- *   .get({a: 1}) → {a: 1}   (named params)
- *   .get(null)   → [null]
+ * Normalise variadic args into what sql.js expects:
+ *   .get(1, 2, 3)  → [1, 2, 3]
+ *   .get([1, 2])   → [1, 2]
+ *   .get({a: 1})   → {a: 1}   (named params)
+ *   .get(null)     → [null]
+ *
+ * Also sanitises undefined → null because sql.js throws on undefined values.
  */
 function flatParams(args) {
-  if (args.length === 0) return [];
-  if (args.length === 1) {
+  let params;
+  if (args.length === 0) {
+    params = [];
+  } else if (args.length === 1) {
     const a = args[0];
-    if (a === null || a === undefined) return [a];
-    if (Array.isArray(a))              return a;
-    if (typeof a === 'object')         return a; // named params
-    return [a];
+    if (a === null || a === undefined) {
+      params = [null];
+    } else if (Array.isArray(a)) {
+      params = a;
+    } else if (typeof a === 'object') {
+      params = a; // named params object
+    } else {
+      params = [a];
+    }
+  } else {
+    params = Array.from(args);
   }
-  return Array.from(args);
+
+  // Sanitise: sql.js throws on undefined values — convert to null
+  if (Array.isArray(params)) {
+    return params.map(p => (p === undefined ? null : p));
+  }
+  // Named params object
+  if (params && typeof params === 'object') {
+    return Object.fromEntries(
+      Object.entries(params).map(([k, v]) => [k, v === undefined ? null : v])
+    );
+  }
+  return params;
 }
 
 // ── Statement wrapper ─────────────────────────────────────────────────────
@@ -76,20 +97,23 @@ class Statement {
 
   /** Returns first matching row as a plain object, or undefined. */
   get(...args) {
-    return execToRows(_raw.exec(this._sql, flatParams(args)))[0];
+    const p = flatParams(args);
+    return execToRows(_raw.exec(this._sql, p))[0];
   }
 
   /** Returns all matching rows as an array of plain objects. */
   all(...args) {
-    return execToRows(_raw.exec(this._sql, flatParams(args)));
+    const p = flatParams(args);
+    return execToRows(_raw.exec(this._sql, p));
   }
 
   /**
    * Executes a write statement.
-   * Returns { changes, lastInsertRowid } (same shape as better-sqlite3).
+   * Returns { changes, lastInsertRowid } matching better-sqlite3.
    */
   run(...args) {
-    _raw.run(this._sql, flatParams(args));
+    const p = flatParams(args);
+    _raw.run(this._sql, p);
     const changes         = _raw.getRowsModified();
     const lastInsertRowid = execToRows(_raw.exec('SELECT last_insert_rowid() as id'))[0]?.id;
     save();
@@ -97,34 +121,25 @@ class Statement {
   }
 }
 
-// ── Public db interface ───────────────────────────────────────────────────
+// ── Public db object ──────────────────────────────────────────────────────
 const db = {
-  /** Returns a Statement (lazy; no SQL is run yet). */
   prepare(sql) {
     return new Statement(sql);
   },
 
-  /**
-   * Runs one or more semicolon-separated SQL statements.
-   * Equivalent to better-sqlite3's db.exec().
-   */
   exec(sql) {
     _raw.run(sql);
     save();
     return db;
   },
 
-  /** Silently ignores inapplicable pragmas (WAL mode, foreign keys). */
   pragma(str) {
+    // WAL mode and foreign_keys don't apply to sql.js — silently ignore them
     try {
       if (!/journal_mode|foreign_keys/i.test(str)) _raw.run(`PRAGMA ${str}`);
     } catch (_) { /* ignore */ }
   },
 
-  /**
-   * Wraps fn in a BEGIN/COMMIT transaction.
-   * Returns a callable that executes fn transactionally.
-   */
   transaction(fn) {
     return function (...args) {
       _inTransaction = true;
@@ -144,8 +159,8 @@ const db = {
   },
 
   /**
-   * Initialises sql.js and loads (or creates) the database file.
-   * Must be awaited once before the server starts handling requests.
+   * Initialises sql.js and loads or creates the database file.
+   * Must be awaited once in server.js before app.listen().
    */
   async init() {
     const initSqlJs = require('sql.js/dist/sql-asm.js');
@@ -195,6 +210,7 @@ function _initSchema() {
     )
   `);
 
+  // sort_order is included in schema so tables.js migration block is not needed
   _raw.run(`
     CREATE TABLE IF NOT EXISTS tables (
       id         TEXT    PRIMARY KEY,
@@ -242,8 +258,8 @@ function _initSchema() {
     )
   `);
 
-  // ── Seed settings ──────────────────────────────────────────────────────
-  const settingsPairs = [
+  // Seed settings (INSERT OR IGNORE = skip if already set)
+  const pairs = [
     ['restaurant_name', 'ABC Restaurant'],
     ['address',         '123 Main Street, City'],
     ['phone',           '+91 98765 43210'],
@@ -253,21 +269,19 @@ function _initSchema() {
     ['currency_symbol', '₹'],
     ['logo_url',        ''],
   ];
-  for (const [k, v] of settingsPairs) {
+  for (const [k, v] of pairs) {
     _raw.run('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', [k, v]);
   }
 
-  // ── Seed categories ────────────────────────────────────────────────────
-  const catCount = execToRows(_raw.exec('SELECT COUNT(*) as c FROM categories'))[0]?.c || 0;
-  if (!catCount) {
+  // Seed categories
+  if (!execToRows(_raw.exec('SELECT COUNT(*) as c FROM categories'))[0]?.c) {
     ['Starters', 'Mains', 'Sides', 'Drinks', 'Desserts'].forEach((n, i) => {
       _raw.run('INSERT INTO categories (name, sort_order) VALUES (?, ?)', [n, i]);
     });
   }
 
-  // ── Seed tables ────────────────────────────────────────────────────────
-  const tableCount = execToRows(_raw.exec('SELECT COUNT(*) as c FROM tables'))[0]?.c || 0;
-  if (!tableCount) {
+  // Seed tables
+  if (!execToRows(_raw.exec('SELECT COUNT(*) as c FROM tables'))[0]?.c) {
     for (let i = 1; i <= 8; i++) {
       _raw.run(
         'INSERT INTO tables (id, label, seats, sort_order) VALUES (?, ?, ?, ?)',
@@ -276,37 +290,34 @@ function _initSchema() {
     }
   }
 
-  // ── Seed menu items ────────────────────────────────────────────────────
-  const menuCount = execToRows(_raw.exec('SELECT COUNT(*) as c FROM menu_items'))[0]?.c || 0;
-  if (!menuCount) {
-    const cats    = execToRows(_raw.exec('SELECT id, name FROM categories'));
-    const catMap  = Object.fromEntries(cats.map(c => [c.name, c.id]));
-    const items   = [
+  // Seed menu items
+  if (!execToRows(_raw.exec('SELECT COUNT(*) as c FROM menu_items'))[0]?.c) {
+    const cats   = execToRows(_raw.exec('SELECT id, name FROM categories'));
+    const catMap = Object.fromEntries(cats.map(c => [c.name, c.id]));
+    [
       ['Crispy Wings',    'Fried chicken wings with house sauce',  8.99,  'Starters'],
       ['Chicken Strips',  'Golden fried chicken strips',           7.49,  'Starters'],
       ['Loaded Fries',    'Fries with cheese and jalapeños',       5.99,  'Starters'],
-      ['Grilled Chicken', 'Half grilled chicken with herbs',       13.99, 'Mains'],
-      ['Chicken Burger',  'Crispy fillet with lettuce and mayo',   11.99, 'Mains'],
-      ['Spicy Sandwich',  'Spicy chicken fillet sandwich',         10.49, 'Mains'],
-      ['Coleslaw',        'House-made creamy coleslaw',            2.99,  'Sides'],
-      ['Garlic Bread',    'Toasted garlic bread',                  3.49,  'Sides'],
-      ['Cola',            '330ml can',                             2.49,  'Drinks'],
-      ['Lemonade',        'Fresh squeezed lemonade',               2.99,  'Drinks'],
-      ['Water',           'Still or sparkling 500ml',              1.49,  'Drinks'],
+      ['Grilled Chicken', 'Half grilled chicken with herbs',       13.99, 'Mains'  ],
+      ['Chicken Burger',  'Crispy fillet with lettuce and mayo',   11.99, 'Mains'  ],
+      ['Spicy Sandwich',  'Spicy chicken fillet sandwich',         10.49, 'Mains'  ],
+      ['Coleslaw',        'House-made creamy coleslaw',            2.99,  'Sides'  ],
+      ['Garlic Bread',    'Toasted garlic bread',                  3.49,  'Sides'  ],
+      ['Cola',            '330ml can',                             2.49,  'Drinks' ],
+      ['Lemonade',        'Fresh squeezed lemonade',               2.99,  'Drinks' ],
+      ['Water',           'Still or sparkling 500ml',              1.49,  'Drinks' ],
       ['Chocolate Cake',  'Warm chocolate fudge cake',             5.49,  'Desserts'],
       ['Ice Cream',       'Two scoops of vanilla ice cream',       3.99,  'Desserts'],
-    ];
-    for (const [n, d, p, cat] of items) {
+    ].forEach(([n, d, p, cat]) => {
       _raw.run(
         'INSERT INTO menu_items (name, description, price, category_id) VALUES (?, ?, ?, ?)',
         [n, d, p, catMap[cat]]
       );
-    }
+    });
   }
 
-  // ── Seed staff ─────────────────────────────────────────────────────────
-  const staffCount = execToRows(_raw.exec('SELECT COUNT(*) as c FROM staff'))[0]?.c || 0;
-  if (!staffCount) {
+  // Seed staff
+  if (!execToRows(_raw.exec('SELECT COUNT(*) as c FROM staff'))[0]?.c) {
     _raw.run("INSERT INTO staff (name, pin, role) VALUES ('Admin',    '0000', 'admin')");
     _raw.run("INSERT INTO staff (name, pin, role) VALUES ('Waiter 1', '1111', 'waiter')");
     _raw.run("INSERT INTO staff (name, pin, role) VALUES ('Kitchen',  '2222', 'kitchen')");

@@ -2,14 +2,8 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../db/database');
 
-// Ensure sort_order column exists (migration)
-try {
-  db.exec('ALTER TABLE tables ADD COLUMN sort_order INTEGER DEFAULT 0');
-  // Initialize sort_order based on id
-  const tables = db.prepare('SELECT id FROM tables').all();
-  const upd = db.prepare('UPDATE tables SET sort_order = ? WHERE id = ?');
-  tables.forEach((t, i) => upd.run(i, t.id));
-} catch(e) { /* column already exists */ }
+// NOTE: sort_order column is included in the CREATE TABLE schema in database.js
+// No runtime migration needed here.
 
 router.get('/', (req, res) => {
   const tables = db.prepare('SELECT * FROM tables ORDER BY sort_order ASC, id ASC').all();
@@ -41,7 +35,7 @@ router.put('/:id', (req, res) => {
 
 // PATCH reorder tables
 router.patch('/reorder', (req, res) => {
-  const { order } = req.body; // array of { id, sort_order }
+  const { order } = req.body;
   if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
   const upd = db.prepare('UPDATE tables SET sort_order = ? WHERE id = ?');
   const reorder = db.transaction(() => { order.forEach(({ id, sort_order }) => upd.run(sort_order, id)); });

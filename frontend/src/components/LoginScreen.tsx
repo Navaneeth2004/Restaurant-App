@@ -4,33 +4,37 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useToast } from '../context/ToastContext';
 
-// Admin PIN recovery: if the admin has forgotten their PIN, they can reset it
-// via a special flow that requires knowing the restaurant name (set in settings)
-const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
-
 export default function LoginScreen() {
-  const [pin, setPin]         = useState('');
+  const [pin,     setPin]     = useState('');
   const [loading, setLoading] = useState(false);
   const { login }  = useAuth();
   const settings   = useSettings();
   const toast      = useToast();
 
-  const handleDigit = async (d: string) => {
-    if (pin.length >= 6 || loading) return;
+  const tryLogin = async (p: string) => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      const user = await verifyPin(p);
+      login(user);
+    } catch {
+      toast('Incorrect PIN — try again', 'error');
+      setTimeout(() => setPin(''), 400);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDigit = (d: string) => {
+    if (loading) return;
     const next = pin + d;
+    if (next.length > 6) return;
     setPin(next);
-    if (next.length >= 4) {
-      setLoading(true);
-      try {
-        const user = await verifyPin(next);
-        login(user);
-      } catch {
-        // FIX 4: Show error as toast, not inline label
-        toast('Incorrect PIN — try again', 'error');
-        setTimeout(() => { setPin(''); }, 400);
-      } finally {
-        setLoading(false);
-      }
+    // Auto-submit at 4 digits (most common PIN length)
+    // Users with 5-6 digit PINs tap the ✓ button
+    if (next.length === 4) {
+      // Small delay so the last dot fills before submit
+      setTimeout(() => tryLogin(next), 120);
     }
   };
 
@@ -38,7 +42,11 @@ export default function LoginScreen() {
     if (!loading) setPin(p => p.slice(0, -1));
   };
 
-  const digits = [1,2,3,4,5,6,7,8,9,'',0,'⌫'];
+  const handleSubmit = () => {
+    if (pin.length >= 4 && !loading) tryLogin(pin);
+  };
+
+  const digits = [1, 2, 3, 4, 5, 6, 7, 8, 9, '', 0, '⌫'];
 
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center p-4">
@@ -61,15 +69,15 @@ export default function LoginScreen() {
 
         {/* Card */}
         <div className="card p-6">
-          {/* PIN dots */}
+          {/* PIN dots — show up to 6 */}
           <div className="flex justify-center gap-3 mb-6">
-            {[0,1,2,3].map(i => (
+            {[0, 1, 2, 3, 4, 5].map(i => (
               <div
                 key={i}
-                className={`w-3.5 h-3.5 rounded-full border-2 transition-all duration-200 ${
+                className={`w-3 h-3 rounded-full border-2 transition-all duration-200 ${
                   i < pin.length
                     ? 'bg-brand-500 border-brand-500 scale-110'
-                    : 'bg-transparent border-zinc-600'
+                    : 'bg-transparent border-zinc-700'
                 }`}
               />
             ))}
@@ -95,9 +103,27 @@ export default function LoginScreen() {
               );
             })}
           </div>
+
+          {/* Submit button — shown for 5-6 digit PINs (after 4 digits entered) */}
+          {pin.length >= 5 && (
+            <button
+              onClick={handleSubmit}
+              disabled={loading || pin.length < 4}
+              className="mt-3 w-full h-12 rounded-xl bg-brand-500 hover:bg-brand-600 border border-brand-600 text-white font-semibold text-sm transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {loading
+                ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                : <>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                    </svg>
+                    Log In
+                  </>
+              }
+            </button>
+          )}
         </div>
 
-        {/* FIX 4: No default PINs shown — just a subtle help link */}
         <p className="text-center text-zinc-700 text-xs mt-5">
           Contact your manager if you've forgotten your PIN
         </p>
