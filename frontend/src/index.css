@@ -85,51 +85,49 @@
    (also degrades gracefully to A4/letter if the printer is bigger)
    ───────────────────────────────────────────────────────────────────────── */
 @media print {
-  /* 1. Page setup — 80mm wide, auto height, zero margins */
   @page {
-    size: 80mm auto;   /* thermal standard; ignored by A4 printers, they use their default */
+    size: 80mm auto;
     margin: 0;
   }
 
-  /* 2. Hide everything on the page … */
-  body > * { display: none !important; }
+  /* Hide everything using visibility so nested elements can override */
+  body * {
+    visibility: hidden !important;
+  }
 
-  /* 3. … except the bill modal receipt card */
-  /*    The modal uses a fixed overlay; for print we pull the inner white card
-        out of the overlay and let it flow naturally on the page.              */
+  /* Show only the bill receipt card and all its children */
+  .bill-print-area,
+  .bill-print-area * {
+    visibility: visible !important;
+  }
+
+  /* Pull the receipt card to the top-left corner of the page */
   .bill-print-area {
-    display: block !important;
-    position: static !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
     width: 100% !important;
     max-width: 100% !important;
     box-shadow: none !important;
     border-radius: 0 !important;
-    padding: 4mm 4mm 6mm !important;
     background: white !important;
     color: black !important;
+    padding: 4mm 4mm 6mm !important;
   }
 
-  /* 4. The dark overlay wrapper — make it transparent/static so only the
-        white card shows */
-  .bill-modal-overlay {
-    display: block !important;
-    position: static !important;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    padding: 0 !important;
+  /* Hide the action buttons inside the receipt */
+  .no-print {
+    display: none !important;
   }
 
-  /* 5. Hide the action buttons (Print / Close / Mark Paid) on the receipt */
-  .no-print { display: none !important; }
-
-  /* 6. Typography — compact for thermal */
   body {
     background: white !important;
-    color: black !important;
     font-size: 11px !important;
     line-height: 1.4 !important;
   }
 
-  /* 7. Keep dashed dividers visible */
-  .border-dashed { border-style: dashed !important; border-color: #999 !important; }
+  .border-dashed {
+    border-style: dashed !important;
+    border-color: #999 !important;
+  }
 }
