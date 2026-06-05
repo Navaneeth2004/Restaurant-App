@@ -88,6 +88,29 @@ Open that URL on any phone or tablet browser — no app install needed.
 
 ---
 
+## Setting up the easy URL (restaurant.local:4000)
+
+By default the POS runs at `http://localhost:4000` and `http://192.168.1.x:4000`.
+You can also set up a friendly URL `http://restaurant.local:4000` on the POS computer:
+
+1. Press the **Windows key** and search for **Notepad**
+2. Right-click Notepad → **Run as administrator**
+3. In Notepad, click **File → Open**
+4. In the address bar of the dialog, type `C:\Windows\System32\drivers\etc\` and press Enter
+5. Change the file filter dropdown from `Text Documents (*.txt)` to **All Files**
+6. Open the file called **hosts** (type: File — NOT the iCalendar one)
+7. Scroll to the very bottom, press Enter on the last line, and add:
+   ```
+   127.0.0.1    restaurant.local
+   ```
+8. Click **File → Save**
+9. Restart Chrome and go to `http://restaurant.local:4000`
+
+> **Note:** This only works on the POS computer itself.
+> For phones and tablets, use the IP address URL instead.
+
+---
+
 ## Troubleshooting
 
 **"Node.js is not installed" error**
@@ -103,6 +126,11 @@ Open that URL on any phone or tablet browser — no app install needed.
 → Make sure phone is on the same Wi-Fi as the POS computer
 → Check that the IP shown in the terminal matches your network
 → Try running ADD_FIREWALL_RULE.bat (right-click → Run as administrator)
+
+**restaurant.local not working**
+→ Follow the "Setting up the easy URL" section above
+→ Make sure you opened Notepad as administrator before editing the hosts file
+→ Restart Chrome after saving the hosts file
 
 **Data lost after restart**
 → Data is in `backend/data/restaurant.db` — this file persists across restarts

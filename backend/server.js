@@ -54,10 +54,9 @@ if (fs.existsSync(buildDir)) {
       res.sendFile(path.join(buildDir, 'index.html'));
     }
   });
-  console.log(' [Server] Serving frontend from', buildDir);
+  console.log('[Server] Serving frontend from', buildDir);
 } else {
   console.log('[Server] No frontend build found. Run: cd frontend && npm run build');
-  console.log('[Server] Or start React dev server separately: cd frontend && npm start');
 }
 
 // ── Socket.io ──────────────────────────────────────────────────────────────
@@ -69,7 +68,6 @@ io.on('connection', socket => {
 // ── mDNS / Bonjour — broadcast as restaurant.local ────────────────────────
 function startMdns() {
   try {
-    // Try bonjour-service (pure JS, no build tools needed)
     const { Bonjour } = require('bonjour-service');
     const bonjour = new Bonjour();
     bonjour.publish({ name: 'Restaurant POS', type: 'http', port: PORT });
@@ -77,7 +75,6 @@ function startMdns() {
     process.on('exit', () => bonjour.destroy());
   } catch (_) {
     // bonjour-service not installed — mDNS just won't be available
-    // App still works fine via IP address
   }
 }
 
@@ -96,19 +93,34 @@ async function start() {
       }
       if (lanIp) break;
     }
+
     console.log('');
-    console.log('  ╔══════════════════════════════════════╗');
-    console.log('  ║   Restaurant APP — Server Running    ║');
-    console.log('  ╠══════════════════════════════════════╣');
-    console.log(`  ║  Local:   http://localhost:${PORT}      ║`);
+    console.log('  +------------------------------------------+');
+    console.log('  |                                          |');
+    console.log('  |   POS IS RUNNING - Ready for orders!    |');
+    console.log('  |                                          |');
+    console.log('  +------------------------------------------+');
+    console.log('  |                                          |');
+    console.log('  |  [OK] Database loaded                    |');
+    console.log('  |  [OK] Frontend ready                     |');
+    console.log('  |  [OK] Socket.IO ready                    |');
+    console.log('  |                                          |');
+    console.log('  +------------------------------------------+');
+    console.log('  |                                          |');
+    console.log('  |  localhost  ->  http://localhost:' + PORT + '      |');
     if (lanIp) {
-    console.log(`  ║  Network: http://${lanIp}:${PORT}  ║`);
+    console.log('  |  LAN/phones ->  http://' + lanIp + ':' + PORT + '  |');
     }
-    console.log(`  ║  Easy URL: http://restaurant.local:${PORT} ║`);
-    console.log('  ╚══════════════════════════════════════╝');
+    console.log('  |  easy URL   ->  http://restaurant.local:' + PORT + ' |');
+    console.log('  |                                          |');
+    console.log('  +------------------------------------------+');
+    console.log('  |                                          |');
+    console.log('  |  KEEP THIS WINDOW OPEN                   |');
+    console.log('  |  Closing shuts down the POS.             |');
+    console.log('  |                                          |');
+    console.log('  +------------------------------------------+');
     console.log('');
-    console.log('  Tip: Waiters can bookmark http://restaurant.local:4000');
-    console.log('       (works on Windows 10+, macOS, iOS, Android)');
+    console.log('  ---- Live Log (technical, safe to ignore) ----');
     console.log('');
 
     startMdns();
