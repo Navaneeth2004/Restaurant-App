@@ -5,9 +5,9 @@ color 0A
 cls
 
 echo.
-echo  ============================================
-echo    RESTAURANT POS  ^|  Starting up...
-echo  ============================================
+echo  +==============================================+
+echo  .   RESTAURANT POS  --  Starting up...        .
+echo  +==============================================+
 echo.
 
 :: ── Locate project root ───────────────────────────────────────────────────
@@ -27,19 +27,19 @@ if errorlevel 1 (
     exit /b 1
 )
 for /f "tokens=*" %%v in ('node -v') do set NODE_VER=%%v
-echo  [OK] Node.js %NODE_VER%
+echo  [OK]  Node.js %NODE_VER%
 
 :: ── Kill anything on port 4000 ────────────────────────────────────────────
-echo  [..] Clearing port 4000...
+echo  [...] Clearing port 4000...
 for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":4000 "') do (
     taskkill /PID %%a /F >nul 2>&1
 )
-echo  [OK] Port cleared
+echo  [OK]  Port cleared
 
 :: ── Backend node_modules ──────────────────────────────────────────────────
-echo  [..] Checking backend packages...
+echo  [...] Checking backend packages...
 if not exist "%APP_ROOT%\backend\node_modules\express" (
-    echo  [..] Installing backend packages...
+    echo  [...] Installing backend packages...
     cd /d "%APP_ROOT%\backend"
     call npm install
     if errorlevel 1 (
@@ -49,12 +49,12 @@ if not exist "%APP_ROOT%\backend\node_modules\express" (
         exit /b 1
     )
 )
-echo  [OK] Backend ready
+echo  [OK]  Backend ready
 
 :: ── Frontend build ────────────────────────────────────────────────────────
-echo  [..] Checking frontend build...
+echo  [...] Checking frontend build...
 if not exist "%APP_ROOT%\frontend\build\index.html" (
-    echo  [..] Building frontend...
+    echo  [...] Building frontend...
     cd /d "%APP_ROOT%\frontend"
     if not exist "node_modules\.bin\react-scripts.cmd" (
         call npm install --legacy-peer-deps
@@ -73,7 +73,7 @@ if not exist "%APP_ROOT%\frontend\build\index.html" (
         exit /b 1
     )
 )
-echo  [OK] Frontend ready
+echo  [OK]  Frontend ready
 
 :: ── Get local IP ─────────────────────────────────────────────────────────
 set "LOCAL_IP=unknown"
@@ -85,18 +85,24 @@ for /f "tokens=2 delims=:" %%I in ('ipconfig ^| findstr /i "IPv4"') do (
 
 :: ── Banner ────────────────────────────────────────────────────────────────
 echo.
-echo  +------------------------------------------+
-echo  ^|   POS IS RUNNING - Ready for orders!     ^|
-echo  +------------------------------------------+
-echo  ^|  This PC :  http://localhost:4000        ^|
-echo  ^|  Phones  :  http://%LOCAL_IP%:4000   ^|
-echo  ^|  Easy URL:  http://restaurant.local:4000 ^|
-echo  +------------------------------------------+
-echo  ^|  KEEP THIS WINDOW OPEN.                  ^|
-echo  ^|  Closing it shuts down the POS.          ^|
-echo  +------------------------------------------+
+echo  +==============================================+
+echo  .                                             .
+echo  .   >>  POS IS LIVE -- Ready for orders!      .
+echo  .                                             .
+echo  +----------------------------------------------+
+echo  .                                             .
+echo  .   This PC   :  http://localhost:4000        .
+echo  .   Network   :  http://%LOCAL_IP%:4000
+echo  .   Easy URL  :  http://restaurant.local:4000 .
+echo  .                                             .
+echo  +----------------------------------------------+
+echo  .                                             .
+echo  .   !! KEEP THIS WINDOW OPEN !!               .
+echo  .      Closing it shuts down the POS.         .
+echo  .                                             .
+echo  +==============================================+
 echo.
-echo  ---- Server Log (technical, safe to ignore) ----
+echo  ----------------  Server Log (safe to ignore)  ----------------
 echo.
 
 :: ── Open browser ─────────────────────────────────────────────────────────
@@ -104,17 +110,17 @@ start http://localhost:4000
 
 :: ── Start server ─────────────────────────────────────────────────────────
 cd /d "%APP_ROOT%\backend"
-echo  [..] Starting server...
+echo  [...] Starting server...
 node server.js
 set NODE_EXIT=%errorlevel%
 
 :: ── If we reach here, server has stopped ─────────────────────────────────
 echo.
 color 0C
-echo  ============================================
-echo    SERVER STOPPED  (exit code: %NODE_EXIT%)
-echo  ============================================
-echo  Check the log above for errors.
+echo  +==============================================+
+echo  .   SERVER STOPPED  (exit code: %NODE_EXIT%)
+echo  .   Check the log above for error details.    .
+echo  +==============================================+
 echo.
 color 07
 pause

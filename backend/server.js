@@ -71,7 +71,7 @@ function startMdns() {
     const { Bonjour } = require('bonjour-service');
     const bonjour = new Bonjour();
     bonjour.publish({ name: 'Restaurant POS', type: 'http', port: PORT });
-    console.log(`  [mDNS] Advertising as http://restaurant.local:${PORT}`);
+    console.log(`  \x1b[92m\x1b[1m[+]\x1b[0m \x1b[97mmDNS        \x1b[0m \x1b[96madvertising as restaurant.local\x1b[0m`);
     process.on('exit', () => bonjour.destroy());
   } catch (_) {
     // bonjour-service not installed — mDNS just won't be available
@@ -94,33 +94,69 @@ async function start() {
       if (lanIp) break;
     }
 
+    // ── ANSI colour helpers ──────────────────────────────────────────────
+    const c = {
+      reset:   '\x1b[0m',
+      bold:    '\x1b[1m',
+      dim:     '\x1b[2m',
+      bGreen:  '\x1b[92m',
+      bCyan:   '\x1b[96m',
+      bYellow: '\x1b[93m',
+      white:   '\x1b[97m',
+      gray:    '\x1b[90m',
+    };
+    const G   = c.bGreen  + c.bold;
+    const Y   = c.bYellow + c.bold;
+    const CY  = c.bCyan;
+    const DIM = c.dim + c.gray;
+    const R   = c.reset;
+
+    // Strip ANSI codes to measure real visible length
+    const visLen = (s) => s.replace(/\x1b\[[0-9;]*m/g, '').length;
+
+    const INNER = 52; // visible chars between borders (not counting the border chars themselves)
+    const row = (styledStr) => {
+      const spaces = INNER - visLen(styledStr);
+      return `  ${DIM}║${R} ${styledStr}${' '.repeat(Math.max(0, spaces))} ${DIM}║${R}`;
+    };
+    const blank = row('');
+    const sep   = `  ${DIM}╠${'═'.repeat(INNER + 2)}╣${R}`;
+    const top   = `  ${DIM}╔${'═'.repeat(INNER + 2)}╗${R}`;
+    const bot   = `  ${DIM}╚${'═'.repeat(INNER + 2)}╝${R}`;
+    const htop  = `  ${DIM}+${'─'.repeat(INNER + 2)}+${R}`;
+    // [+] uses 3 ASCII chars — safe on all Windows terminals
+    const ok    = (label, val) =>
+      `  ${G}[+]${R} ${c.white}${label.padEnd(12)}${R} ${CY}${val}${R}`;
+
     console.log('');
-    console.log('  +------------------------------------------+');
-    console.log('  |                                          |');
-    console.log('  |   POS IS RUNNING - Ready for orders!    |');
-    console.log('  |                                          |');
-    console.log('  +------------------------------------------+');
-    console.log('  |                                          |');
-    console.log('  |  [OK] Database loaded                    |');
-    console.log('  |  [OK] Frontend ready                     |');
-    console.log('  |  [OK] Socket.IO ready                    |');
-    console.log('  |                                          |');
-    console.log('  +------------------------------------------+');
-    console.log('  |                                          |');
-    console.log('  |  localhost  ->  http://localhost:' + PORT + '      |');
+    console.log(htop);
+    console.log(row(`${Y}RESTAURANT POS${R} ${c.gray}-- Point of Sale${R}`));
+    console.log(htop);
+    console.log('');
+    console.log(ok('Database',  'loaded'));
+    console.log(ok('Frontend',  'ready'));
+    console.log(ok('Socket.IO', 'ready'));
+    console.log('');
+    console.log(top);
+    console.log(blank);
+    console.log(row(`${G}>> POS IS LIVE -- Ready for orders!${R}`));
+    console.log(blank);
+    console.log(sep);
+    console.log(blank);
+    console.log(row(`${DIM}This PC   :${R} ${CY}http://localhost:${PORT}${R}`));
     if (lanIp) {
-    console.log('  |  LAN/phones ->  http://' + lanIp + ':' + PORT + '  |');
+      console.log(row(`${DIM}Network   :${R} ${CY}http://${lanIp}:${PORT}${R}`));
     }
-    console.log('  |  easy URL   ->  http://restaurant.local:' + PORT + ' |');
-    console.log('  |                                          |');
-    console.log('  +------------------------------------------+');
-    console.log('  |                                          |');
-    console.log('  |  KEEP THIS WINDOW OPEN                   |');
-    console.log('  |  Closing shuts down the POS.             |');
-    console.log('  |                                          |');
-    console.log('  +------------------------------------------+');
+    console.log(row(`${DIM}Easy URL  :${R} ${CY}http://restaurant.local:${PORT}${R}`));
+    console.log(blank);
+    console.log(sep);
+    console.log(blank);
+    console.log(row(`${Y}!! Keep this window open.${R}`));
+    console.log(row(`${c.gray}   Closing it shuts down the POS.${R}`));
+    console.log(blank);
+    console.log(bot);
     console.log('');
-    console.log('  ---- Live Log (technical, safe to ignore) ----');
+    console.log(`  ${DIM}${'─'.repeat(22)} live log ${'─'.repeat(22)}${R}`);
     console.log('');
 
     startMdns();
