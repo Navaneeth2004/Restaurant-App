@@ -100,6 +100,19 @@ router.put('/:id', upload.single('image'), (req, res) => {
 router.delete('/:id', (req, res) => {
   const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Not found' });
+
+  // Block delete if item is in any active or delivered (unbilled) order
+  const inUse = db.prepare(`
+    SELECT oi.id FROM order_items oi
+    JOIN orders o ON oi.order_id = o.id
+    WHERE oi.menu_item_id = ?
+      AND o.status IN ('active', 'delivered')
+    LIMIT 1
+  `).get(req.params.id);
+  if (inUse) {
+    return res.status(400).json({ error: 'This item is part of an active or pending order. Cannot delete until those orders are closed.' });
+  }
+
   if (item.image_path) {
     const imgPath = path.join(__dirname, '../..', item.image_path);
     if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);

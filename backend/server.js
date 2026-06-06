@@ -36,14 +36,15 @@ app.use('/uploads', express.static(uploadsDir));
 app.use('/api/auth', auth.tokenRouter());
 
 // ── API routes ─────────────────────────────────────────────────────────────
-app.use('/api/settings',   require('./routes/settings'));
-app.use('/api/categories', require('./routes/categories'));
-app.use('/api/menu',       require('./routes/menu'));
-app.use('/api/tables',     require('./routes/tables'));
-app.use('/api/orders',     require('./routes/orders'));
-app.use('/api/staff',      require('./routes/staff'));
-app.use('/api/reports',    require('./routes/reports'));
-app.use('/api/export',     require('./routes/export'));
+app.use('/api/settings',        require('./routes/settings'));
+app.use('/api/categories',      require('./routes/categories'));
+app.use('/api/menu',            require('./routes/menu'));
+app.use('/api/tables',          require('./routes/tables'));
+app.use('/api/orders',          require('./routes/orders'));
+app.use('/api/staff',           require('./routes/staff'));
+app.use('/api/reports',         require('./routes/reports'));
+app.use('/api/export',          require('./routes/export'));
+app.use('/api/export/vyapar',   require('./routes/vyapar'));   // ← FIX: was missing
 
 // ── Serve React frontend build (production) ────────────────────────────────
 const buildDir = path.join(__dirname, '..', 'frontend', 'build');
@@ -94,7 +95,6 @@ async function start() {
       if (lanIp) break;
     }
 
-    // ── ANSI colour helpers ──────────────────────────────────────────────
     const c = {
       reset:   '\x1b[0m',
       bold:    '\x1b[1m',
@@ -111,10 +111,8 @@ async function start() {
     const DIM = c.dim + c.gray;
     const R   = c.reset;
 
-    // Strip ANSI codes to measure real visible length
     const visLen = (s) => s.replace(/\x1b\[[0-9;]*m/g, '').length;
-
-    const INNER = 52; // visible chars between borders (not counting the border chars themselves)
+    const INNER = 52;
     const row = (styledStr) => {
       const spaces = INNER - visLen(styledStr);
       return `  ${DIM}║${R} ${styledStr}${' '.repeat(Math.max(0, spaces))} ${DIM}║${R}`;
@@ -124,7 +122,6 @@ async function start() {
     const top   = `  ${DIM}╔${'═'.repeat(INNER + 2)}╗${R}`;
     const bot   = `  ${DIM}╚${'═'.repeat(INNER + 2)}╝${R}`;
     const htop  = `  ${DIM}+${'─'.repeat(INNER + 2)}+${R}`;
-    // [+] uses 3 ASCII chars — safe on all Windows terminals
     const ok    = (label, val) =>
       `  ${G}[+]${R} ${c.white}${label.padEnd(12)}${R} ${CY}${val}${R}`;
 

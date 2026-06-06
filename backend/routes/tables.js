@@ -18,6 +18,28 @@ router.get('/', (req, res) => {
   res.json(tables);
 });
 
+// GET /api/tables/:id/stats — today's performance for this specific table
+router.get('/:id/stats', (req, res) => {
+  const today = new Date().toISOString().split('T')[0];
+  const rows = db.prepare(`
+    SELECT o.id, o.created_at, o.total,
+      (SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.order_id = o.id) AS items
+    FROM orders o
+    WHERE o.table_id = ?
+      AND o.status IN ('delivered','closed')
+      AND substr(o.created_at,1,10) = ?
+    ORDER BY o.created_at DESC
+  `).all(req.params.id, today);
+
+  const revenue_today   = rows.reduce((s, r) => s + (r.total || 0), 0);
+  const orders_today    = rows.length;
+  const items_today     = rows.reduce((s, r) => s + (r.items || 0), 0);
+  const avg_order_value = orders_today > 0 ? revenue_today / orders_today : 0;
+  const last_order_at   = rows[0]?.created_at || null;
+
+  res.json({ orders_today, revenue_today, items_today, avg_order_value, last_order_at });
+});
+
 router.post('/', (req, res) => {
   const { label, seats } = req.body;
   if (!label) return res.status(400).json({ error: 'Label required' });
@@ -53,7 +75,13 @@ router.patch('/reorder', (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
-  const active = db.prepare("SELECT id FROM orders WHERE table_id = ? AND status = 'active'").get(req.params.id);
+  // Block delete if table is occupied (has active or delivered orders)
+  const table = db.prepare('SELECT * FROM tables WHERE id = ?').get(req.params.id);
+  if (!table) return res.status(404).json({ error: 'Table not found' });
+  if (table.status !== 'empty') {
+    return res.status(400).json({ error: 'Cannot delete an occupied table. Clear the order and mark as paid first.' });
+  }
+  const active = db.prepare("SELECT id FROM orders WHERE table_id = ? AND status IN ('active','delivered')").get(req.params.id);
   if (active) return res.status(400).json({ error: 'Table has an active order. Close it first.' });
   db.prepare('DELETE FROM tables WHERE id = ?').run(req.params.id);
   req.io.emit('tables_updated');
