@@ -4,12 +4,15 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useToast } from '../context/ToastContext';
 
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
+
 export default function LoginScreen() {
   const [pin,     setPin]     = useState('');
   const [loading, setLoading] = useState(false);
   const { login }  = useAuth();
   const settings   = useSettings();
   const toast      = useToast();
+  const logoUrl    = (settings as any).logo_url as string | undefined;
 
   const tryLogin = async (p: string) => {
     if (loading) return;
@@ -30,10 +33,7 @@ export default function LoginScreen() {
     const next = pin + d;
     if (next.length > 6) return;
     setPin(next);
-    // Auto-submit at 4 digits (most common PIN length)
-    // Users with 5-6 digit PINs tap the ✓ button
     if (next.length === 4) {
-      // Small delay so the last dot fills before submit
       setTimeout(() => tryLogin(next), 120);
     }
   };
@@ -58,9 +58,19 @@ export default function LoginScreen() {
       <div className="relative w-full max-w-sm">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl gradient-brand shadow-xl shadow-brand-500/30 mb-4">
-            <span className="text-2xl">🍗</span>
+          {/* Logo or plain brand square */}
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 overflow-hidden shadow-xl shadow-brand-500/30">
+            {logoUrl ? (
+              <img
+                src={`${API_BASE}${logoUrl}`}
+                alt="logo"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full gradient-brand" />
+            )}
           </div>
+
           <h1 className="font-display font-700 text-2xl text-white tracking-tight">
             {settings.restaurant_name}
           </h1>
@@ -69,7 +79,7 @@ export default function LoginScreen() {
 
         {/* Card */}
         <div className="card p-6">
-          {/* PIN dots — show up to 6 */}
+          {/* PIN dots */}
           <div className="flex justify-center gap-3 mb-6">
             {[0, 1, 2, 3, 4, 5].map(i => (
               <div
@@ -104,7 +114,7 @@ export default function LoginScreen() {
             })}
           </div>
 
-          {/* Submit button — shown for 5-6 digit PINs (after 4 digits entered) */}
+          {/* Submit for 5-6 digit PINs */}
           {pin.length >= 5 && (
             <button
               onClick={handleSubmit}

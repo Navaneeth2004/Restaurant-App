@@ -8,10 +8,11 @@ const PRESETS = ['#f97316','#e11d48','#8b5cf6','#0ea5e9','#10b981','#eab308','#6
 
 export default function AdminRestaurant() {
   const [form,        setForm]        = useState<Partial<Settings>>({ restaurant_name:'', address:'', phone:'', bill_footer:'', tax_percent:'5', brand_color:'#f97316', currency_symbol:'₹' });
-  const [logoUrl,     setLogoUrl]     = useState<string>('');
-  const [logoPreview, setLogoPreview] = useState<string>('');
+  const [logoUrl,     setLogoUrl]     = useState<string>('');      // current saved logo URL
+  const [logoPreview, setLogoPreview] = useState<string>('');      // preview (local blob or saved URL)
+  const [pendingFile, setPendingFile] = useState<File | null>(null); // file chosen but not yet uploaded
+  const [removeFlag,  setRemoveFlag]  = useState(false);            // user clicked Remove
   const [saving,      setSaving]      = useState(false);
-  const [uploading,   setUploading]   = useState(false);
   const logoRef = useRef<HTMLInputElement>(null);
   const toast   = useToast();
 
@@ -19,40 +20,61 @@ export default function AdminRestaurant() {
     getSettings().then(s => {
       setForm(s);
       const lurl = (s as any).logo_url as string;
-      if (lurl) { setLogoUrl(lurl); setLogoPreview(API_BASE + lurl); }
+      if (lurl) {
+        setLogoUrl(lurl);
+        setLogoPreview(API_BASE + lurl);
+      }
     }).catch(() => {});
   }, []);
 
   const set = (k: keyof Settings, v: string) => setForm(f => ({ ...f, [k]: v }));
 
+  // Pick a file — just show preview, don't upload yet
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPendingFile(file);
+    setLogoPreview(URL.createObjectURL(file));
+    setRemoveFlag(false);
+  };
+
+  const handleRemoveLogo = () => {
+    setPendingFile(null);
+    setLogoPreview('');
+    setRemoveFlag(true);
+    if (logoRef.current) logoRef.current.value = '';
+  };
+
+  // Save everything together
   const save = async () => {
     setSaving(true);
     try {
-      await updateSettings(form);
-      toast('Settings saved — theme applied', 'success');
-    } catch { toast('Failed to save', 'error'); }
-    finally { setSaving(false); }
-  };
+      let finalLogoUrl = logoUrl;
 
-  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLogoPreview(URL.createObjectURL(file));
-    setUploading(true);
-    try {
-      const res = await uploadLogo(file);
-      setLogoUrl(res.logo_url);
-      toast('Logo uploaded', 'success');
-    } catch { toast('Logo upload failed', 'error'); setLogoPreview(''); }
-    finally { setUploading(false); }
-  };
+      // 1. If user chose a new file, upload it now
+      if (pendingFile) {
+        const res = await uploadLogo(pendingFile);
+        finalLogoUrl = res.logo_url;
+        setLogoUrl(finalLogoUrl);
+        setLogoPreview(API_BASE + finalLogoUrl);
+        setPendingFile(null);
+      }
 
-  const removelogo = async () => {
-    try {
-      await updateSettings({ ...form, logo_url: '' } as any);
-      setLogoUrl(''); setLogoPreview('');
-      toast('Logo removed', 'success');
-    } catch { toast('Failed', 'error'); }
+      // 2. If user clicked Remove, clear the logo
+      if (removeFlag) {
+        finalLogoUrl = '';
+        setLogoUrl('');
+        setRemoveFlag(false);
+      }
+
+      // 3. Save all settings including logo_url together
+      await updateSettings({ ...form, logo_url: finalLogoUrl } as any);
+      toast('Settings saved', 'success');
+    } catch {
+      toast('Failed to save', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const brandColor = (form.brand_color as string) || '#f97316';
@@ -65,7 +87,7 @@ export default function AdminRestaurant() {
           <h3 className="font-bold text-white text-sm mb-4">Restaurant Details</h3>
           <div className="space-y-3">
             {([
-              ['restaurant_name', 'Restaurant Name', ' ABC Restaurant'],
+              ['restaurant_name', 'Restaurant Name', 'ABC Restaurant'],
               ['address',         'Address',         '123 Main Street'],
               ['phone',           'Phone Number',    '+91 98765 43210'],
               ['bill_footer',     'Bill Footer',     'Thank you for dining with us!'],
@@ -84,8 +106,16 @@ export default function AdminRestaurant() {
 
         {/* Logo */}
         <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-          <h3 className="font-bold text-white text-sm mb-3">Restaurant Logo</h3>
+          <h3 className="font-bold text-white text-sm mb-1">Restaurant Logo</h3>
           <p className="text-zinc-500 text-xs mb-3">Shown next to your restaurant name in the navigation bar</p>
+
+          {pendingFile && (
+            <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+              <span className="text-amber-400 text-xs">Logo ready — click <strong>Save Settings</strong> to apply</span>
+            </div>
+          )}
+
           <div className="flex items-center gap-4">
             <div
               className="w-16 h-16 rounded-xl border-2 border-dashed border-surface-border bg-surface-raised flex items-center justify-center cursor-pointer hover:border-brand-500/50 overflow-hidden transition-colors flex-shrink-0"
@@ -97,11 +127,11 @@ export default function AdminRestaurant() {
               }
             </div>
             <div className="flex flex-col gap-2">
-              <button className="btn btn-sm text-xs" onClick={() => logoRef.current?.click()} disabled={uploading}>
-                {uploading ? 'Uploading…' : 'Upload Logo'}
+              <button className="btn btn-sm text-xs" onClick={() => logoRef.current?.click()}>
+                {logoPreview ? 'Change Logo' : 'Upload Logo'}
               </button>
               {logoPreview && (
-                <button className="btn btn-sm btn-danger text-xs" onClick={removelogo}>Remove</button>
+                <button className="btn btn-sm btn-danger text-xs" onClick={handleRemoveLogo}>Remove</button>
               )}
             </div>
             <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
@@ -163,7 +193,7 @@ export default function AdminRestaurant() {
         <button className="btn btn-brand w-full py-3 text-sm font-semibold" onClick={save} disabled={saving}>
           {saving ? 'Saving…' : 'Save Settings'}
         </button>
-        <p className="text-zinc-600 text-xs text-center">Theme color applies immediately to all open browser tabs</p>
+        <p className="text-zinc-600 text-xs text-center">All changes apply when you click Save Settings</p>
       </div>
     </div>
   );

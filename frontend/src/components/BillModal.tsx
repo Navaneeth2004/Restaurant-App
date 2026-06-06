@@ -4,9 +4,11 @@ import { closeOrder } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import type { Order, Table } from '../types';
 
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
+
 interface Props {
-  orders: Order[];      // ALL rounds for this table
-  orderId: string;      // ID to close (backend closes all for the table)
+  orders: Order[];
+  orderId: string;
   table: Table | null;
   onClose: () => void;
   onClosed: () => void;
@@ -17,8 +19,9 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   const toast    = useToast();
   const sym      = settings.currency_symbol || '₹';
   const taxPct   = parseFloat(settings.tax_percent || '5') / 100;
+  const brand    = (settings.brand_color as string) || '#f97316';
+  const logoUrl  = (settings as any).logo_url as string | undefined;
 
-  // Flatten all items from all rounds, merging duplicates by name+note+price
   const itemMap = new Map<string, { name: string; price: number; quantity: number; note: string }>();
   for (const order of orders) {
     for (const item of order.items) {
@@ -33,9 +36,12 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   }
   const allItems = Array.from(itemMap.values());
 
-  const subtotal = allItems.reduce((s, i) => s + i.price * i.quantity, 0);
-  const tax      = subtotal * taxPct;
-  const total    = subtotal + tax;
+  const subtotal  = allItems.reduce((s, i) => s + i.price * i.quantity, 0);
+  const tax       = subtotal * taxPct;
+  const total     = subtotal + tax;
+  const now       = new Date();
+  const dateStr   = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const timeStr   = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
   const handleMarkPaid = async () => {
     try {
@@ -47,96 +53,190 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
     }
   };
 
+  const sans = 'system-ui, -apple-system, sans-serif';
+
   return (
-    /* bill-modal-overlay: targeted by print CSS to strip the dark backdrop */
     <div
-      className="bill-modal-overlay fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      className="bill-modal-overlay fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3"
       onClick={onClose}
     >
-      {/* bill-print-area: the only element shown when printing */}
+      <style>{`
+        @media print {
+          @page { size: 80mm auto; margin: 4mm; }
+          body * { visibility: hidden !important; }
+          .bill-print-area, .bill-print-area * { visibility: visible !important; }
+          .bill-print-area {
+            position: fixed !important;
+            top: 0 !important; left: 0 !important;
+            width: 72mm !important; max-width: 72mm !important;
+            border-radius: 0 !important; box-shadow: none !important;
+            max-height: none !important; overflow: visible !important;
+          }
+          .bill-scroll { overflow: visible !important; max-height: none !important; }
+          .no-print { display: none !important; }
+          .bill-header {
+            background: #fff !important;
+            color: #111 !important;
+          }
+          .bill-header * {
+            color: #111 !important;
+            background: transparent !important;
+          }
+        }
+      `}</style>
+
+      {/* Outer shell — fixed height with flex column so header+footer are sticky */}
       <div
-        className="bill-print-area bg-white text-gray-900 rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden"
+        className="bill-print-area flex flex-col bg-white w-full max-w-[320px] rounded-2xl overflow-hidden shadow-2xl"
+        style={{ maxHeight: '90vh' }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="bg-gray-900 text-white px-5 py-4 text-center">
-          <div className="text-lg font-bold tracking-tight">{settings.restaurant_name}</div>
-          {settings.address && <div className="text-xs text-gray-400 mt-0.5">{settings.address}</div>}
-          {(settings as any).phone && <div className="text-xs text-gray-500 mt-0.5">{(settings as any).phone}</div>}
-          <div className="text-xs text-gray-500 mt-0.5">{new Date().toLocaleString()}</div>
+        {/* ── HEADER (fixed, never scrolls) ── */}
+        <div
+          className="bill-header flex-shrink-0"
+          style={{ background: brand, padding: '16px 20px 14px', textAlign: 'center' }}
+        >
+          {logoUrl && (
+            <img
+              src={`${API_BASE}${logoUrl}`}
+              alt="logo"
+              style={{ width: 52, height: 52, borderRadius: 10, objectFit: 'cover', marginBottom: 8, display: 'inline-block' }}
+            />
+          )}
+          <div style={{ fontSize: 17, fontWeight: 700, color: '#fff', fontFamily: sans, letterSpacing: 0.2 }}>
+            {settings.restaurant_name || 'Restaurant'}
+          </div>
+          {settings.address && (
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 2, fontFamily: sans }}>{settings.address}</div>
+          )}
+          {(settings as any).phone && (
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', fontFamily: sans }}>{(settings as any).phone}</div>
+          )}
+          <div style={{
+            display: 'inline-block', marginTop: 7,
+            background: 'rgba(0,0,0,0.18)', borderRadius: 20,
+            padding: '2px 10px', fontSize: 11, color: '#fff', fontFamily: sans,
+          }}>
+            {dateStr} · {timeStr}
+          </div>
         </div>
 
-        {/* Receipt body */}
-        <div className="px-5 py-4 font-mono text-xs">
-          <div className="font-bold text-sm mb-3 font-sans">{table?.label || orders[0]?.table_id}</div>
+        {/* ── SCROLLABLE BODY ── */}
+        <div
+          className="bill-scroll flex-1 overflow-y-auto"
+          style={{ padding: '14px 18px', background: '#fff' }}
+        >
+          {/* Table row */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 14, color: '#111' }}>
+              {table?.label || `Table ${orders[0]?.table_id}`}
+            </span>
+            <span style={{ fontFamily: sans, fontSize: 11, color: '#999' }}>
+              {allItems.reduce((s, i) => s + i.quantity, 0)} items
+            </span>
+          </div>
 
-          <div className="space-y-1.5 mb-3">
+          <Dash />
+
+          {/* Items list */}
+          <div style={{ margin: '10px 0' }}>
             {allItems.map((item, i) => (
-              <div key={i}>
-                <div className="flex justify-between">
-                  <span className="flex-1 pr-2">{item.quantity}× {item.name}</span>
-                  <span className="font-medium">{sym}{(item.price * item.quantity).toFixed(2)}</span>
+              <div key={i} style={{ marginBottom: 9 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#111' }}>
+                  <span style={{ flex: 1, paddingRight: 8, fontFamily: sans, fontWeight: 600 }}>
+                    <span style={{ color: brand, fontWeight: 700 }}>{item.quantity}×</span> {item.name}
+                  </span>
+                  <span style={{ whiteSpace: 'nowrap', fontFamily: sans, fontWeight: 600, color: '#111' }}>
+                    {sym}{(item.price * item.quantity).toFixed(2)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: '#bbb', paddingLeft: 2, fontFamily: sans }}>
+                  @ {sym}{item.price.toFixed(2)} each
                 </div>
                 {item.note && (
-                  <div className="text-gray-400 pl-3 text-[10px]">↳ {item.note}</div>
+                  <div style={{ fontSize: 11, color: '#888', paddingLeft: 2, fontStyle: 'italic', fontFamily: sans }}>
+                    ↳ {item.note}
+                  </div>
                 )}
               </div>
             ))}
           </div>
 
-          <div className="border-t border-dashed border-gray-300 my-2" />
+          <Dash />
 
-          <div className="space-y-1">
-            <div className="flex justify-between text-gray-500">
-              <span>Subtotal</span>
-              <span>{sym}{subtotal.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-gray-500">
-              <span>Tax ({settings.tax_percent || 5}%)</span>
-              <span>{sym}{tax.toFixed(2)}</span>
-            </div>
-            <div className="border-t border-dashed border-gray-300 my-1.5" />
-            <div className="flex justify-between font-bold text-sm font-sans">
-              <span>TOTAL</span>
-              <span>{sym}{total.toFixed(2)}</span>
-            </div>
+          {/* Subtotal + tax */}
+          <div style={{ margin: '8px 0 4px' }}>
+            <Row label="Subtotal" value={`${sym}${subtotal.toFixed(2)}`} sans={sans} />
+            <Row label={`Tax (${settings.tax_percent || 5}%)`} value={`${sym}${tax.toFixed(2)}`} sans={sans} />
           </div>
 
+          <Dash />
+
+          {/* Total */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', margin: '10px 0 4px', fontFamily: sans }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: '#111' }}>TOTAL</span>
+            <span style={{ fontSize: 15, fontWeight: 800, color: brand }}>{sym}{total.toFixed(2)}</span>
+          </div>
+
+          <Dash />
+
           {settings.bill_footer && (
-            <>
-              <div className="border-t border-dashed border-gray-300 my-3" />
-              <div className="text-center text-gray-400 text-[10px]">{settings.bill_footer}</div>
-            </>
+            <div style={{ textAlign: 'center', fontSize: 11, color: '#aaa', margin: '10px 0 4px', fontFamily: sans, fontStyle: 'italic' }}>
+              {settings.bill_footer}
+            </div>
           )}
+
+          <div style={{ textAlign: 'center', fontSize: 9, color: '#e0e0e0', letterSpacing: 4, marginTop: 6 }}>
+            |||||  ||||||  |||||  ||||||  ||||
+          </div>
         </div>
 
-        {/* Actions — hidden when printing */}
-        <div className="no-print px-5 pb-5 flex flex-col gap-2">
+        {/* ── ACTIONS (fixed at bottom, never scrolls) ── */}
+        <div className="no-print flex-shrink-0" style={{ padding: '12px 16px 16px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
           <button
             onClick={handleMarkPaid}
-            className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium transition-colors"
+            style={{
+              width: '100%', padding: '12px', borderRadius: 12, border: 'none',
+              background: '#10b981', color: '#fff', fontWeight: 700, fontSize: 14,
+              cursor: 'pointer', fontFamily: sans, marginBottom: 8,
+            }}
           >
-            Mark Paid &amp; Clear Table
+            ✓  Mark Paid &amp; Clear Table
           </button>
-          <div className="flex gap-2">
-            <button
-              onClick={() => window.print()}
-              className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium transition-colors"
-            >
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => window.print()} style={{
+              flex: 1, padding: '9px', borderRadius: 10, border: '1px solid #e5e7eb',
+              background: '#fff', color: '#374151', fontWeight: 500, fontSize: 13,
+              cursor: 'pointer', fontFamily: sans,
+            }}>
               🖨️ Print
             </button>
-            <button
-              onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium transition-colors"
-            >
+            <button onClick={onClose} style={{
+              flex: 1, padding: '9px', borderRadius: 10, border: '1px solid #e5e7eb',
+              background: '#fff', color: '#374151', fontWeight: 500, fontSize: 13,
+              cursor: 'pointer', fontFamily: sans,
+            }}>
               Close
             </button>
           </div>
-          <p className="text-center text-gray-400 text-[10px] mt-1">
-            Tip: set paper size to <strong>80mm</strong> in your printer dialog for thermal receipts
+          <p style={{ textAlign: 'center', fontSize: 10, color: '#ccc', margin: '6px 0 0', fontFamily: sans }}>
+            For thermal printer: set paper size to <strong>80mm</strong>
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function Dash() {
+  return <div style={{ borderTop: '1px dashed #e5e5e5', margin: '6px 0' }} />;
+}
+
+function Row({ label, value, sans }: { label: string; value: string; sans: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4, color: '#666', fontFamily: sans }}>
+      <span>{label}</span>
+      <span>{value}</span>
     </div>
   );
 }

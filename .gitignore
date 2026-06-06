@@ -5,3 +5,4 @@ uploads/*
 frontend/build/
 .env
 *.db
+backups/
