@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getReportToday, getReportHistory, getRevenueChart } from '../services/api';
 import { useSettings } from '../context/SettingsContext';
+import ExportTab from './reports/ExportTab';
 import type { Order, ReportSummary, RevenueDay } from '../types';
 
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
-type Section = 'analytics' | 'history';
+type Section = 'analytics' | 'history' | 'export';
 
 // ── Group orders by table session ─────────────────────────────────────────
 // Orders from the same table that are close in time (within 4 hours) belong
@@ -389,9 +390,6 @@ export default function ReportsView() {
   const [chart,         setChart]         = useState<RevenueDay[]>([]);
   const [dateFrom,      setDateFrom]      = useState('');
   const [dateTo,        setDateTo]        = useState('');
-  const [exportOpen,    setExportOpen]    = useState(false);
-  const [exportFrom,    setExportFrom]    = useState('');
-  const [exportTo,      setExportTo]      = useState('');
   const settings = useSettings();
   const sym    = settings.currency_symbol || '₹';
   const taxPct = parseFloat(settings.tax_percent || '5') / 100;
@@ -420,26 +418,6 @@ export default function ReportsView() {
   const totalRev    = chart.reduce((s,d)=>s+d.revenue,0);
   const avgRev      = chart.length ? totalRev/chart.length : 0;
   const histTotal   = sessions.reduce((s, sess) => s + sess.totalAmount * (1 + taxPct), 0);
-
-  const downloadExport = async (fmt: 'csv' | 'json') => {
-    const params = new URLSearchParams({ format: fmt });
-    if (exportFrom) params.set('from', exportFrom);
-    if (exportTo)   params.set('to',   exportTo);
-    const url = `${API_ORIGIN}/api/export/revenue?${params.toString()}`;
-    try {
-      const tokenRes = await fetch(`${API_ORIGIN}/api/auth/token`);
-      const { token } = await tokenRes.json();
-      const res = await fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
-      if (!res.ok) { const err = await res.json().catch(() => ({})); alert((err as any).error || 'Export failed'); return; }
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const dateStr = exportFrom ? `${exportFrom}_to_${exportTo || 'today'}` : 'all';
-      a.href = blobUrl; a.download = `revenue_report_${dateStr}.${fmt}`;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(blobUrl);
-    } catch { alert('Export failed — check connection'); }
-  };
 
   const RevenueChart = () => (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
@@ -527,10 +505,14 @@ export default function ReportsView() {
         <h2 className="font-bold text-white text-sm">Reports</h2>
         <span className="text-zinc-500 text-xs hidden sm:block">{new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span>
         <div className="ml-auto flex items-center gap-1 bg-surface-raised border border-surface-border rounded-lg p-0.5">
-          {(['analytics','history'] as Section[]).map(s => (
-            <button key={s} onClick={() => setSection(s)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold capitalize transition-all ${section===s ? 'bg-brand-500 text-white shadow-sm' : 'text-zinc-400 hover:text-white'}`}>
-              {s}
+          {([
+            { key: 'analytics', label: 'Analytics' },
+            { key: 'history',   label: 'History'   },
+            { key: 'export',    label: 'Export'     },
+          ] as { key: Section; label: string }[]).map(({ key, label }) => (
+            <button key={key} onClick={() => setSection(key)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${section===key ? 'bg-brand-500 text-white shadow-sm' : 'text-zinc-400 hover:text-white'}`}>
+              {label}
             </button>
           ))}
         </div>
@@ -651,44 +633,6 @@ export default function ReportsView() {
             )}
           </div>
 
-          {/* Export panel */}
-          <div className="rounded-xl border border-surface-border bg-surface-card mb-4 overflow-hidden">
-            <button
-              className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-raised transition-colors"
-              onClick={() => setExportOpen(o => !o)}
-            >
-              <div className="flex items-center gap-2.5">
-                <svg className="w-4 h-4 text-zinc-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
-                <span className="font-semibold text-white text-sm">Export Revenue Report</span>
-                <span className="text-zinc-600 text-xs hidden sm:block">Professional CSV with summary, daily & item breakdown</span>
-              </div>
-              <svg className={`w-4 h-4 text-zinc-500 transition-transform flex-shrink-0 ${exportOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-            </button>
-            {exportOpen && (
-              <div className="border-t border-surface-border p-4">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                  <div><label className="label">From</label><input type="date" className="input" value={exportFrom} onChange={e=>setExportFrom(e.target.value)} /></div>
-                  <div><label className="label">To</label><input type="date" className="input" value={exportTo} onChange={e=>setExportTo(e.target.value)} /></div>
-                  <div className="flex flex-col gap-2">
-                    <button onClick={() => downloadExport('csv')} className="btn btn-brand w-full flex items-center justify-center gap-2">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
-                      Export CSV (Excel)
-                    </button>
-                    <button onClick={() => downloadExport('json')} className="btn w-full text-xs">Export JSON</button>
-                  </div>
-                </div>
-                <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {['Summary block','Tax collected','Avg order value','Items sold','Revenue excl. tax','Daily breakdown','Top items ranking','Full order detail'].map(f => (
-                    <div key={f} className="flex items-center gap-1.5 text-[11px] text-zinc-500">
-                      <svg className="w-3 h-3 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-                      {f}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
           {/* Sessions list */}
           {sessions.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-zinc-600">
@@ -712,6 +656,12 @@ export default function ReportsView() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {section === 'export' && (
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+          <ExportTab />
         </div>
       )}
     </div>

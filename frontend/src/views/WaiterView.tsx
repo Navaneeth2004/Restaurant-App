@@ -6,6 +6,7 @@ import { useSettings } from '../context/SettingsContext';
 import { useTick } from '../hooks/useTick';
 import { playChime, playDeliveryChime } from '../utils/sound';
 import BillModal from '../components/BillModal';
+import TableTimer from '../components/TableTimer';
 import type { Table, MenuItem, Category, Order } from '../types';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
@@ -472,10 +473,13 @@ export default function WaiterView() {
                   >
                     <div className="font-mono font-bold text-sm text-white leading-none">{t.id}</div>
                     <div className="text-zinc-500 text-[9px] mt-0.5 truncate">{t.label}</div>
-                    <div className="mt-1.5">
-                      {t.status === 'occupied'     && <span className="text-[8px] font-bold uppercase text-brand-400 bg-brand-500/15 px-1.5 py-0.5 rounded-full">Active</span>}
-                      {t.status === 'waiting_bill' && <span className="text-[8px] font-bold uppercase text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full">Bill</span>}
-                      {t.status === 'empty'        && <span className="text-[8px] font-bold uppercase text-zinc-700 px-1 py-0.5 rounded-full">Empty</span>}
+                    <div className="mt-1.5 flex flex-col gap-1">
+                      {t.status === 'occupied'     && <span className="text-[8px] font-bold uppercase text-brand-400 bg-brand-500/15 px-1.5 py-0.5 rounded-full self-start">Active</span>}
+                      {t.status === 'waiting_bill' && <span className="text-[8px] font-bold uppercase text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full self-start">Bill</span>}
+                      {t.status === 'empty'        && <span className="text-[8px] font-bold uppercase text-zinc-700 px-1 py-0.5 rounded-full self-start">Empty</span>}
+                      {t.occupied_since && t.status !== 'empty' && (
+                        <TableTimer since={t.occupied_since} compact />
+                      )}
                     </div>
                   </button>
                 );
@@ -588,10 +592,13 @@ export default function WaiterView() {
                   >
                     <div className="font-mono font-bold text-base text-white">{t.id}</div>
                     <div className="text-zinc-500 text-[9px] truncate">{t.label}</div>
-                    <div className="mt-1.5 flex justify-center">
+                    <div className="mt-1.5 flex flex-col items-center gap-1">
                       {t.status === 'occupied'     && <span className="text-[8px] font-bold uppercase text-brand-400 bg-brand-500/15 px-1.5 py-0.5 rounded-full">Active</span>}
                       {t.status === 'waiting_bill' && <span className="text-[8px] font-bold uppercase text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full">Bill</span>}
                       {t.status === 'empty'        && <span className="text-[8px] font-bold uppercase text-zinc-700 px-1 py-0.5 rounded-full">Empty</span>}
+                      {t.occupied_since && t.status !== 'empty' && (
+                        <TableTimer since={t.occupied_since} compact />
+                      )}
                     </div>
                   </button>
                 );

@@ -30,6 +30,7 @@ export interface Table {
   label: string;
   seats: number;
   status: 'empty' | 'occupied' | 'waiting_bill';
+  occupied_since: string | null; // ISO timestamp of active order start
 }
 
 export interface OrderItem {

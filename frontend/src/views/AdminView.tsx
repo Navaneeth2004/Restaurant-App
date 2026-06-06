@@ -4,21 +4,24 @@ import AdminTables      from './admin/AdminTables';
 import AdminMenu, { MenuExportImport } from './admin/AdminMenu';
 import AdminCategories  from './admin/AdminCategories';
 import AdminStaff       from './admin/AdminStaff';
+import AdminFloor       from './admin/AdminFloor';
 
 const TABS = [
-  { key: 'restaurant', label: 'Restaurant' },
-  { key: 'tables',     label: 'Tables'     },
-  { key: 'menu',       label: 'Menu Items' },
-  { key: 'categories', label: 'Categories' },
-  { key: 'staff',      label: 'Staff'      },
+  { key: 'floor',      label: '🪑 Floor'    },
+  { key: 'restaurant', label: 'Restaurant'  },
+  { key: 'tables',     label: 'Tables'      },
+  { key: 'menu',       label: 'Menu Items'  },
+  { key: 'categories', label: 'Categories'  },
+  { key: 'staff',      label: 'Staff'       },
 ] as const;
 
 type AdminTab = typeof TABS[number]['key'];
 
 export default function AdminView() {
-  const [tab, setTab] = useState<AdminTab>('restaurant');
+  const [tab, setTab] = useState<AdminTab>('floor');
 
   const content: Record<AdminTab, React.ReactNode> = {
+    floor:      <AdminFloor />,
     restaurant: <AdminRestaurant />,
     tables:     <AdminTables />,
     menu: (
@@ -48,7 +51,7 @@ export default function AdminView() {
           </button>
         ))}
       </div>
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className={`flex-1 overflow-hidden ${tab === 'floor' ? '' : 'overflow-y-auto p-5'}`}>
         {content[tab]}
       </div>
     </div>

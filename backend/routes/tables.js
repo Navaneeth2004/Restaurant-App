@@ -6,7 +6,15 @@ const db      = require('../db/database');
 // No runtime migration needed here.
 
 router.get('/', (req, res) => {
-  const tables = db.prepare('SELECT * FROM tables ORDER BY sort_order ASC, id ASC').all();
+  const tables = db.prepare(`
+    SELECT t.*,
+      o.created_at AS occupied_since
+    FROM tables t
+    LEFT JOIN orders o
+      ON o.table_id = t.id
+      AND o.status = 'active'
+    ORDER BY t.sort_order ASC, t.id ASC
+  `).all();
   res.json(tables);
 });
 
