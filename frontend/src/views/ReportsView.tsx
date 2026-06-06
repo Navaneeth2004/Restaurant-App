@@ -45,15 +45,39 @@ export default function ReportsView() {
   // ── Professional export — delegates to backend /api/export/revenue ────────
   // The backend produces a well-structured CSV with summary block, daily breakdown,
   // top items, and full order detail — ready for accounting / tax filing.
-  const buildExportUrl = (fmt: 'csv' | 'json') => {
+  const downloadExport = async (fmt: 'csv' | 'json') => {
     const params = new URLSearchParams({ format: fmt });
     if (exportFrom) params.set('from', exportFrom);
     if (exportTo)   params.set('to',   exportTo);
-    return `${API_ORIGIN}/api/export/revenue?${params.toString()}`;
+    const url = `${API_ORIGIN}/api/export/revenue?${params.toString()}`;
+    try {
+      const tokenRes = await fetch(`${API_ORIGIN}/api/auth/token`);
+      const { token } = await tokenRes.json();
+      const res = await fetch(url, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert((err as any).error || 'Export failed');
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const dateStr = exportFrom ? `${exportFrom}_to_${exportTo || 'today'}` : 'all';
+      a.href = blobUrl;
+      a.download = `revenue_report_${dateStr}.${fmt}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      alert('Export failed — check connection');
+    }
   };
 
-  const exportCSV  = () => { window.open(buildExportUrl('csv'),  '_blank'); };
-  const exportJSON = () => { window.open(buildExportUrl('json'), '_blank'); };
+  const exportCSV  = () => downloadExport('csv');
+  const exportJSON = () => downloadExport('json');
 
   const RevenueChart = () => (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
