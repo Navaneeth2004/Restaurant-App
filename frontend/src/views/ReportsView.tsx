@@ -6,6 +6,382 @@ import type { Order, ReportSummary, RevenueDay } from '../types';
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 type Section = 'analytics' | 'history';
 
+// ── Group orders by table session ─────────────────────────────────────────
+// Orders from the same table that are close in time (within 4 hours) belong
+// to the same "visit". We group them so the history doesn't show each round
+// as a separate entry.
+interface TableSession {
+  sessionKey: string;
+  tableId: string;
+  tableLabel?: string;
+  orders: Order[];
+  totalAmount: number;
+  startedAt: string;
+  endedAt: string;
+  allItems: { name: string; price: number; quantity: number; note: string }[];
+}
+
+function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
+  // Sort oldest-first so sessions build chronologically
+  const sorted = [...orders].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+
+  const sessions: TableSession[] = [];
+  const tableLastOrder: Record<string, number> = {}; // tableId → index in sessions
+
+  for (const order of sorted) {
+    const key = order.table_id;
+    const existingIdx = tableLastOrder[key];
+
+    if (existingIdx !== undefined) {
+      const existing = sessions[existingIdx];
+      const lastOrderTime = new Date(existing.endedAt).getTime();
+      const thisOrderTime = new Date(order.created_at).getTime();
+      const diffHours = (thisOrderTime - lastOrderTime) / (1000 * 60 * 60);
+
+      if (diffHours < 4) {
+        // Same visit — merge
+        existing.orders.push(order);
+        existing.endedAt = order.created_at;
+        existing.totalAmount += order.items.reduce((s, i) => s + i.price * i.quantity, 0);
+        // Merge items
+        for (const item of order.items) {
+          const itemKey = `${item.name}||${item.note || ''}||${item.price}`;
+          const existingItem = existing.allItems.find(
+            x => `${x.name}||${x.note || ''}||${x.price}` === itemKey
+          );
+          if (existingItem) {
+            existingItem.quantity += item.quantity;
+          } else {
+            existing.allItems.push({ name: item.name, price: item.price, quantity: item.quantity, note: item.note || '' });
+          }
+        }
+        continue;
+      }
+    }
+
+    // New session
+    const allItems = order.items.map(i => ({ name: i.name, price: i.price, quantity: i.quantity, note: i.note || '' }));
+    const session: TableSession = {
+      sessionKey: `${order.table_id}-${order.created_at}`,
+      tableId: order.table_id,
+      orders: [order],
+      totalAmount: order.items.reduce((s, i) => s + i.price * i.quantity, 0),
+      startedAt: order.created_at,
+      endedAt: order.created_at,
+      allItems,
+    };
+    tableLastOrder[key] = sessions.length;
+    sessions.push(session);
+  }
+
+  // Sort newest-first for display
+  return sessions.sort(
+    (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+  );
+}
+
+// ── Inline Bill Print Component ───────────────────────────────────────────
+interface ReprintBillProps {
+  session: TableSession;
+  onClose: () => void;
+}
+
+function ReprintBill({ session, onClose }: ReprintBillProps) {
+  const settings = useSettings();
+  const sym      = settings.currency_symbol || '₹';
+  const taxPct   = parseFloat(settings.tax_percent || '5') / 100;
+  const brand    = (settings.brand_color as string) || '#f97316';
+  const logoUrl  = (settings as any).logo_url as string | undefined;
+  const sans     = 'system-ui, -apple-system, sans-serif';
+
+  const subtotal = session.allItems.reduce((s, i) => s + i.price * i.quantity, 0);
+  const tax      = subtotal * taxPct;
+  const total    = subtotal + tax;
+  const date     = new Date(session.startedAt);
+  const dateStr  = date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const timeStr  = date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3"
+      onClick={onClose}
+    >
+      <style>{`
+        @media print {
+          @page { size: 80mm auto; margin: 4mm; }
+          body * { visibility: hidden !important; }
+          .bill-print-area, .bill-print-area * { visibility: visible !important; }
+          .bill-print-area {
+            position: fixed !important;
+            top: 0 !important; left: 0 !important;
+            width: 72mm !important; max-width: 72mm !important;
+            border-radius: 0 !important; box-shadow: none !important;
+            max-height: none !important; overflow: visible !important;
+          }
+          .bill-scroll { overflow: visible !important; max-height: none !important; }
+          .no-print { display: none !important; }
+          .bill-header { background: #fff !important; color: #111 !important; }
+          .bill-header * { color: #111 !important; background: transparent !important; }
+        }
+      `}</style>
+
+      <div
+        className="bill-print-area flex flex-col bg-white w-full max-w-[320px] rounded-2xl overflow-hidden shadow-2xl"
+        style={{ maxHeight: '90vh' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="bill-header flex-shrink-0" style={{ background: brand, padding: '16px 20px 14px', textAlign: 'center' }}>
+          {logoUrl && (
+            <img src={`${API_ORIGIN}${logoUrl}`} alt="logo"
+              style={{ width: 52, height: 52, borderRadius: 10, objectFit: 'cover', marginBottom: 8, display: 'inline-block' }} />
+          )}
+          <div style={{ fontSize: 17, fontWeight: 700, color: '#fff', fontFamily: sans }}>
+            {settings.restaurant_name || 'Restaurant'}
+          </div>
+          {settings.address && (
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 2, fontFamily: sans }}>{settings.address}</div>
+          )}
+          {(settings as any).phone && (
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', fontFamily: sans }}>{(settings as any).phone}</div>
+          )}
+          <div style={{ display: 'inline-block', marginTop: 7, background: 'rgba(0,0,0,0.18)', borderRadius: 20, padding: '2px 10px', fontSize: 11, color: '#fff', fontFamily: sans }}>
+            {dateStr} · {timeStr}
+          </div>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="bill-scroll flex-1 overflow-y-auto" style={{ padding: '14px 18px', background: '#fff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 14, color: '#111' }}>
+              Table {session.tableId}
+            </span>
+            <span style={{ fontFamily: sans, fontSize: 11, color: '#999' }}>
+              {session.allItems.reduce((s, i) => s + i.quantity, 0)} items
+            </span>
+          </div>
+
+          <div style={{ borderTop: '1px dashed #e5e5e5', margin: '6px 0' }} />
+
+          <div style={{ margin: '10px 0' }}>
+            {session.allItems.map((item, i) => (
+              <div key={i} style={{ marginBottom: 9 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#111' }}>
+                  <span style={{ flex: 1, paddingRight: 8, fontFamily: sans, fontWeight: 600 }}>
+                    <span style={{ color: brand, fontWeight: 700 }}>{item.quantity}×</span> {item.name}
+                  </span>
+                  <span style={{ whiteSpace: 'nowrap', fontFamily: sans, fontWeight: 600 }}>
+                    {sym}{(item.price * item.quantity).toFixed(2)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: '#bbb', paddingLeft: 2, fontFamily: sans }}>
+                  @ {sym}{item.price.toFixed(2)} each
+                </div>
+                {item.note && (
+                  <div style={{ fontSize: 11, color: '#888', paddingLeft: 2, fontStyle: 'italic', fontFamily: sans }}>↳ {item.note}</div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ borderTop: '1px dashed #e5e5e5', margin: '6px 0' }} />
+
+          <div style={{ margin: '8px 0 4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4, color: '#666', fontFamily: sans }}>
+              <span>Subtotal</span><span>{sym}{subtotal.toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4, color: '#666', fontFamily: sans }}>
+              <span>Tax ({settings.tax_percent || 5}%)</span><span>{sym}{tax.toFixed(2)}</span>
+            </div>
+          </div>
+
+          <div style={{ borderTop: '1px dashed #e5e5e5', margin: '6px 0' }} />
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', margin: '10px 0 4px', fontFamily: sans }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: '#111' }}>TOTAL</span>
+            <span style={{ fontSize: 15, fontWeight: 800, color: brand }}>{sym}{total.toFixed(2)}</span>
+          </div>
+
+          <div style={{ borderTop: '1px dashed #e5e5e5', margin: '6px 0' }} />
+
+          {settings.bill_footer && (
+            <div style={{ textAlign: 'center', fontSize: 11, color: '#aaa', margin: '10px 0 4px', fontFamily: sans, fontStyle: 'italic' }}>
+              {settings.bill_footer}
+            </div>
+          )}
+          <div style={{ textAlign: 'center', fontSize: 9, color: '#e0e0e0', letterSpacing: 4, marginTop: 6 }}>
+            |||||  ||||||  |||||  ||||||  ||||
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="no-print flex-shrink-0" style={{ padding: '12px 16px 16px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => window.print()} style={{
+              flex: 1, padding: '10px', borderRadius: 10, border: '1px solid #e5e7eb',
+              background: '#fff', color: '#374151', fontWeight: 600, fontSize: 13,
+              cursor: 'pointer', fontFamily: sans,
+            }}>
+              🖨️ Print Bill
+            </button>
+            <button onClick={onClose} style={{
+              flex: 1, padding: '10px', borderRadius: 10, border: '1px solid #e5e7eb',
+              background: '#fff', color: '#374151', fontWeight: 500, fontSize: 13,
+              cursor: 'pointer', fontFamily: sans,
+            }}>
+              Close
+            </button>
+          </div>
+          <p style={{ textAlign: 'center', fontSize: 10, color: '#ccc', margin: '6px 0 0', fontFamily: sans }}>
+            For thermal printer: set paper size to <strong>80mm</strong>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Session row component ─────────────────────────────────────────────────
+function SessionRow({ session, sym, taxPct, brand }: {
+  session: TableSession;
+  sym: string;
+  taxPct: number;
+  brand: string;
+}) {
+  const [expanded,   setExpanded]   = useState(false);
+  const [showBill,   setShowBill]   = useState(false);
+  const tax   = session.totalAmount * taxPct;
+  const total = session.totalAmount + tax;
+  const date  = new Date(session.startedAt);
+  const isMultiRound = session.orders.length > 1;
+
+  return (
+    <>
+      {showBill && <ReprintBill session={session} onClose={() => setShowBill(false)} />}
+
+      <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden hover:border-zinc-600 transition-colors">
+        {/* Main row */}
+        <button
+          className="w-full px-4 py-3 text-left flex items-center gap-3"
+          onClick={() => setExpanded(e => !e)}
+        >
+          {/* Table badge */}
+          <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-surface-raised border border-surface-border flex items-center justify-center font-mono font-bold text-sm text-white">
+            {session.tableId}
+          </div>
+
+          {/* Details */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-white text-sm font-semibold">Table {session.tableId}</span>
+              {isMultiRound && (
+                <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-400 border border-brand-500/25">
+                  {session.orders.length} rounds
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <span className="text-zinc-500 text-xs">
+                {date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              </span>
+              <span className="text-zinc-700 text-xs">·</span>
+              <span className="text-zinc-500 text-xs">
+                {session.allItems.reduce((s, i) => s + i.quantity, 0)} items
+              </span>
+            </div>
+          </div>
+
+          {/* Total + expand arrow */}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <span className="font-mono font-bold text-white text-sm">{sym}{total.toFixed(2)}</span>
+            <svg
+              className={`w-4 h-4 text-zinc-500 transition-transform flex-shrink-0 ${expanded ? 'rotate-180' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+        </button>
+
+        {/* Expanded detail */}
+        {expanded && (
+          <div className="border-t border-surface-border bg-surface-raised/50">
+            {/* Items list */}
+            <div className="px-4 pt-3 pb-2">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-2">Items Ordered</p>
+              <div className="space-y-2">
+                {session.allItems.map((item, i) => (
+                  <div key={i} className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <span className="text-white text-xs font-medium">
+                        <span style={{ color: brand }} className="font-bold">{item.quantity}×</span> {item.name}
+                      </span>
+                      {item.note && (
+                        <div className="text-zinc-600 text-[10px] italic ml-4">↳ {item.note}</div>
+                      )}
+                    </div>
+                    <span className="font-mono text-zinc-400 text-xs flex-shrink-0">
+                      {sym}{(item.price * item.quantity).toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Totals */}
+            <div className="px-4 py-2 border-t border-surface-border/50 space-y-1">
+              <div className="flex justify-between text-xs text-zinc-500">
+                <span>Subtotal</span>
+                <span className="font-mono">{sym}{session.totalAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-xs text-zinc-500">
+                <span>Tax</span>
+                <span className="font-mono">{sym}{tax.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-sm font-bold text-white pt-1 border-t border-surface-border/50">
+                <span>Total</span>
+                <span className="font-mono">{sym}{total.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Rounds breakdown (if multi-round) */}
+            {isMultiRound && (
+              <div className="px-4 py-2 border-t border-surface-border/50">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-2">Rounds</p>
+                {session.orders.map((order, i) => {
+                  const roundTotal = order.items.reduce((s, it) => s + it.price * it.quantity, 0);
+                  return (
+                    <div key={order.id} className="flex justify-between text-xs text-zinc-500 mb-1">
+                      <span>Round {i + 1} — {new Date(order.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
+                      <span className="font-mono">{sym}{roundTotal.toFixed(2)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="px-4 py-3 border-t border-surface-border/50 flex gap-2">
+              <button
+                onClick={() => setShowBill(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/10 border border-brand-500/25 text-brand-400 text-xs font-semibold hover:bg-brand-500/20 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z" />
+                </svg>
+                Print Bill
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── Main ReportsView ───────────────────────────────────────────────────────
 export default function ReportsView() {
   const [section,       setSection]       = useState<Section>('analytics');
   const [summary,       setSummary]       = useState<ReportSummary | null>(null);
@@ -17,7 +393,9 @@ export default function ReportsView() {
   const [exportFrom,    setExportFrom]    = useState('');
   const [exportTo,      setExportTo]      = useState('');
   const settings = useSettings();
-  const sym = settings.currency_symbol || '₹';
+  const sym    = settings.currency_symbol || '₹';
+  const taxPct = parseFloat(settings.tax_percent || '5') / 100;
+  const brand  = (settings.brand_color as string) || '#f97316';
 
   const loadAnalytics = useCallback(async () => {
     try { const [s,c] = await Promise.all([getReportToday(), getRevenueChart()]); setSummary(s); setChart(c); }
@@ -36,15 +414,13 @@ export default function ReportsView() {
   useEffect(() => { loadAnalytics(); }, []);
   useEffect(() => { if (section === 'history') loadHistory(); }, [section]);
 
-  const maxRev    = chart.length ? Math.max(...chart.map(d=>d.revenue), 0.01) : 0.01;
-  const maxOrders = chart.length ? Math.max(...chart.map(d=>d.orders),  1)    : 1;
-  const totalRev  = chart.reduce((s,d)=>s+d.revenue,0);
-  const avgRev    = chart.length ? totalRev/chart.length : 0;
-  const histTotal = history.reduce((s,o)=>s+o.items.reduce((ss,i)=>ss+i.price*i.quantity,0),0);
+  const sessions    = groupOrdersIntoSessions(history);
+  const maxRev      = chart.length ? Math.max(...chart.map(d=>d.revenue), 0.01) : 0.01;
+  const maxOrders   = chart.length ? Math.max(...chart.map(d=>d.orders),  1)    : 1;
+  const totalRev    = chart.reduce((s,d)=>s+d.revenue,0);
+  const avgRev      = chart.length ? totalRev/chart.length : 0;
+  const histTotal   = sessions.reduce((s, sess) => s + sess.totalAmount * (1 + taxPct), 0);
 
-  // ── Professional export — delegates to backend /api/export/revenue ────────
-  // The backend produces a well-structured CSV with summary block, daily breakdown,
-  // top items, and full order detail — ready for accounting / tax filing.
   const downloadExport = async (fmt: 'csv' | 'json') => {
     const params = new URLSearchParams({ format: fmt });
     if (exportFrom) params.set('from', exportFrom);
@@ -53,31 +429,17 @@ export default function ReportsView() {
     try {
       const tokenRes = await fetch(`${API_ORIGIN}/api/auth/token`);
       const { token } = await tokenRes.json();
-      const res = await fetch(url, {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert((err as any).error || 'Export failed');
-        return;
-      }
+      const res = await fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); alert((err as any).error || 'Export failed'); return; }
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       const dateStr = exportFrom ? `${exportFrom}_to_${exportTo || 'today'}` : 'all';
-      a.href = blobUrl;
-      a.download = `revenue_report_${dateStr}.${fmt}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      a.href = blobUrl; a.download = `revenue_report_${dateStr}.${fmt}`;
+      document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(blobUrl);
-    } catch {
-      alert('Export failed — check connection');
-    }
+    } catch { alert('Export failed — check connection'); }
   };
-
-  const exportCSV  = () => downloadExport('csv');
-  const exportJSON = () => downloadExport('json');
 
   const RevenueChart = () => (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
@@ -193,9 +555,7 @@ export default function ReportsView() {
               </div>
             ))}
           </div>
-
           <RevenueChart />
-
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
               <h3 className="font-bold text-white text-sm mb-1">Top Items Today</h3>
@@ -228,7 +588,6 @@ export default function ReportsView() {
                 </div>
               )}
             </div>
-
             <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
               <h3 className="font-bold text-white text-sm mb-1">Today at a Glance</h3>
               <p className="text-zinc-600 text-xs mb-4">Live status</p>
@@ -267,7 +626,6 @@ export default function ReportsView() {
               </div>
             </div>
           </div>
-
           <OrderVolumeChart />
         </div>
       )}
@@ -285,15 +643,15 @@ export default function ReportsView() {
             </div>
             <button className="btn btn-brand btn-sm" onClick={loadHistory}>Search</button>
             {(dateFrom||dateTo) && <button className="btn btn-sm" onClick={() => { setDateFrom(''); setDateTo(''); }}>Clear</button>}
-            {history.length > 0 && (
+            {sessions.length > 0 && (
               <div className="ml-auto flex items-center gap-3">
-                <span className="text-zinc-500 text-sm">{history.length} orders</span>
+                <span className="text-zinc-500 text-sm">{sessions.length} visits</span>
                 <span className="font-mono font-bold text-white text-sm">{sym}{histTotal.toFixed(2)}</span>
               </div>
             )}
           </div>
 
-          {/* ── Export panel ── */}
+          {/* Export panel */}
           <div className="rounded-xl border border-surface-border bg-surface-card mb-4 overflow-hidden">
             <button
               className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-raised transition-colors"
@@ -306,24 +664,17 @@ export default function ReportsView() {
               </div>
               <svg className={`w-4 h-4 text-zinc-500 transition-transform flex-shrink-0 ${exportOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
             </button>
-
             {exportOpen && (
               <div className="border-t border-surface-border p-4">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                  <div>
-                    <label className="label">From</label>
-                    <input type="date" className="input" value={exportFrom} onChange={e=>setExportFrom(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="label">To</label>
-                    <input type="date" className="input" value={exportTo} onChange={e=>setExportTo(e.target.value)} />
-                  </div>
+                  <div><label className="label">From</label><input type="date" className="input" value={exportFrom} onChange={e=>setExportFrom(e.target.value)} /></div>
+                  <div><label className="label">To</label><input type="date" className="input" value={exportTo} onChange={e=>setExportTo(e.target.value)} /></div>
                   <div className="flex flex-col gap-2">
-                    <button onClick={exportCSV} className="btn btn-brand w-full flex items-center justify-center gap-2">
+                    <button onClick={() => downloadExport('csv')} className="btn btn-brand w-full flex items-center justify-center gap-2">
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                       Export CSV (Excel)
                     </button>
-                    <button onClick={exportJSON} className="btn w-full text-xs">Export JSON</button>
+                    <button onClick={() => downloadExport('json')} className="btn w-full text-xs">Export JSON</button>
                   </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -334,52 +685,31 @@ export default function ReportsView() {
                     </div>
                   ))}
                 </div>
-                <p className="text-zinc-600 text-xs mt-3">
-                  Leave dates blank to export all history. The CSV includes a full summary block at the top, making it ready for tax filing or accountant review.
-                </p>
               </div>
             )}
           </div>
 
-          {/* Order list */}
-          {history.length === 0 ? (
+          {/* Sessions list */}
+          {sessions.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-zinc-600">
               <svg className="w-10 h-10 mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" /></svg>
               <p className="text-sm font-medium">No orders found</p>
               <p className="text-xs mt-1">Click Search to load all history</p>
             </div>
           ) : (
-            <div className="space-y-1.5">
-              <div className="hidden sm:grid grid-cols-12 gap-2 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-zinc-600">
-                <div className="col-span-1">Table</div>
-                <div className="col-span-5">Items</div>
-                <div className="col-span-3">Time</div>
-                <div className="col-span-2 text-right">Total</div>
-                <div className="col-span-1 text-right">Status</div>
+            <div className="space-y-2">
+              <div className="px-1 mb-3 flex items-center justify-between">
+                <p className="text-zinc-600 text-xs">Click any row to expand items. Orders within 4 hours on the same table are grouped as one visit.</p>
               </div>
-              {history.map(ord => {
-                const sub = ord.items.reduce((s,i)=>s+i.price*i.quantity,0);
-                return (
-                  <div key={ord.id} className="rounded-xl border border-surface-border bg-surface-card px-4 py-3 hover:border-zinc-600 transition-colors">
-                    <div className="flex sm:hidden items-center gap-3">
-                      <span className="font-mono font-bold text-brand-400 text-sm flex-shrink-0">{ord.table_id}</span>
-                      <span className="flex-1 text-zinc-400 text-xs truncate">{ord.items.map(i=>`${i.quantity}× ${i.name}`).join(', ')}</span>
-                      <span className="font-mono font-bold text-white text-sm flex-shrink-0">{sym}{sub.toFixed(2)}</span>
-                    </div>
-                    <div className="hidden sm:grid grid-cols-12 gap-2 items-center">
-                      <div className="col-span-1 font-mono font-bold text-brand-400 text-sm">{ord.table_id}</div>
-                      <div className="col-span-5 text-zinc-400 text-xs truncate">{ord.items.map(i=>`${i.quantity}× ${i.name}`).join(', ')}</div>
-                      <div className="col-span-3 text-zinc-600 text-xs">{new Date(ord.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
-                      <div className="col-span-2 text-right font-mono font-bold text-white text-sm">{sym}{sub.toFixed(2)}</div>
-                      <div className="col-span-1 text-right">
-                        <span className={`text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${ord.status==='delivered'?'text-emerald-400 bg-emerald-500/10 border-emerald-500/25':ord.status==='closed'?'text-zinc-500 bg-zinc-800 border-zinc-700':'text-brand-400 bg-brand-500/10 border-brand-500/25'}`}>
-                          {ord.status}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {sessions.map(session => (
+                <SessionRow
+                  key={session.sessionKey}
+                  session={session}
+                  sym={sym}
+                  taxPct={taxPct}
+                  brand={brand}
+                />
+              ))}
             </div>
           )}
         </div>

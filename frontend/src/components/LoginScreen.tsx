@@ -15,7 +15,7 @@ export default function LoginScreen() {
   const logoUrl    = (settings as any).logo_url as string | undefined;
 
   const tryLogin = async (p: string) => {
-    if (loading) return;
+    if (loading || p.length < 4) return;
     setLoading(true);
     try {
       const user = await verifyPin(p);
@@ -33,9 +33,6 @@ export default function LoginScreen() {
     const next = pin + d;
     if (next.length > 6) return;
     setPin(next);
-    if (next.length === 4) {
-      setTimeout(() => tryLogin(next), 120);
-    }
   };
 
   const handleBack = () => {
@@ -46,11 +43,20 @@ export default function LoginScreen() {
     if (pin.length >= 4 && !loading) tryLogin(pin);
   };
 
-  const digits = [1, 2, 3, 4, 5, 6, 7, 8, 9, '', 0, '⌫'];
+  // Layout: 1 2 3 / 4 5 6 / 7 8 9 / ⌫ 0 ✓
+  // The empty slot (was bottom-left) is now ⌫
+  // The ⌫ slot (was bottom-right) is now ✓ (Login)
+  const cells: ('digit' | 'back' | 'login')[] = [
+    'digit','digit','digit',  // 1 2 3
+    'digit','digit','digit',  // 4 5 6
+    'digit','digit','digit',  // 7 8 9
+    'back', 'digit','login',  // ⌫ 0 ✓
+  ];
+  const digitValues = [1,2,3,4,5,6,7,8,9,0];
+  let digitIdx = 0;
 
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center p-4">
-      {/* Background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-brand-500/10 rounded-full blur-3xl" />
       </div>
@@ -58,80 +64,80 @@ export default function LoginScreen() {
       <div className="relative w-full max-w-sm">
         {/* Header */}
         <div className="text-center mb-8">
-          {/* Logo or plain brand square */}
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 overflow-hidden shadow-xl shadow-brand-500/30">
-            {logoUrl ? (
-              <img
-                src={`${API_BASE}${logoUrl}`}
-                alt="logo"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="w-full h-full gradient-brand" />
-            )}
+            {logoUrl
+              ? <img src={`${API_BASE}${logoUrl}`} alt="logo" className="w-full h-full object-cover" />
+              : <div className="w-full h-full gradient-brand" />
+            }
           </div>
-
           <h1 className="font-display font-700 text-2xl text-white tracking-tight">
             {settings.restaurant_name}
           </h1>
           <p className="text-zinc-500 text-sm mt-1">Enter your PIN to continue</p>
         </div>
 
-        {/* Card */}
         <div className="card p-6">
           {/* PIN dots */}
           <div className="flex justify-center gap-3 mb-6">
-            {[0, 1, 2, 3, 4, 5].map(i => (
-              <div
-                key={i}
-                className={`w-3 h-3 rounded-full border-2 transition-all duration-200 ${
-                  i < pin.length
-                    ? 'bg-brand-500 border-brand-500 scale-110'
-                    : 'bg-transparent border-zinc-700'
-                }`}
-              />
+            {[0,1,2,3,4,5].map(i => (
+              <div key={i} className={`w-3 h-3 rounded-full border-2 transition-all duration-200 ${
+                i < pin.length
+                  ? 'bg-brand-500 border-brand-500 scale-110'
+                  : 'bg-transparent border-zinc-700'
+              }`} />
             ))}
           </div>
 
-          {/* Numpad */}
+          {/* Numpad — 4 rows × 3 cols */}
           <div className="grid grid-cols-3 gap-2.5">
-            {digits.map((d, i) => {
-              if (d === '') return <div key={i} />;
+            {cells.map((type, i) => {
+              if (type === 'digit') {
+                const val = digitValues[digitIdx++];
+                return (
+                  <button
+                    key={i}
+                    onClick={() => handleDigit(String(val))}
+                    disabled={loading}
+                    className="h-14 rounded-xl font-mono font-medium text-lg border bg-surface-raised border-surface-border text-white hover:bg-zinc-600 hover:border-zinc-500 active:scale-95 active:bg-brand-500/20 transition-all duration-100 select-none disabled:opacity-50"
+                  >
+                    {val}
+                  </button>
+                );
+              }
+
+              if (type === 'back') {
+                return (
+                  <button
+                    key={i}
+                    onClick={handleBack}
+                    disabled={loading || pin.length === 0}
+                    className="h-14 rounded-xl border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 active:scale-95 transition-all duration-100 select-none disabled:opacity-30 flex items-center justify-center"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9.75L14.25 12m0 0l2.25 2.25M14.25 12l2.25-2.25M14.25 12L12 14.25m-2.58 4.92l-6.374-6.375a1.125 1.125 0 010-1.59L9.42 4.83c.211-.211.498-.33.796-.33H19.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25h-9.284c-.298 0-.585-.119-.796-.33z" />
+                    </svg>
+                  </button>
+                );
+              }
+
+              // login button
               return (
                 <button
                   key={i}
-                  onClick={() => d === '⌫' ? handleBack() : handleDigit(String(d))}
-                  disabled={loading}
-                  className={`h-14 rounded-xl font-mono font-medium text-lg transition-all duration-100 border select-none
-                    ${d === '⌫'
-                      ? 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 active:scale-95 text-base'
-                      : 'bg-surface-raised border-surface-border text-white hover:bg-zinc-600 hover:border-zinc-500 active:scale-95 active:bg-brand-500/20'
-                    } disabled:opacity-50`}
+                  onClick={handleSubmit}
+                  disabled={loading || pin.length < 4}
+                  className="h-14 rounded-xl border bg-brand-500 border-brand-600 text-white hover:bg-brand-600 active:scale-95 transition-all duration-100 select-none disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
                 >
-                  {d}
+                  {loading
+                    ? <span className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                    : <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                  }
                 </button>
               );
             })}
           </div>
-
-          {/* Submit for 5-6 digit PINs */}
-          {pin.length >= 5 && (
-            <button
-              onClick={handleSubmit}
-              disabled={loading || pin.length < 4}
-              className="mt-3 w-full h-12 rounded-xl bg-brand-500 hover:bg-brand-600 border border-brand-600 text-white font-semibold text-sm transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {loading
-                ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                : <>
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                    </svg>
-                    Log In
-                  </>
-              }
-            </button>
-          )}
         </div>
 
         <p className="text-center text-zinc-700 text-xs mt-5">

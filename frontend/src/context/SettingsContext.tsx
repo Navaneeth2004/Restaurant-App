@@ -13,16 +13,36 @@ const defaults: Settings & { logo_url?: string } = {
   bill_footer: 'Thank you for dining with us!',
 };
 
+// ── Persist settings to sessionStorage so subsequent renders are instant ──
+const CACHE_KEY = 'pos_settings_cache';
+
+function loadCached(): Settings & { logo_url?: string } {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (raw) return { ...defaults, ...JSON.parse(raw) };
+  } catch {}
+  return defaults;
+}
+
+function saveCache(s: Settings & { logo_url?: string }) {
+  try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(s)); } catch {}
+}
+
 const SettingsContext = createContext<Settings & { logo_url?: string }>(defaults);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const [settings, setSettings] = useState<Settings & { logo_url?: string }>(defaults);
+  // Initialise from cache so the first render already has correct values
+  const [settings, setSettings] = useState<Settings & { logo_url?: string }>(loadCached);
 
   useEffect(() => {
+    // Apply brand color from cache immediately (before network fetch)
+    injectBrandColor(settings.brand_color || '#f97316');
+
     getSettings()
       .then(s => {
         const full = { ...defaults, ...s };
         setSettings(full);
+        saveCache(full);
         injectBrandColor(full.brand_color || '#f97316');
       })
       .catch(() => {});
@@ -31,6 +51,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     const handler = (data: Partial<Settings & { logo_url?: string }>) => {
       setSettings(prev => {
         const next = { ...prev, ...data };
+        saveCache(next);
         if (data.brand_color) injectBrandColor(data.brand_color);
         return next;
       });
@@ -46,20 +67,15 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * FIX #1: Inject a <style> tag that overrides ALL brand color usages.
- * Tailwind compiles colors at build time so we can't change CSS vars alone —
- * we override every class that uses brand color directly via !important rules.
- */
 function injectBrandColor(hex: string) {
   const dark   = shade(hex, -15);
   const medium = shade(hex, -8);
-  const light  = hex + '26'; // 15% opacity
-  const lighter = hex + '1a'; // 10% opacity
-  const faint  = hex + '14'; // 8% opacity
+  const light  = hex + '26';
+  const lighter = hex + '1a';
+  const faint  = hex + '14';
   const border30 = hex + '4d';
   const border60 = hex + '99';
-  const text   = shade(hex, 12); // slightly lighter for text
+  const text   = shade(hex, 12);
 
   let tag = document.getElementById('__brand_override') as HTMLStyleElement | null;
   if (!tag) {
@@ -69,44 +85,28 @@ function injectBrandColor(hex: string) {
   }
 
   tag.textContent = `
-    /* Backgrounds */
     .bg-brand-500, .hover\\:bg-brand-500:hover { background-color: ${hex} !important; }
     .bg-brand-600, .hover\\:bg-brand-600:hover { background-color: ${dark} !important; }
     .bg-brand-500\\/8,  .bg-brand-500\\/10 { background-color: ${faint} !important; }
     .bg-brand-500\\/15, .bg-brand-500\\/20 { background-color: ${light} !important; }
     .hover\\:bg-brand-500\\/25:hover       { background-color: ${hex}40 !important; }
-
-    /* Text */
     .text-brand-400, .text-brand-500      { color: ${text} !important; }
     .hover\\:text-brand-400:hover          { color: ${text} !important; }
-
-    /* Borders */
     .border-brand-500, .border-brand-600  { border-color: ${hex} !important; }
     .border-brand-500\\/25, .border-brand-500\\/30 { border-color: ${border30} !important; }
     .border-brand-500\\/60                { border-color: ${border60} !important; }
-
-    /* Ring (focus outline) */
     .ring-brand-500, .focus\\:ring-brand-500 { --tw-ring-color: ${hex} !important; }
     .focus\\:border-brand-500              { border-color: ${hex} !important; }
-
-    /* Shadow */
     .shadow-brand-500\\/10, .shadow-brand-500\\/20, .shadow-brand-500\\/30 {
       --tw-shadow-color: ${hex} !important;
     }
     .hover\\:shadow-brand-500\\/10:hover   { --tw-shadow-color: ${hex}1a !important; }
-
-    /* Gradient */
     .gradient-brand { background: linear-gradient(135deg, ${hex}, ${dark}) !important; }
-
-    /* Pill tabs active */
     .pill-tab-active,
     button.bg-brand-500.text-white        { background-color: ${hex} !important; border-color: ${dark} !important; }
-
-    /* Top bar nav active state */
     .bg-brand-500\\/15                    { background-color: ${lighter} !important; }
   `;
 
-  /* Also update CSS custom properties for any components using var(--brand) */
   const root = document.documentElement;
   root.style.setProperty('--brand',      hex);
   root.style.setProperty('--brand-dark', dark);
