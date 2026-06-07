@@ -1,11 +1,11 @@
 /**
- * frontend/src/views/admin/AdminFloor.tsx
+ * frontend/src/views/admin/AdminFloor.tsx  — FIXED
  *
- * Changes:
- * - DetailPanel: when occupied → shows Time seated, Avg/item, Status (not redundant Items/Revenue)
- * - DetailPanel: when empty → fetches /api/tables/:id/stats and shows today's
- *   visits, revenue, avg per visit, last order time + insight pill
- * - "Current Order" header renamed for clarity
+ * Fixes:
+ * 1. DetailPanel for "waiting_bill" tables now fetches delivered order too
+ *    (getActiveOrders only returns 'active'; delivered orders were invisible)
+ * 2. Mobile layout now includes Order Activity chart + Table Status breakdown
+ * 3. Time Seated and Avg/Item are populated from delivered order when no active order
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -121,21 +121,16 @@ function TableCard({ table, order, sym, selected, onClick }: CardProps) {
       width:         '100%',
       minHeight:     '168px',
     }}>
-      {/* Row 1: ID + dot */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
         <span style={{ fontFamily:'ui-monospace,monospace', fontWeight:700, fontSize:'20px', color: empty ? '#52525b':'#fff', lineHeight:1, letterSpacing:'-0.5px' }}>
           {table.id}
         </span>
         <span style={{ width:9, height:9, borderRadius:'50%', marginTop:3, backgroundColor:c.dot, boxShadow: !empty ? `0 0 7px ${c.dot}`:'none', flexShrink:0 }} />
       </div>
-
-      {/* Row 2: name */}
       <div>
         <p style={{ color: empty ? '#52525b':'#d4d4d8', fontSize:'12px', fontWeight:600, margin:0 }}>{table.label}</p>
         <p style={{ color:'#52525b', fontSize:'10px', margin:'2px 0 0' }}>{table.seats} seats</p>
       </div>
-
-      {/* Row 3: seat fill bar (only when occupied) */}
       {!empty && (
         <div>
           <div style={{ height:'3px', background:'#27272a', borderRadius:'99px', overflow:'hidden' }}>
@@ -144,8 +139,6 @@ function TableCard({ table, order, sym, selected, onClick }: CardProps) {
           <p style={{ color:'#52525b', fontSize:'10px', margin:'3px 0 0' }}>{items} item{items!==1?'s':''} ordered</p>
         </div>
       )}
-
-      {/* Row 4: timer + revenue */}
       <div style={{ marginTop:'auto', display:'flex', flexDirection:'column', gap:'5px' }}>
         {!empty && since ? (
           <>
@@ -169,14 +162,38 @@ function TableCard({ table, order, sym, selected, onClick }: CardProps) {
 }
 
 // ── Detail panel ──────────────────────────────────────────────────────────
-function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Order | null; sym: string; onClose: () => void }) {
+function DetailPanel({ table, order, allTableOrders, sym, onClose }: {
+  table: Table;
+  order: Order | null;           // active order (from kitchen feed)
+  allTableOrders: Order[];       // includes delivered orders for this table
+  sym: string;
+  onClose: () => void;
+}) {
   const [stats, setStats] = useState<TableStats | null>(null);
   const since  = (table as any).occupied_since as string | null ?? null;
-  const { mins, label: tLabel } = elapsed(since);
+
+  // FIX: for waiting_bill, use delivered order's created_at as since fallback
+  const effectiveSince = since || (allTableOrders.find(o => o.status === 'delivered')?.created_at ?? null);
+  const { mins, label: tLabel } = elapsed(effectiveSince);
   const hv = heat(table, mins);
   const c  = H[hv];
-  const total   = order?.items.reduce((s, i) => s + i.price * i.quantity, 0) ?? 0;
-  const totalQty = order?.items.reduce((s, i) => s + i.quantity, 0) ?? 0;
+
+  // FIX: merge active + delivered orders to show all items
+  const displayOrder = order || allTableOrders.find(o => o.status === 'delivered') || null;
+  const allItems: { name: string; price: number; quantity: number; note: string }[] = [];
+  const itemMap = new Map<string, { name: string; price: number; quantity: number; note: string }>();
+  for (const o of allTableOrders) {
+    for (const item of o.items) {
+      const key = `${item.name}||${item.note || ''}||${item.price}`;
+      const ex = itemMap.get(key);
+      if (ex) { ex.quantity += item.quantity; }
+      else { itemMap.set(key, { name: item.name, price: item.price, quantity: item.quantity, note: item.note || '' }); }
+    }
+  }
+  itemMap.forEach(v => allItems.push(v));
+
+  const total    = allItems.reduce((s, i) => s + i.price * i.quantity, 0);
+  const totalQty = allItems.reduce((s, i) => s + i.quantity, 0);
   const avgItem  = totalQty > 0 ? total / totalQty : 0;
   const statusLabel = table.status === 'waiting_bill' ? 'Awaiting bill' : table.status === 'occupied' ? 'Active order' : 'Available';
 
@@ -197,6 +214,8 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
     load();
   }, [table.id]);
 
+  const hasItems = allItems.length > 0;
+
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%', borderLeft:'1px solid #27272a', background:'#111113' }}>
       {/* Header */}
@@ -211,13 +230,13 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
           </button>
         </div>
 
-        {/* ── Occupied: show Time seated / Avg per item / Status ── */}
+        {/* Occupied / awaiting bill: show Time seated / Avg per item / Status */}
         {table.status !== 'empty' && (
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
             {[
-              { l:'Time seated', v: since ? tLabel : '—',                                    color: c.pillText },
-              { l:'Avg / item',  v: avgItem > 0 ? `${sym}${avgItem.toFixed(2)}` : '—',       color: '#fff'     },
-              { l:'Status',      v: statusLabel,                                              color: c.pillText },
+              { l:'Time seated', v: effectiveSince ? tLabel : '—', color: c.pillText },
+              { l:'Avg / item',  v: avgItem > 0 ? `${sym}${avgItem.toFixed(2)}` : '—', color: '#fff' },
+              { l:'Status',      v: statusLabel, color: c.pillText },
             ].map(({ l, v, color }) => (
               <div key={l} style={{ background:'#1c1c1f', borderRadius:'10px', padding:'8px 10px', border:'1px solid #27272a' }}>
                 <p style={{ color:'#52525b', fontSize:'9px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:0 }}>{l}</p>
@@ -227,22 +246,14 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
           </div>
         )}
 
-        {/* ── Empty: show today's table performance ── */}
+        {/* Empty: show today's table performance */}
         {table.status === 'empty' && stats && (
           <div>
             <p style={{ color:'#52525b', fontSize:'9px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>Today's performance</p>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'8px' }}>
               {[
-                {
-                  l:'Visits today',
-                  v: String(stats.orders_today),
-                  color: stats.orders_today >= 4 ? '#10b981' : stats.orders_today > 0 ? '#f59e0b' : '#52525b',
-                },
-                {
-                  l:'Revenue today',
-                  v: stats.revenue_today > 0 ? `${sym}${stats.revenue_today.toFixed(2)}` : '—',
-                  color: '#818cf8',
-                },
+                { l:'Visits today', v: String(stats.orders_today), color: stats.orders_today >= 4 ? '#10b981' : stats.orders_today > 0 ? '#f59e0b' : '#52525b' },
+                { l:'Revenue today', v: stats.revenue_today > 0 ? `${sym}${stats.revenue_today.toFixed(2)}` : '—', color: '#818cf8' },
               ].map(({ l, v, color }) => (
                 <div key={l} style={{ background:'#1c1c1f', borderRadius:'10px', padding:'8px 10px', border:'1px solid #27272a' }}>
                   <p style={{ color:'#52525b', fontSize:'9px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:0 }}>{l}</p>
@@ -252,18 +263,8 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
               {[
-                {
-                  l:'Avg per visit',
-                  v: stats.avg_order_value > 0 ? `${sym}${stats.avg_order_value.toFixed(2)}` : '—',
-                  color: '#fff',
-                },
-                {
-                  l:'Last order',
-                  v: stats.last_order_at
-                    ? new Date(stats.last_order_at).toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12:true })
-                    : 'None today',
-                  color: '#a1a1aa',
-                },
+                { l:'Avg per visit', v: stats.avg_order_value > 0 ? `${sym}${stats.avg_order_value.toFixed(2)}` : '—', color: '#fff' },
+                { l:'Last order', v: stats.last_order_at ? new Date(stats.last_order_at).toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12:true }) : 'None today', color: '#a1a1aa' },
               ].map(({ l, v, color }) => (
                 <div key={l} style={{ background:'#1c1c1f', borderRadius:'10px', padding:'8px 10px', border:'1px solid #27272a' }}>
                   <p style={{ color:'#52525b', fontSize:'9px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:0 }}>{l}</p>
@@ -271,14 +272,10 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
                 </div>
               ))}
             </div>
-            {/* Insight pill */}
             {stats.orders_today > 0 ? (
               <div style={{ marginTop:'8px', padding:'6px 10px', borderRadius:'8px', background: stats.orders_today >= 4 ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)', border:`1px solid ${stats.orders_today >= 4 ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
                 <p style={{ color: stats.orders_today >= 4 ? '#10b981' : '#f59e0b', fontSize:'11px', margin:0, fontWeight:500 }}>
-                  {stats.orders_today >= 6 ? '🔥 High-demand spot today'
-                    : stats.orders_today >= 4 ? '✓ Popular table today'
-                    : stats.orders_today >= 2 ? 'Moderate traffic today'
-                    : `${stats.orders_today} visit so far today`}
+                  {stats.orders_today >= 6 ? '🔥 High-demand spot today' : stats.orders_today >= 4 ? '✓ Popular table today' : stats.orders_today >= 2 ? 'Moderate traffic today' : `${stats.orders_today} visit so far today`}
                 </p>
               </div>
             ) : (
@@ -288,8 +285,6 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
             )}
           </div>
         )}
-
-        {/* Loading state for empty table stats */}
         {table.status === 'empty' && !stats && (
           <div style={{ display:'flex', alignItems:'center', gap:'8px', padding:'10px 0' }}>
             <div style={{ width:14, height:14, border:'2px solid #3f3f46', borderTopColor:'#71717a', borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
@@ -300,7 +295,7 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
 
       {/* Order items */}
       <div style={{ flex:1, overflowY:'auto', padding:'14px 18px' }}>
-        {!order || table.status === 'empty' ? (
+        {!hasItems || table.status === 'empty' ? (
           <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap:'8px' }}>
             <svg width="36" height="36" fill="none" viewBox="0 0 24 24" stroke="#3f3f46" strokeWidth={1} style={{ opacity:0.5 }}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776"/>
@@ -309,8 +304,10 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
           </div>
         ) : (
           <>
-            <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:'10px' }}>Current Order</p>
-            {order.items.map((item, i) => (
+            <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:'10px' }}>
+              {table.status === 'waiting_bill' ? 'Order (awaiting payment)' : 'Current Order'}
+            </p>
+            {allItems.map((item, i) => (
               <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', padding:'8px 0', borderBottom:'1px solid #27272a', gap:'8px' }}>
                 <div style={{ flex:1, minWidth:0 }}>
                   <p style={{ color:'#e4e4e7', fontSize:'13px', fontWeight:500, margin:0 }}>
@@ -325,7 +322,7 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
         )}
       </div>
 
-      {order && table.status !== 'empty' && (
+      {hasItems && table.status !== 'empty' && (
         <div style={{ padding:'12px 18px', borderTop:'1px solid #27272a', display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
           <span style={{ color:'#a1a1aa', fontSize:'13px' }}>Total</span>
           <span style={{ color:'#fff', fontSize:'16px', fontWeight:700, fontFamily:'ui-monospace,monospace' }}>{sym}{total.toFixed(2)}</span>
@@ -337,9 +334,10 @@ function DetailPanel({ table, order, sym, onClose }: { table: Table; order: Orde
 
 // ── Main ──────────────────────────────────────────────────────────────────
 export default function AdminFloor() {
-  const [tables,   setTables]   = useState<Table[]>([]);
-  const [orders,   setOrders]   = useState<Order[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [tables,         setTables]         = useState<Table[]>([]);
+  const [orders,         setOrders]         = useState<Order[]>([]);   // active orders
+  const [tableOrdersMap, setTableOrdersMap] = useState<Record<string, Order[]>>({});  // FIX: all non-closed orders per table
+  const [selected,       setSelected]       = useState<string | null>(null);
   const settings = useSettings();
   const sym      = settings.currency_symbol || '₹';
   useTick(15000);
@@ -347,12 +345,34 @@ export default function AdminFloor() {
   const loadTables = useCallback(async () => { try { setTables(await getTables()); } catch {} }, []);
   const loadOrders = useCallback(async () => { try { setOrders(await getActiveOrders()); } catch {} }, []);
 
+  // FIX: when a table is selected (especially waiting_bill), also load its delivered orders
+  const loadTableOrders = useCallback(async (tableId: string) => {
+    const API_BASE = window.location.origin;
+    try {
+      const tokenRes  = await fetch(`${API_BASE}/api/auth/token`);
+      const tokenData = await tokenRes.json();
+      const token     = tokenData.token;
+      const res = await fetch(`${API_BASE}/api/orders/table/${tableId}/all`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const tableOrders: Order[] = await res.json();
+        setTableOrdersMap(prev => ({ ...prev, [tableId]: tableOrders }));
+      }
+    } catch {}
+  }, []);
+
   useEffect(() => { loadTables(); loadOrders(); }, []);
   useSocket('tables_updated',  loadTables);
   useSocket('new_order',       loadOrders);
   useSocket('order_updated',   loadOrders);
   useSocket('order_delivered', () => { loadTables(); loadOrders(); });
   useSocket('order_closed',    () => { loadTables(); loadOrders(); });
+
+  // When selection changes, load that table's full order history
+  useEffect(() => {
+    if (selected) loadTableOrders(selected);
+  }, [selected]);
 
   // Derived stats
   const occupied    = tables.filter(t => t.status !== 'empty').length;
@@ -369,9 +389,19 @@ export default function AdminFloor() {
   const seatPct        = totalSeats > 0 ? Math.round((occupiedSeats / totalSeats) * 100) : 0;
   const avgPerTable    = occupied > 0 ? liveRevenue / occupied : 0;
 
-  const selectedTable = tables.find(t => t.id === selected) || null;
-  const selectedOrder = orders.find(o => o.table_id === selected) || null;
+  const selectedTable      = tables.find(t => t.id === selected) || null;
+  const selectedOrder      = orders.find(o => o.table_id === selected) || null;
+  const selectedAllOrders  = selected ? (tableOrdersMap[selected] || []) : [];
   const toggle = (id: string) => setSelected(p => p === id ? null : id);
+
+  // Table status breakdown counts
+  const statusCounts = {
+    freshOccupied: tables.filter(t => { const s=(t as any).occupied_since; return s && t.status==='occupied' && Math.floor((Date.now()-new Date(s).getTime())/60000)<30; }).length,
+    warmOccupied:  tables.filter(t => { const s=(t as any).occupied_since; if(!s||t.status!=='occupied') return false; const m=Math.floor((Date.now()-new Date(s).getTime())/60000); return m>=30&&m<60; }).length,
+    hotOccupied:   tables.filter(t => { const s=(t as any).occupied_since; return s && t.status==='occupied' && Math.floor((Date.now()-new Date(s).getTime())/60000)>=60; }).length,
+    bill: billPending,
+    available: empty,
+  };
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%', overflow:'hidden', background:'#18181b' }}>
@@ -407,8 +437,6 @@ export default function AdminFloor() {
       <div className="hidden md:flex" style={{ flex:1, overflow:'hidden' }}>
         {/* Left: stats + grid */}
         <div style={{ flex:1, overflowY:'auto', padding:'20px', display:'flex', flexDirection:'column', gap:'16px' }}>
-
-          {/* Stats grid */}
           <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'10px' }}>
             <Tile label="Tables occupied" value={`${occupied}/${tables.length}`} sub={`${empty} free right now`} color="var(--brand,#f97316)" />
             <Tile label="Seat fill rate"  value={`${seatPct}%`}                 sub={`${occupiedSeats} of ${totalSeats} seats`} color={seatPct > 70 ? '#ef4444' : seatPct > 40 ? '#f59e0b' : '#10b981'} />
@@ -418,7 +446,6 @@ export default function AdminFloor() {
             <Tile label="Awaiting bill"   value={String(billPending)}            sub={billPending > 0 ? 'needs attention' : 'all clear'} color={billPending > 0 ? '#818cf8' : '#52525b'} />
           </div>
 
-          {/* Activity spark + overdue alert */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
             <div style={{ background:'#1c1c1f', border:'1px solid #27272a', borderRadius:'14px', padding:'14px 16px' }}>
               <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 10px' }}>Order activity — last 12 hours</p>
@@ -428,11 +455,11 @@ export default function AdminFloor() {
             <div style={{ background:'#1c1c1f', border:'1px solid #27272a', borderRadius:'14px', padding:'14px 16px', display:'flex', flexDirection:'column', gap:'8px' }}>
               <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:0 }}>Table status breakdown</p>
               {[
-                { label:'Occupied — under 30m',  count: tables.filter(t => { const s=(t as any).occupied_since; return s && t.status==='occupied' && Math.floor((Date.now()-new Date(s).getTime())/60000)<30; }).length, color:'#10b981' },
-                { label:'Occupied — 30 to 60m',  count: tables.filter(t => { const s=(t as any).occupied_since; if(!s||t.status!=='occupied') return false; const m=Math.floor((Date.now()-new Date(s).getTime())/60000); return m>=30&&m<60; }).length, color:'#f59e0b' },
-                { label:'Occupied — over 1hr',   count: tables.filter(t => { const s=(t as any).occupied_since; return s && t.status==='occupied' && Math.floor((Date.now()-new Date(s).getTime())/60000)>=60; }).length, color:'#ef4444' },
-                { label:'Awaiting bill',          count: billPending, color:'#818cf8' },
-                { label:'Available',              count: empty,       color:'#3f3f46' },
+                { label:'Occupied — under 30m', count: statusCounts.freshOccupied, color:'#10b981' },
+                { label:'Occupied — 30 to 60m', count: statusCounts.warmOccupied,  color:'#f59e0b' },
+                { label:'Occupied — over 1hr',  count: statusCounts.hotOccupied,   color:'#ef4444' },
+                { label:'Awaiting bill',         count: statusCounts.bill,          color:'#818cf8' },
+                { label:'Available',             count: statusCounts.available,     color:'#3f3f46' },
               ].map(({ label, count, color }) => (
                 <div key={label} style={{ display:'flex', alignItems:'center', gap:'8px' }}>
                   <span style={{ width:8, height:8, borderRadius:'50%', backgroundColor:color, flexShrink:0 }} />
@@ -443,7 +470,6 @@ export default function AdminFloor() {
             </div>
           </div>
 
-          {/* Table grid */}
           <div>
             <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 10px' }}>
               All tables — tap to view order &amp; today's stats
@@ -459,7 +485,13 @@ export default function AdminFloor() {
         {/* Right: detail */}
         {selectedTable && (
           <div style={{ width:'272px', flexShrink:0 }}>
-            <DetailPanel table={selectedTable} order={selectedOrder} sym={sym} onClose={() => setSelected(null)} />
+            <DetailPanel
+              table={selectedTable}
+              order={selectedOrder}
+              allTableOrders={selectedAllOrders}
+              sym={sym}
+              onClose={() => setSelected(null)}
+            />
           </div>
         )}
       </div>
@@ -481,6 +513,37 @@ export default function AdminFloor() {
             </div>
           ))}
         </div>
+
+        {/* FIX: Order Activity + Table Status — now visible on mobile */}
+        {!selected && (
+          <div style={{ flexShrink:0, padding:'12px 16px', borderBottom:'1px solid #27272a', display:'flex', flexDirection:'column', gap:'10px' }}>
+            {/* Activity chart */}
+            <div style={{ background:'#1c1c1f', border:'1px solid #27272a', borderRadius:'12px', padding:'12px 14px' }}>
+              <p style={{ color:'#52525b', fontSize:'9px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>Order activity — last 12 hrs</p>
+              <HourBars orders={orders} />
+              <p style={{ color:'#52525b', fontSize:'9px', margin:'4px 0 0' }}>Rightmost = this hour</p>
+            </div>
+            {/* Table status breakdown */}
+            <div style={{ background:'#1c1c1f', border:'1px solid #27272a', borderRadius:'12px', padding:'12px 14px' }}>
+              <p style={{ color:'#52525b', fontSize:'9px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 8px' }}>Table status</p>
+              <div style={{ display:'flex', flexDirection:'column', gap:'5px' }}>
+                {[
+                  { label:'Under 30m', count: statusCounts.freshOccupied, color:'#10b981' },
+                  { label:'30–60m',    count: statusCounts.warmOccupied,  color:'#f59e0b' },
+                  { label:'Over 1hr',  count: statusCounts.hotOccupied,   color:'#ef4444' },
+                  { label:'Bill',      count: statusCounts.bill,          color:'#818cf8' },
+                  { label:'Free',      count: statusCounts.available,     color:'#3f3f46' },
+                ].map(({ label, count, color }) => (
+                  <div key={label} style={{ display:'flex', alignItems:'center', gap:'6px' }}>
+                    <span style={{ width:7, height:7, borderRadius:'50%', backgroundColor:color, flexShrink:0 }} />
+                    <span style={{ color:'#a1a1aa', fontSize:'11px', flex:1 }}>{label}</span>
+                    <span style={{ color: count > 0 ? '#fff':'#3f3f46', fontSize:'12px', fontWeight:700, fontFamily:'ui-monospace,monospace' }}>{count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Table strip */}
         <div style={{ flexShrink:0, overflowX:'auto', display:'flex', gap:'10px', padding:'12px 16px', borderBottom:'1px solid #27272a', scrollbarWidth:'none', WebkitOverflowScrolling:'touch' as any }}>
@@ -512,7 +575,9 @@ export default function AdminFloor() {
                     {rev > 0 && <p style={{ color:'#fff', fontSize:'12px', fontWeight:700, margin:0, fontFamily:'ui-monospace,monospace' }}>{sym}{rev.toFixed(2)}</p>}
                   </>
                 ) : (
-                  <span style={{ color:'#3f3f46', fontSize:'10px', fontWeight:700, textTransform:'uppercase' }}>Free</span>
+                  <span style={{ color: hv==='bill' ? '#818cf8' : '#3f3f46', fontSize:'10px', fontWeight:700, textTransform:'uppercase' }}>
+                    {hv==='bill' ? 'Bill' : 'Free'}
+                  </span>
                 )}
               </button>
             );
@@ -522,7 +587,13 @@ export default function AdminFloor() {
         {/* Detail area */}
         <div style={{ flex:1, overflow:'hidden' }}>
           {selectedTable ? (
-            <DetailPanel table={selectedTable} order={selectedOrder} sym={sym} onClose={() => setSelected(null)} />
+            <DetailPanel
+              table={selectedTable}
+              order={selectedOrder}
+              allTableOrders={selectedAllOrders}
+              sym={sym}
+              onClose={() => setSelected(null)}
+            />
           ) : (
             <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap:'8px' }}>
               <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="#3f3f46" strokeWidth={1} style={{ opacity:0.5 }}>

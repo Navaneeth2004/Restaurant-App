@@ -10,12 +10,12 @@ echo  .   RESTAURANT POS  --  Starting up...        .
 echo  +==============================================+
 echo.
 
-:: ── Locate project root ───────────────────────────────────────────────────
+:: ── Locate project root (no pushd/popd — avoids creating junction files) ──
 set "SCRIPT_DIR=%~dp0"
-set "APP_ROOT=%SCRIPT_DIR%.."
-pushd "%APP_ROOT%"
-set "APP_ROOT=%CD%"
-popd
+:: Remove trailing backslash from SCRIPT_DIR
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+:: APP_ROOT is one level up from the start\ folder
+for %%I in ("%SCRIPT_DIR%\..") do set "APP_ROOT=%%~fI"
 echo  [INFO] App root: %APP_ROOT%
 
 :: ── Check Node.js ─────────────────────────────────────────────────────────
