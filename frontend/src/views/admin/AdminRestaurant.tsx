@@ -1,24 +1,41 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getSettings, updateSettings, uploadLogo } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { useSettings } from '../../context/SettingsContext';
 import type { Settings } from '../../types';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 const PRESETS = ['#f97316','#e11d48','#8b5cf6','#0ea5e9','#10b981','#eab308','#6366f1','#f43f5e','#0f172a'];
 
 export default function AdminRestaurant() {
-  const [form,        setForm]        = useState<Partial<Settings>>({ restaurant_name:'', address:'', phone:'', bill_footer:'', tax_percent:'5', brand_color:'#f97316', currency_symbol:'₹' });
-  const [logoUrl,     setLogoUrl]     = useState<string>('');      // current saved logo URL
-  const [logoPreview, setLogoPreview] = useState<string>('');      // preview (local blob or saved URL)
-  const [pendingFile, setPendingFile] = useState<File | null>(null); // file chosen but not yet uploaded
-  const [removeFlag,  setRemoveFlag]  = useState(false);            // user clicked Remove
+  // ── Initialize from the already-loaded settings context (no flash) ──────
+  const liveSettings = useSettings();
+
+  const [form, setForm] = useState<Partial<Settings & { logo_url?: string }>>(() => ({
+    restaurant_name: liveSettings.restaurant_name || '',
+    address:         (liveSettings as any).address         || '',
+    phone:           (liveSettings as any).phone           || '',
+    bill_footer:     (liveSettings as any).bill_footer     || '',
+    tax_percent:     liveSettings.tax_percent              || '5',
+    brand_color:     liveSettings.brand_color              || '#f97316',
+    currency_symbol: liveSettings.currency_symbol          || '₹',
+  }));
+
+  const [logoUrl,     setLogoUrl]     = useState<string>((liveSettings as any).logo_url || '');
+  const [logoPreview, setLogoPreview] = useState<string>(
+    (liveSettings as any).logo_url ? API_BASE + (liveSettings as any).logo_url : ''
+  );
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [removeFlag,  setRemoveFlag]  = useState(false);
   const [saving,      setSaving]      = useState(false);
   const logoRef = useRef<HTMLInputElement>(null);
   const toast   = useToast();
 
+  // ── Full fetch on mount to ensure freshness (no visual flash since
+  //    form is already populated from context cache above) ─────────────────
   useEffect(() => {
     getSettings().then(s => {
-      setForm(s);
+      setForm(s as any);
       const lurl = (s as any).logo_url as string;
       if (lurl) {
         setLogoUrl(lurl);
@@ -27,9 +44,9 @@ export default function AdminRestaurant() {
     }).catch(() => {});
   }, []);
 
-  const set = (k: keyof Settings, v: string) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k: keyof (Settings & { logo_url?: string }), v: string) =>
+    setForm(f => ({ ...f, [k]: v }));
 
-  // Pick a file — just show preview, don't upload yet
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -45,13 +62,10 @@ export default function AdminRestaurant() {
     if (logoRef.current) logoRef.current.value = '';
   };
 
-  // Save everything together
   const save = async () => {
     setSaving(true);
     try {
       let finalLogoUrl = logoUrl;
-
-      // 1. If user chose a new file, upload it now
       if (pendingFile) {
         const res = await uploadLogo(pendingFile);
         finalLogoUrl = res.logo_url;
@@ -59,15 +73,11 @@ export default function AdminRestaurant() {
         setLogoPreview(API_BASE + finalLogoUrl);
         setPendingFile(null);
       }
-
-      // 2. If user clicked Remove, clear the logo
       if (removeFlag) {
         finalLogoUrl = '';
         setLogoUrl('');
         setRemoveFlag(false);
       }
-
-      // 3. Save all settings including logo_url together
       await updateSettings({ ...form, logo_url: finalLogoUrl } as any);
       toast('Settings saved', 'success');
     } catch {
@@ -152,13 +162,24 @@ export default function AdminRestaurant() {
             ))}
           </div>
 
+          {/* Custom row — single color picker input + hex text field, no duplicate swatch */}
           <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-raised border border-surface-border">
             <span className="text-zinc-500 text-xs flex-shrink-0">Custom</span>
-            <input type="color" value={brandColor} onChange={e => set('brand_color', e.target.value)}
-              className="w-9 h-9 rounded-lg cursor-pointer flex-shrink-0" style={{ colorScheme: 'dark' }} />
-            <input type="text" value={brandColor} onChange={e => set('brand_color', e.target.value)}
-              className="input py-1.5 text-xs font-mono flex-1" placeholder="#f97316" maxLength={7} />
-            <div className="w-9 h-9 rounded-lg flex-shrink-0 border border-surface-border" style={{ background: brandColor }} />
+            <input
+              type="color"
+              value={brandColor}
+              onChange={e => set('brand_color', e.target.value)}
+              className="w-9 h-9 rounded-lg cursor-pointer flex-shrink-0"
+              style={{ colorScheme: 'dark' }}
+            />
+            <input
+              type="text"
+              value={brandColor}
+              onChange={e => set('brand_color', e.target.value)}
+              className="input py-1.5 text-xs font-mono flex-1"
+              placeholder="#f97316"
+              maxLength={7}
+            />
           </div>
 
           <div className="mt-3 h-1 rounded-full" style={{ background: brandColor }} />

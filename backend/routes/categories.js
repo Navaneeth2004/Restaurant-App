@@ -26,8 +26,29 @@ router.put('/:id', (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
+  // Check for menu items in this category
   const count = db.prepare('SELECT COUNT(*) as c FROM menu_items WHERE category_id = ?').get(req.params.id).c;
-  if (count > 0) return res.status(400).json({ error: 'Category has menu items. Reassign or delete them first.' });
+  if (count > 0) {
+    // Check if any of those items are in active/delivered orders
+    const inActiveOrder = db.prepare(`
+      SELECT COUNT(*) as c FROM order_items oi
+      JOIN orders o ON oi.order_id = o.id
+      JOIN menu_items m ON oi.menu_item_id = m.id
+      WHERE m.category_id = ?
+        AND o.status IN ('active', 'delivered')
+    `).get(req.params.id).c;
+
+    if (inActiveOrder > 0) {
+      return res.status(400).json({
+        error: `Cannot delete — ${count} item(s) in this category are part of active orders. Close those orders first.`
+      });
+    }
+
+    return res.status(400).json({
+      error: `Cannot delete — this category has ${count} menu item(s). Delete or reassign them first.`
+    });
+  }
+
   db.prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
   req.io.emit('categories_updated');
   res.json({ success: true });

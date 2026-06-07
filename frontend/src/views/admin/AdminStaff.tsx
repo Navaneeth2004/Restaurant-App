@@ -12,11 +12,10 @@ const ROLE_STYLES: Record<string, string> = {
   waiter:  'bg-brand-500/15 text-brand-400 border-brand-500/25',
 };
 
-// FIX 4: Modal for changing a staff member's PIN
 function ChangePinModal({ staff, onSave, onClose }: { staff: Staff; onSave: (newPin: string) => void; onClose: () => void }) {
-  const [newPin,    setNewPin]    = useState('');
+  const [newPin,     setNewPin]     = useState('');
   const [confirmPin, setConfirmPin] = useState('');
-  const [error,     setError]    = useState('');
+  const [error,      setError]      = useState('');
 
   const handleSave = () => {
     if (newPin.length < 4) { setError('PIN must be at least 4 digits'); return; }
@@ -32,36 +31,19 @@ function ChangePinModal({ staff, onSave, onClose }: { staff: Staff; onSave: (new
         <div className="space-y-3">
           <div>
             <label className="label">New PIN (4–6 digits)</label>
-            <input
-              className="input font-mono tracking-widest"
-              type="password"
-              maxLength={6}
-              placeholder="••••"
-              value={newPin}
-              onChange={e => { setNewPin(e.target.value.replace(/\D/g,'')); setError(''); }}
-              autoFocus
-            />
+            <input className="input font-mono tracking-widest" type="password" maxLength={6} placeholder="••••"
+              value={newPin} onChange={e => { setNewPin(e.target.value.replace(/\D/g,'')); setError(''); }} autoFocus />
           </div>
           <div>
             <label className="label">Confirm PIN</label>
-            <input
-              className="input font-mono tracking-widest"
-              type="password"
-              maxLength={6}
-              placeholder="••••"
-              value={confirmPin}
-              onChange={e => { setConfirmPin(e.target.value.replace(/\D/g,'')); setError(''); }}
-            />
+            <input className="input font-mono tracking-widest" type="password" maxLength={6} placeholder="••••"
+              value={confirmPin} onChange={e => { setConfirmPin(e.target.value.replace(/\D/g,'')); setError(''); }} />
           </div>
           {error && <p className="text-red-400 text-xs">{error}</p>}
         </div>
         <div className="flex gap-2 mt-5">
           <button className="btn flex-1" onClick={onClose}>Cancel</button>
-          <button
-            className="btn btn-brand flex-1"
-            onClick={handleSave}
-            disabled={newPin.length < 4 || confirmPin.length < 4}
-          >
+          <button className="btn btn-brand flex-1" onClick={handleSave} disabled={newPin.length < 4 || confirmPin.length < 4}>
             Save PIN
           </button>
         </div>
@@ -108,9 +90,9 @@ function StaffModal({ onSave, onClose }: { onSave: (f:{name:string;pin:string;ro
 }
 
 export default function AdminStaff() {
-  const [staff,         setStaff]         = useState<Staff[]>([]);
-  const [modal,         setModal]         = useState(false);
-  const [changePinFor,  setChangePinFor]  = useState<Staff | null>(null);
+  const [staff,        setStaff]        = useState<Staff[]>([]);
+  const [modal,        setModal]        = useState(false);
+  const [changePinFor, setChangePinFor] = useState<Staff | null>(null);
   const toast = useToast();
   const { user } = useAuth();
 
@@ -123,13 +105,18 @@ export default function AdminStaff() {
   };
 
   const handleDelete = async (id: number) => {
-    if (id === user?.id) { toast("Can't delete yourself",'error'); return; }
+    if (id === user?.id) { toast("You can't delete your own account",'error'); return; }
     if (!window.confirm('Remove this staff member?')) return;
-    try { await deleteStaff(id); toast('Removed','success'); load(); }
-    catch { toast('Failed','error'); }
+    try {
+      await deleteStaff(id);
+      toast('Removed','success');
+      load();
+    } catch (e: any) {
+      // Show the actual backend error (e.g. "Cannot delete the last admin account")
+      toast(e.response?.data?.error || 'Failed to remove staff', 'error');
+    }
   };
 
-  // FIX 4: Change PIN via PUT /api/staff/:id
   const handleChangePin = async (newPin: string) => {
     if (!changePinFor) return;
     try {
@@ -146,7 +133,28 @@ export default function AdminStaff() {
     }
   };
 
-  const byRole = { admin: staff.filter(s=>s.role==='admin'), kitchen: staff.filter(s=>s.role==='kitchen'), waiter: staff.filter(s=>s.role==='waiter') };
+  // Compute per-role — also track if a role has only 1 admin left (for UI hint)
+  const adminCount = staff.filter(s => s.role === 'admin' && s.active).length;
+  const byRole = {
+    admin:   staff.filter(s => s.role === 'admin'),
+    kitchen: staff.filter(s => s.role === 'kitchen'),
+    waiter:  staff.filter(s => s.role === 'waiter'),
+  };
+
+  // A staff member's delete button should be visually disabled if:
+  // - it's the current user, OR
+  // - it's the only remaining active admin
+  const canDelete = (s: Staff) => {
+    if (s.id === user?.id) return false;
+    if (s.role === 'admin' && adminCount <= 1) return false;
+    return true;
+  };
+
+  const deleteTooltip = (s: Staff) => {
+    if (s.id === user?.id) return "Can't delete your own account";
+    if (s.role === 'admin' && adminCount <= 1) return 'Cannot delete the last admin';
+    return 'Remove staff member';
+  };
 
   return (
     <div>
@@ -170,7 +178,7 @@ export default function AdminStaff() {
                     {s.name[0].toUpperCase()}
                   </div>
                   <span className="flex-1 text-white text-sm font-medium">{s.name}</span>
-                  {/* FIX 4: Change PIN button */}
+                  {/* Change PIN button */}
                   <button
                     className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-brand-400 hover:bg-brand-500/10 transition-colors"
                     onClick={() => setChangePinFor(s)}
@@ -179,8 +187,11 @@ export default function AdminStaff() {
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" /></svg>
                   </button>
                   <button
-                    className="w-7 h-7 rounded-lg flex items-center justify-center text-red-500/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                    onClick={() => handleDelete(s.id)} disabled={s.id === user?.id}>
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${canDelete(s) ? 'text-red-500/40 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-700 cursor-not-allowed'}`}
+                    onClick={() => canDelete(s) && handleDelete(s.id)}
+                    title={deleteTooltip(s)}
+                    disabled={!canDelete(s)}
+                  >
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                   </button>
                 </div>
@@ -191,19 +202,33 @@ export default function AdminStaff() {
         ))}
       </div>
 
-      {/* FIX 4: PIN recovery info for admin */}
-      <div className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-        <div className="flex items-start gap-3">
-          <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
-          <div>
-            <p className="text-amber-400 text-xs font-semibold mb-1">Forgot your admin PIN?</p>
-            <p className="text-zinc-500 text-xs leading-relaxed">
-              If you're locked out, run this command on the server to reset the admin PIN to <span className="font-mono text-zinc-300">0000</span>:
-            </p>
-            <code className="block mt-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-green-400 text-[11px] font-mono select-all">
-              cd backend && node -e "const db=require('./db/database'); db.prepare(\"UPDATE staff SET pin='0000' WHERE role='admin'\").run(); console.log('Done');"
-            </code>
-            <p className="text-zinc-600 text-[10px] mt-1.5">Then log in with PIN 0000 and change it from this page.</p>
+      {/* Safety notes */}
+      <div className="mt-5 space-y-3">
+        {/* Last-admin warning */}
+        {adminCount <= 1 && (
+          <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 flex items-start gap-3">
+            <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+            <div>
+              <p className="text-red-400 text-xs font-semibold mb-0.5">Only one admin account</p>
+              <p className="text-zinc-500 text-xs leading-relaxed">Add another admin before you can delete this one. You can't be locked out of your own system.</p>
+            </div>
+          </div>
+        )}
+
+        {/* PIN recovery info */}
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+          <div className="flex items-start gap-3">
+            <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
+            <div>
+              <p className="text-amber-400 text-xs font-semibold mb-1">Forgot your admin PIN?</p>
+              <p className="text-zinc-500 text-xs leading-relaxed">
+                If you're locked out, run this command on the server to reset the admin PIN to <span className="font-mono text-zinc-300">0000</span>:
+              </p>
+              <code className="block mt-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-green-400 text-[11px] font-mono select-all">
+                cd backend && node -e "const db=require('./db/database'); db.prepare(\"UPDATE staff SET pin='0000' WHERE role='admin'\").run(); console.log('Done');"
+              </code>
+              <p className="text-zinc-600 text-[10px] mt-1.5">Then log in with PIN 0000 and change it from this page.</p>
+            </div>
           </div>
         </div>
       </div>

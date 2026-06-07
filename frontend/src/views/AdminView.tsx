@@ -7,7 +7,7 @@ import AdminStaff       from './admin/AdminStaff';
 import AdminFloor       from './admin/AdminFloor';
 
 const TABS = [
-  { key: 'floor',      label: '🪑 Floor'    },
+  { key: 'floor',      label: 'Floor'    },
   { key: 'restaurant', label: 'Restaurant'  },
   { key: 'tables',     label: 'Tables'      },
   { key: 'menu',       label: 'Menu Items'  },
