@@ -12,6 +12,30 @@ const ROLE_STYLES: Record<string, string> = {
   waiter:  'bg-brand-500/15 text-brand-400 border-brand-500/25',
 };
 
+// ── Auth token helper (mirrors what api.ts does) ──────────────────────────
+let _cachedToken: string | null = null;
+async function getAuthToken(): Promise<string | null> {
+  if (_cachedToken !== null) return _cachedToken;
+  try {
+    const res  = await fetch(`${API_BASE}/api/auth/token`);
+    const data = await res.json();
+    _cachedToken = data.token ?? null;
+    return _cachedToken;
+  } catch {
+    return null;
+  }
+}
+
+async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {
+  const token = await getAuthToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(opts.headers as Record<string, string> || {}),
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return fetch(url, { ...opts, headers });
+}
+
 function ChangePinModal({ staff, onSave, onClose }: { staff: Staff; onSave: (newPin: string) => void; onClose: () => void }) {
   const [newPin,     setNewPin]     = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -112,28 +136,29 @@ export default function AdminStaff() {
       toast('Removed','success');
       load();
     } catch (e: any) {
-      // Show the actual backend error (e.g. "Cannot delete the last admin account")
       toast(e.response?.data?.error || 'Failed to remove staff', 'error');
     }
   };
 
+  // FIX: use authedFetch so the Authorization header is included
   const handleChangePin = async (newPin: string) => {
     if (!changePinFor) return;
     try {
-      const res = await fetch(`${API_BASE}/api/staff/${changePinFor.id}`, {
+      const res = await authedFetch(`${API_BASE}/api/staff/${changePinFor.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pin: newPin }),
       });
-      if (!res.ok) throw new Error('Failed');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as any).error || 'Failed');
+      }
       toast(`PIN updated for ${changePinFor.name}`, 'success');
       setChangePinFor(null);
-    } catch {
-      toast('Failed to update PIN', 'error');
+    } catch (e: any) {
+      toast(e.message || 'Failed to update PIN', 'error');
     }
   };
 
-  // Compute per-role — also track if a role has only 1 admin left (for UI hint)
   const adminCount = staff.filter(s => s.role === 'admin' && s.active).length;
   const byRole = {
     admin:   staff.filter(s => s.role === 'admin'),
@@ -141,9 +166,6 @@ export default function AdminStaff() {
     waiter:  staff.filter(s => s.role === 'waiter'),
   };
 
-  // A staff member's delete button should be visually disabled if:
-  // - it's the current user, OR
-  // - it's the only remaining active admin
   const canDelete = (s: Staff) => {
     if (s.id === user?.id) return false;
     if (s.role === 'admin' && adminCount <= 1) return false;
@@ -178,7 +200,6 @@ export default function AdminStaff() {
                     {s.name[0].toUpperCase()}
                   </div>
                   <span className="flex-1 text-white text-sm font-medium">{s.name}</span>
-                  {/* Change PIN button */}
                   <button
                     className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-brand-400 hover:bg-brand-500/10 transition-colors"
                     onClick={() => setChangePinFor(s)}
@@ -202,9 +223,7 @@ export default function AdminStaff() {
         ))}
       </div>
 
-      {/* Safety notes */}
       <div className="mt-5 space-y-3">
-        {/* Last-admin warning */}
         {adminCount <= 1 && (
           <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 flex items-start gap-3">
             <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
@@ -215,7 +234,6 @@ export default function AdminStaff() {
           </div>
         )}
 
-        {/* PIN recovery info */}
         <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
           <div className="flex items-start gap-3">
             <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>

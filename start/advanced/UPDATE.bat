@@ -21,7 +21,7 @@ if /i "%CONFIRM%" neq "Y" (
     exit /b 0
 )
 
-set "APP_ROOT=%~dp0.."
+set "APP_ROOT=%~dp0..\..\"
 pushd "%APP_ROOT%"
 set "APP_ROOT=%CD%"
 popd

@@ -44,7 +44,7 @@ app.use('/api/orders',          require('./routes/orders'));
 app.use('/api/staff',           require('./routes/staff'));
 app.use('/api/reports',         require('./routes/reports'));
 app.use('/api/export',          require('./routes/export'));
-app.use('/api/export/vyapar',   require('./routes/vyapar'));   // ← FIX: was missing
+app.use('/api/export/vyapar',   require('./routes/vyapar'));
 
 // ── Serve React frontend build (production) ────────────────────────────────
 const buildDir = path.join(__dirname, '..', 'frontend', 'build');
@@ -79,21 +79,45 @@ function startMdns() {
   }
 }
 
+// ── LAN IP detection — prefer RFC-1918 private IPs, skip VPN/Hamachi ──────
+// Hamachi uses 25.x.x.x and 26.x.x.x; ZeroTier uses 172.x ranges;
+// we only want the real Wi-Fi/Ethernet IP that phones on the same router can reach.
+function getLanIp() {
+  const { networkInterfaces } = require('os');
+  const nets = networkInterfaces();
+  const candidates = [];
+
+  for (const iface of Object.values(nets)) {
+    for (const net of iface) {
+      if (net.family !== 'IPv4' || net.internal) continue;
+      const ip = net.address;
+      // Only accept RFC-1918 private ranges
+      if (
+        ip.startsWith('192.168.') ||
+        ip.startsWith('10.')      ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(ip)
+      ) {
+        candidates.push(ip);
+      }
+    }
+  }
+
+  // Prefer 192.168.x.x (most home/restaurant routers), then 10.x.x.x
+  return (
+    candidates.find(ip => ip.startsWith('192.168.')) ||
+    candidates.find(ip => ip.startsWith('10.'))      ||
+    candidates[0] ||
+    null
+  );
+}
+
 // ── Start: initialise DB first, then listen ────────────────────────────────
 async function start() {
   const db = require('./db/database');
   await db.init();
 
   server.listen(PORT, '0.0.0.0', () => {
-    const { networkInterfaces } = require('os');
-    const nets = networkInterfaces();
-    let lanIp = null;
-    for (const iface of Object.values(nets)) {
-      for (const net of iface) {
-        if (net.family === 'IPv4' && !net.internal) { lanIp = net.address; break; }
-      }
-      if (lanIp) break;
-    }
+    const lanIp = getLanIp();
 
     const c = {
       reset:   '\x1b[0m',
@@ -143,6 +167,10 @@ async function start() {
     console.log(row(`${DIM}This PC   :${R} ${CY}http://localhost:${PORT}${R}`));
     if (lanIp) {
       console.log(row(`${DIM}Network   :${R} ${CY}http://${lanIp}:${PORT}${R}`));
+      console.log(row(`${DIM}            ${R} ${c.gray}(use this URL on phones/tablets)${R}`));
+    } else {
+      console.log(row(`${Y}Network   : No private LAN IP detected${R}`));
+      console.log(row(`${c.gray}            Connect to Wi-Fi and restart${R}`));
     }
     console.log(row(`${DIM}Easy URL  :${R} ${CY}http://restaurant.local:${PORT}${R}`));
     console.log(blank);

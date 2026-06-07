@@ -13,7 +13,7 @@ echo  restaurant computer) after cloning from
 echo  GitHub or whenever you update the code.
 echo.
 
-set APP_ROOT=%~dp0..
+set APP_ROOT=%~dp0..\..\
 cd /d "%APP_ROOT%"
 
 :: ── Check Node ────────────────────────────────────────────────────────────

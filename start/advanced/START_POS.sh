@@ -30,7 +30,7 @@ NODE_VER=$(node -v)
 echo " [OK] Node.js $NODE_VER"
 
 # ── Setup ──────────────────────────────────────────────────────────────────
-APP_ROOT="$(cd "$(dirname "$0")/../" && pwd)"
+APP_ROOT="$(cd "$(dirname "$0")/../../" && pwd)"
 cd "$APP_ROOT"
 
 if [ ! -d "backend/node_modules" ]; then

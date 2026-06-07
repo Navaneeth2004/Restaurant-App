@@ -21,7 +21,7 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
     exit 0
 fi
 
-APP_ROOT="$(cd "$(dirname "$0")/../" && pwd)"
+APP_ROOT="$(cd "$(dirname "$0")/../../" && pwd)"
 cd "$APP_ROOT"
 
 echo ""

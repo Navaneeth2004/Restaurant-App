@@ -50,11 +50,6 @@ You can use a USB drive, Google Drive, or any file transfer method.
 3. Run the installer — just click Next, Next, Next
 4. Restart the computer
 
-That's all. Node.js is a small install (~30MB) and the installer is straightforward.
-
-> **Why Node.js?** It's the engine that runs the POS server. Think of it like Java Runtime
-> or .NET Framework — a prerequisite that you install once and forget.
-
 ---
 
 ## Step 4 — Run the POS
@@ -66,6 +61,54 @@ The window must stay open while using the POS. To shut down, close the window.
 
 ---
 
+## Step 5 — Fix the IP address so phones always connect ⚠️
+
+By default your PC gets a different IP address from the router every time it restarts,
+which means the URL you bookmark on phones stops working. **Do this once to make it permanent.**
+
+### Option A — Set static IP on the PC (recommended, no router login needed)
+
+1. Open **Start** → search **"View network connections"** → press Enter
+2. Right-click your **Wi-Fi** (or Ethernet) adapter → **Properties**
+3. Double-click **Internet Protocol Version 4 (TCP/IPv4)**
+4. Select **"Use the following IP address"** and enter:
+   - IP address: *(use the IP shown in the POS server window, e.g. `192.168.1.43`)*
+   - Subnet mask: `255.255.255.0`
+   - Default gateway: `192.168.1.1`
+   - Preferred DNS: `8.8.8.8`
+   - Alternate DNS: `8.8.4.4`
+5. Click **OK** → **OK**
+
+> **Note:** If you ever take this PC to a different network (e.g. home vs restaurant),
+> you may need to temporarily switch back to "Obtain an IP address automatically".
+
+### Option B — DHCP reservation on the router (cleanest, needs router login)
+
+1. Open **http://192.168.1.1** in your browser
+   *(if that doesn't work, run `ipconfig` in CMD and look for "Default Gateway")*
+2. Log in — credentials are on the sticker on the back/bottom of your router
+3. Find **DHCP Reservation** / **Static Lease** / **Address Reservation**
+4. Find your PC in the list and assign it a fixed IP (e.g. `192.168.1.43`)
+5. Save and restart the router
+
+---
+
+## Accessing from phones and tablets
+
+All devices must be on the **same Wi-Fi network** as the POS computer.
+
+The terminal window shows a "Network:" URL like `http://192.168.1.43:4000`.
+Open that URL on any phone or tablet browser — no app install needed.
+
+**Bookmark it / add to home screen for one-tap access:**
+- **Android (Chrome):** tap the 3-dot menu → "Add to Home screen"
+- **iPhone (Safari):** tap the Share button → "Add to Home Screen"
+
+> `restaurant.local:4000` works on the POS PC itself but **not** on Android phones —
+> use the IP address URL on all phones and tablets.
+
+---
+
 ## Making it start automatically
 
 To have the POS start when the computer turns on:
@@ -73,41 +116,6 @@ To have the POS start when the computer turns on:
 1. Right-click `start\START_POS.bat` → Create shortcut
 2. Press `Win + R`, type `shell:startup`, press Enter
 3. Move the shortcut into that folder
-
----
-
-## Accessing from phones and tablets
-
-All devices must be on the **same Wi-Fi network**.
-
-The terminal window shows a "Network:" URL like `http://192.168.1.5:4000`.
-Open that URL on any phone or tablet browser — no app install needed.
-
-> **Tip for kitchen display:** Open the URL on a tablet, log in with PIN 2222 (Kitchen),
-> and it stays on the kitchen screen. Use a wall-mounted tablet for best results.
-
----
-
-## Setting up the easy URL (restaurant.local:4000)
-
-By default the POS runs at `http://localhost:4000` and `http://192.168.1.x:4000`.
-You can also set up a friendly URL `http://restaurant.local:4000` on the POS computer:
-
-1. Press the **Windows key** and search for **Notepad**
-2. Right-click Notepad → **Run as administrator**
-3. In Notepad, click **File → Open**
-4. In the address bar of the dialog, type `C:\Windows\System32\drivers\etc\` and press Enter
-5. Change the file filter dropdown from `Text Documents (*.txt)` to **All Files**
-6. Open the file called **hosts** (type: File — NOT the iCalendar one)
-7. Scroll to the very bottom, press Enter on the last line, and add:
-   ```
-   127.0.0.1    restaurant.local
-   ```
-8. Click **File → Save**
-9. Restart Chrome and go to `http://restaurant.local:4000`
-
-> **Note:** This only works on the POS computer itself.
-> For phones and tablets, use the IP address URL instead.
 
 ---
 
@@ -124,13 +132,11 @@ You can also set up a friendly URL `http://restaurant.local:4000` on the POS com
 
 **Phone can't connect**
 → Make sure phone is on the same Wi-Fi as the POS computer
-→ Check that the IP shown in the terminal matches your network
-→ Try running ADD_FIREWALL_RULE.bat (right-click → Run as administrator)
+→ The IP shown in the terminal is the correct URL — use that, not restaurant.local
+→ If still blocked, run `start\ADD_FIREWALL_RULE.bat` (right-click → Run as administrator)
 
-**restaurant.local not working**
-→ Follow the "Setting up the easy URL" section above
-→ Make sure you opened Notepad as administrator before editing the hosts file
-→ Restart Chrome after saving the hosts file
+**IP address changed and phone bookmark stopped working**
+→ Follow Step 5 above to make the IP permanent
 
 **Data lost after restart**
 → Data is in `backend/data/restaurant.db` — this file persists across restarts
