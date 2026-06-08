@@ -207,18 +207,61 @@ export default function AdminMenu() {
   );
 }
 
+// ── Auth token helpers ──────────────────────────────────────────────────────
+const BASE = process.env.REACT_APP_API_URL || window.location.origin;
+let _tok: string | null = null;
+
+async function tok(): Promise<string | null> {
+  if (_tok !== null) return _tok;
+  try {
+    const r = await fetch(`${BASE}/api/auth/token`);
+    const d = await r.json();
+    _tok = d.token ?? null;
+    return _tok;
+  } catch {
+    return null;
+  }
+}
+
+async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {
+  const t = await tok();
+  const h: Record<string, string> = { ...(opts.headers as any || {}) };
+  if (t) h['Authorization'] = `Bearer ${t}`;
+  return fetch(url, { ...opts, headers: h });
+}
+
 // ── Export / Import panel ────────────────────────────────────────────────────
 export function MenuExportImport() {
   const [importing,    setImporting]    = React.useState(false);
   const [importResult, setImportResult] = React.useState<string | null>(null);
   const [importError,  setImportError]  = React.useState<string | null>(null);
+  const [exporting,    setExporting]    = React.useState(false);
   const fileRef = React.useRef<HTMLInputElement>(null);
   const toast   = useToast();
-  const BASE    = process.env.REACT_APP_API_URL || window.location.origin;
 
-  // Opens the ZIP download directly — backend streams the zip
-  const handleExport = () => {
-    window.open(`${BASE}/api/export/menu`, '_blank');
+  // FIX: fetch with auth token then trigger blob download — window.open can't send headers
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const res = await authedFetch(`${BASE}/api/export/menu`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error((d as any).error || `Export failed (${res.status})`);
+      }
+      const blob    = await res.blob();
+      const url     = URL.createObjectURL(blob);
+      const a       = document.createElement('a');
+      a.href        = url;
+      const dateStr = new Date().toISOString().slice(0, 10);
+      a.download    = `menu_export_${dateStr}.zip`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast('Menu exported', 'success');
+    } catch (e: any) {
+      toast(e.message || 'Export failed', 'error');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -230,16 +273,16 @@ export function MenuExportImport() {
     setImportError(null);
 
     try {
-      let res;
+      let res: Response;
 
       if (file.name.endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
         const fd = new FormData();
         fd.append('menuzip', file);
-        res = await fetch(`${BASE}/api/export/menu/import`, { method: 'POST', body: fd });
+        res = await authedFetch(`${BASE}/api/export/menu/import`, { method: 'POST', body: fd });
       } else if (file.name.endsWith('.json') || file.type === 'application/json') {
         const text = await file.text();
         const data = JSON.parse(text);
-        res = await fetch(`${BASE}/api/export/menu/import`, {
+        res = await authedFetch(`${BASE}/api/export/menu/import`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data),
@@ -275,14 +318,13 @@ export function MenuExportImport() {
         Move your full menu — including item photos — to another device or create a backup
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Export */}
         <div className="rounded-lg bg-surface-raised border border-surface-border p-4">
           <div className="flex items-center gap-2 mb-2">
             <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
             <span className="text-white text-xs font-semibold">Export Menu</span>
           </div>
-          <p className="text-zinc-600 text-xs mb-1">
-            Downloads a <span className="text-zinc-400 font-mono">.zip</span> file containing:
-          </p>
+          <p className="text-zinc-600 text-xs mb-1">Downloads a <span className="text-zinc-400 font-mono">.zip</span> containing:</p>
           <ul className="text-zinc-600 text-xs mb-3 space-y-0.5 pl-2">
             <li className="flex items-center gap-1.5">
               <svg className="w-3 h-3 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
@@ -293,11 +335,18 @@ export function MenuExportImport() {
               images/ — all item photos
             </li>
           </ul>
-          <button className="btn btn-brand btn-sm w-full" onClick={handleExport}>
-            Download menu.zip
+          <button className="btn btn-brand btn-sm w-full" onClick={handleExport} disabled={exporting}>
+            {exporting
+              ? <span className="flex items-center justify-center gap-2">
+                  <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  Exporting…
+                </span>
+              : 'Download menu.zip'
+            }
           </button>
         </div>
 
+        {/* Import */}
         <div className="rounded-lg bg-surface-raised border border-surface-border p-4">
           <div className="flex items-center gap-2 mb-2">
             <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5m0 0L7.5 12m4.5-4.5V21" /></svg>

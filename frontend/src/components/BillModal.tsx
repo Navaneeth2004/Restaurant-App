@@ -26,38 +26,29 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   for (const order of orders) {
     for (const item of order.items) {
       const key = `${item.name}||${item.note || ''}||${item.price}`;
-      const existing = itemMap.get(key);
-      if (existing) {
-        existing.quantity += item.quantity;
-      } else {
-        itemMap.set(key, { name: item.name, price: item.price, quantity: item.quantity, note: item.note || '' });
-      }
+      const ex = itemMap.get(key);
+      if (ex) { ex.quantity += item.quantity; }
+      else { itemMap.set(key, { name: item.name, price: item.price, quantity: item.quantity, note: item.note || '' }); }
     }
   }
   const allItems = Array.from(itemMap.values());
-
-  const subtotal  = allItems.reduce((s, i) => s + i.price * i.quantity, 0);
-  const tax       = subtotal * taxPct;
-  const total     = subtotal + tax;
-  const now       = new Date();
-  const dateStr   = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  const timeStr   = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  const subtotal = allItems.reduce((s, i) => s + i.price * i.quantity, 0);
+  const tax      = subtotal * taxPct;
+  const total    = subtotal + tax;
+  const now      = new Date();
+  const dateStr  = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const timeStr  = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
   const handleMarkPaid = async () => {
-    try {
-      await closeOrder(orderId);
-      toast('Table cleared — enjoy!', 'success');
-      onClosed();
-    } catch {
-      toast('Failed to close order', 'error');
-    }
+    try { await closeOrder(orderId); toast('Table cleared!', 'success'); onClosed(); }
+    catch { toast('Failed to close order', 'error'); }
   };
 
   const sans = 'system-ui, -apple-system, sans-serif';
 
   return (
     <div
-      className="bill-modal-overlay fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3"
+      className="bill-modal-overlay fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
       onClick={onClose}
     >
       <style>{`
@@ -66,177 +57,124 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
           body * { visibility: hidden !important; }
           .bill-print-area, .bill-print-area * { visibility: visible !important; }
           .bill-print-area {
-            position: fixed !important;
-            top: 0 !important; left: 0 !important;
+            position: fixed !important; top: 0 !important; left: 0 !important;
             width: 72mm !important; max-width: 72mm !important;
             border-radius: 0 !important; box-shadow: none !important;
             max-height: none !important; overflow: visible !important;
           }
           .bill-scroll { overflow: visible !important; max-height: none !important; }
           .no-print { display: none !important; }
-          .bill-header {
-            background: #fff !important;
-            color: #111 !important;
-          }
-          .bill-header * {
-            color: #111 !important;
-            background: transparent !important;
-          }
+          .bill-header { background: #fff !important; color: #111 !important; }
+          .bill-header * { color: #111 !important; background: transparent !important; }
         }
       `}</style>
 
-      {/* Outer shell — fixed height with flex column so header+footer are sticky */}
       <div
-        className="bill-print-area flex flex-col bg-white w-full max-w-[320px] rounded-2xl overflow-hidden shadow-2xl"
-        style={{ maxHeight: '90vh' }}
+        className="bill-print-area flex flex-col bg-white w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl overflow-hidden shadow-2xl"
+        style={{ height: 'min(88dvh, 88vh)' }}
         onClick={e => e.stopPropagation()}
       >
-        {/* ── HEADER (fixed, never scrolls) ── */}
+        {/* HEADER — compact, fixed */}
         <div
           className="bill-header flex-shrink-0"
-          style={{ background: brand, padding: '16px 20px 14px', textAlign: 'center' }}
+          style={{ background: brand, padding: '10px 16px 10px', textAlign: 'center' }}
         >
-          {logoUrl && (
-            <img
-              src={`${API_BASE}${logoUrl}`}
-              alt="logo"
-              style={{ width: 52, height: 52, borderRadius: 10, objectFit: 'cover', marginBottom: 8, display: 'inline-block' }}
-            />
-          )}
-          <div style={{ fontSize: 17, fontWeight: 700, color: '#fff', fontFamily: sans, letterSpacing: 0.2 }}>
-            {settings.restaurant_name || 'Restaurant'}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            {logoUrl && (
+              <img src={`${API_BASE}${logoUrl}`} alt="logo"
+                style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
+            )}
+            <div style={{ textAlign: 'left' }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: sans, lineHeight: 1.2 }}>
+                {settings.restaurant_name || 'Restaurant'}
+              </div>
+              {settings.address && (
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', fontFamily: sans, lineHeight: 1.2 }}>{settings.address}</div>
+              )}
+            </div>
           </div>
-          {settings.address && (
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 2, fontFamily: sans }}>{settings.address}</div>
-          )}
-          {(settings as any).phone && (
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', fontFamily: sans }}>{(settings as any).phone}</div>
-          )}
           <div style={{
-            display: 'inline-block', marginTop: 7,
-            background: 'rgba(0,0,0,0.18)', borderRadius: 20,
+            display: 'inline-block', marginTop: 6,
+            background: 'rgba(0,0,0,0.2)', borderRadius: 20,
             padding: '2px 10px', fontSize: 11, color: '#fff', fontFamily: sans,
           }}>
-            {dateStr} · {timeStr}
+            {table?.label || `Table ${orders[0]?.table_id}`} · {dateStr} · {timeStr}
           </div>
         </div>
 
-        {/* ── SCROLLABLE BODY ── */}
-        <div
-          className="bill-scroll flex-1 overflow-y-auto"
-          style={{ padding: '14px 18px', background: '#fff' }}
-        >
-          {/* Table row */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 14, color: '#111' }}>
-              {table?.label || `Table ${orders[0]?.table_id}`}
-            </span>
-            <span style={{ fontFamily: sans, fontSize: 11, color: '#999' }}>
-              {allItems.reduce((s, i) => s + i.quantity, 0)} items
-            </span>
-          </div>
+        {/* SCROLLABLE ITEMS */}
+        <div className="bill-scroll flex-1 overflow-y-auto" style={{ padding: '10px 14px', background: '#fff' }}>
+          <div style={{ borderTop: '1px dashed #e5e5e5', margin: '0 0 8px' }} />
 
-          <Dash />
-
-          {/* Items list */}
-          <div style={{ margin: '10px 0' }}>
-            {allItems.map((item, i) => (
-              <div key={i} style={{ marginBottom: 9 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#111' }}>
-                  <span style={{ flex: 1, paddingRight: 8, fontFamily: sans, fontWeight: 600 }}>
-                    <span style={{ color: brand, fontWeight: 700 }}>{item.quantity}×</span> {item.name}
-                  </span>
-                  <span style={{ whiteSpace: 'nowrap', fontFamily: sans, fontWeight: 600, color: '#111' }}>
-                    {sym}{(item.price * item.quantity).toFixed(2)}
-                  </span>
-                </div>
-                <div style={{ fontSize: 11, color: '#bbb', paddingLeft: 2, fontFamily: sans }}>
-                  @ {sym}{item.price.toFixed(2)} each
-                </div>
-                {item.note && (
-                  <div style={{ fontSize: 11, color: '#888', paddingLeft: 2, fontStyle: 'italic', fontFamily: sans }}>
-                    ↳ {item.note}
-                  </div>
-                )}
+          {allItems.map((item, i) => (
+            <div key={i} style={{ marginBottom: 7 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#111' }}>
+                <span style={{ flex: 1, paddingRight: 8, fontFamily: sans, fontWeight: 600 }}>
+                  <span style={{ color: brand, fontWeight: 700 }}>{item.quantity}×</span> {item.name}
+                </span>
+                <span style={{ whiteSpace: 'nowrap', fontFamily: sans, fontWeight: 600 }}>
+                  {sym}{(item.price * item.quantity).toFixed(2)}
+                </span>
               </div>
-            ))}
+              <div style={{ fontSize: 10, color: '#bbb', paddingLeft: 2, fontFamily: sans }}>
+                @ {sym}{item.price.toFixed(2)} each
+              </div>
+              {item.note && (
+                <div style={{ fontSize: 10, color: '#888', paddingLeft: 2, fontStyle: 'italic', fontFamily: sans }}>↳ {item.note}</div>
+              )}
+            </div>
+          ))}
+
+          <div style={{ borderTop: '1px dashed #e5e5e5', margin: '6px 0 4px' }} />
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3, color: '#666', fontFamily: sans }}>
+            <span>Subtotal</span><span>{sym}{subtotal.toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3, color: '#666', fontFamily: sans }}>
+            <span>Tax ({settings.tax_percent || 5}%)</span><span>{sym}{tax.toFixed(2)}</span>
           </div>
 
-          <Dash />
+          <div style={{ borderTop: '1px dashed #e5e5e5', margin: '4px 0' }} />
 
-          {/* Subtotal + tax */}
-          <div style={{ margin: '8px 0 4px' }}>
-            <Row label="Subtotal" value={`${sym}${subtotal.toFixed(2)}`} sans={sans} />
-            <Row label={`Tax (${settings.tax_percent || 5}%)`} value={`${sym}${tax.toFixed(2)}`} sans={sans} />
-          </div>
-
-          <Dash />
-
-          {/* Total */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', margin: '10px 0 4px', fontFamily: sans }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', margin: '6px 0 4px', fontFamily: sans }}>
             <span style={{ fontSize: 15, fontWeight: 800, color: '#111' }}>TOTAL</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: brand }}>{sym}{total.toFixed(2)}</span>
           </div>
 
-          <Dash />
-
           {settings.bill_footer && (
-            <div style={{ textAlign: 'center', fontSize: 11, color: '#aaa', margin: '10px 0 4px', fontFamily: sans, fontStyle: 'italic' }}>
-              {settings.bill_footer}
-            </div>
+            <>
+              <div style={{ borderTop: '1px dashed #e5e5e5', margin: '4px 0' }} />
+              <div style={{ textAlign: 'center', fontSize: 11, color: '#aaa', margin: '6px 0 2px', fontFamily: sans, fontStyle: 'italic' }}>
+                {settings.bill_footer}
+              </div>
+            </>
           )}
-
-          <div style={{ textAlign: 'center', fontSize: 9, color: '#e0e0e0', letterSpacing: 4, marginTop: 6 }}>
-            |||||  ||||||  |||||  ||||||  ||||
-          </div>
         </div>
 
-        {/* ── ACTIONS (fixed at bottom, never scrolls) ── */}
-        <div className="no-print flex-shrink-0" style={{ padding: '12px 16px 16px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
-          <button
-            onClick={handleMarkPaid}
-            style={{
-              width: '100%', padding: '12px', borderRadius: 12, border: 'none',
-              background: '#10b981', color: '#fff', fontWeight: 700, fontSize: 14,
-              cursor: 'pointer', fontFamily: sans, marginBottom: 8,
-            }}
-          >
-            ✓  Mark Paid &amp; Clear Table
+        {/* ACTIONS — fixed at bottom, always visible */}
+        <div className="no-print flex-shrink-0"
+          style={{ padding: '10px 12px 12px', background: '#fff', borderTop: '1px solid #e5e7eb' }}>
+          <button onClick={handleMarkPaid} style={{
+            width: '100%', padding: '12px', borderRadius: 10, border: 'none',
+            background: '#10b981', color: '#fff', fontWeight: 700, fontSize: 15,
+            cursor: 'pointer', fontFamily: sans, marginBottom: 8,
+          }}>
+            Mark Paid &amp; Clear Table
           </button>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => window.print()} style={{
-              flex: 1, padding: '9px', borderRadius: 10, border: '1px solid #e5e7eb',
+              flex: 1, padding: '9px', borderRadius: 8, border: '1px solid #e5e7eb',
               background: '#fff', color: '#374151', fontWeight: 500, fontSize: 13,
               cursor: 'pointer', fontFamily: sans,
-            }}>
-              🖨️ Print
-            </button>
+            }}>Print</button>
             <button onClick={onClose} style={{
-              flex: 1, padding: '9px', borderRadius: 10, border: '1px solid #e5e7eb',
+              flex: 1, padding: '9px', borderRadius: 8, border: '1px solid #e5e7eb',
               background: '#fff', color: '#374151', fontWeight: 500, fontSize: 13,
               cursor: 'pointer', fontFamily: sans,
-            }}>
-              Close
-            </button>
+            }}>Close</button>
           </div>
-          <p style={{ textAlign: 'center', fontSize: 10, color: '#ccc', margin: '6px 0 0', fontFamily: sans }}>
-            For thermal printer: set paper size to <strong>80mm</strong>
-          </p>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Dash() {
-  return <div style={{ borderTop: '1px dashed #e5e5e5', margin: '6px 0' }} />;
-}
-
-function Row({ label, value, sans }: { label: string; value: string; sans: string }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4, color: '#666', fontFamily: sans }}>
-      <span>{label}</span>
-      <span>{value}</span>
     </div>
   );
 }
