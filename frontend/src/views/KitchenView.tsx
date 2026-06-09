@@ -7,19 +7,50 @@ import { playChime } from '../utils/sound';
 import { useTick } from '../hooks/useTick';
 import type { Order, OrderItem } from '../types';
 
-// FIX 2: Track additions (extra items added to an already-active order)
 interface Addition {
-  id: string;          // unique id for this addition event
+  id: string;
   orderId: string;
   tableId: string;
   additions: OrderItem[];
   createdAt: string;
 }
 
+interface Cancellation {
+  id: string;
+  orderId: string;
+  tableId: string;
+  type: 'item' | 'round';
+  cancelledItem?: OrderItem;
+  cancelledItems?: OrderItem[];
+  createdAt: string;
+}
+
+function playCancelChime(): void {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const notes = [523.25, 415.30, 349.23];
+    notes.forEach((freq, i) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const t = ctx.currentTime + i * 0.15;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.15, t + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      osc.start(t);
+      osc.stop(t + 0.55);
+    });
+  } catch { /* silent fail */ }
+}
+
 export default function KitchenView() {
-  const [orders,     setOrders]     = useState<Order[]>([]);
-  const [additions,  setAdditions]  = useState<Addition[]>([]);   // FIX 2
-  const [delivering, setDelivering] = useState<string | null>(null);
+  const [orders,        setOrders]        = useState<Order[]>([]);
+  const [additions,     setAdditions]     = useState<Addition[]>([]);
+  const [cancellations, setCancellations] = useState<Cancellation[]>([]);
+  const [delivering,    setDelivering]    = useState<string | null>(null);
   const toast = useToast();
   useTick(15000);
 
@@ -30,13 +61,11 @@ export default function KitchenView() {
 
   useEffect(() => { load(); }, []);
 
-  // New full orders
   useSocket('new_order', ({ order }: { order: Order }) => {
     playChime();
     setOrders(prev => prev.some(o => o.id === order.id) ? prev : [...prev, order]);
   });
 
-  // Full order updated (waiter modified) — refresh totals/items silently
   useSocket('order_updated', ({ order }: { order: Order }) => {
     setOrders(prev =>
       prev.some(o => o.id === order.id)
@@ -45,13 +74,45 @@ export default function KitchenView() {
     );
   });
 
-  // FIX 2: Extra items added to an existing active order — show as a separate "addition" card
   useSocket('order_additions', (data: { orderId: string; tableId: string; additions: OrderItem[]; createdAt: string }) => {
     playChime();
     const addition: Addition = { id: `${data.orderId}-${Date.now()}`, ...data };
     setAdditions(prev => [...prev, addition]);
-    // Auto-dismiss after 5 minutes
     setTimeout(() => setAdditions(prev => prev.filter(a => a.id !== addition.id)), 5 * 60 * 1000);
+  });
+
+  // Item cancelled from active/delivered order
+  useSocket('order_item_cancelled', (data: { orderId: string; tableId: string; cancelledItem: OrderItem; orderStatus: string; updatedOrder: Order }) => {
+    playCancelChime();
+    // Update order in list if active
+    setOrders(prev => prev.map(o => o.id === data.orderId ? data.updatedOrder : o));
+    const cancellation: Cancellation = {
+      id: `cancel-item-${data.orderId}-${Date.now()}`,
+      orderId: data.orderId,
+      tableId: data.tableId,
+      type: 'item',
+      cancelledItem: data.cancelledItem,
+      createdAt: new Date().toISOString(),
+    };
+    setCancellations(prev => [...prev, cancellation]);
+    setTimeout(() => setCancellations(prev => prev.filter(c => c.id !== cancellation.id)), 5 * 60 * 1000);
+  });
+
+  // Entire round cancelled
+  useSocket('order_round_cancelled', (data: { orderId: string; tableId: string; cancelledItems: OrderItem[]; orderStatus: string }) => {
+    playCancelChime();
+    setOrders(prev => prev.filter(o => o.id !== data.orderId));
+    setAdditions(prev => prev.filter(a => a.orderId !== data.orderId));
+    const cancellation: Cancellation = {
+      id: `cancel-round-${data.orderId}-${Date.now()}`,
+      orderId: data.orderId,
+      tableId: data.tableId,
+      type: 'round',
+      cancelledItems: data.cancelledItems,
+      createdAt: new Date().toISOString(),
+    };
+    setCancellations(prev => [...prev, cancellation]);
+    setTimeout(() => setCancellations(prev => prev.filter(c => c.id !== cancellation.id)), 5 * 60 * 1000);
   });
 
   useSocket('order_delivered', ({ order }: { order: Order }) => {
@@ -62,6 +123,7 @@ export default function KitchenView() {
   useSocket('order_closed', ({ orderId }: { orderId: string }) => {
     setOrders(prev => prev.filter(o => o.id !== orderId));
     setAdditions(prev => prev.filter(a => a.orderId !== orderId));
+    setCancellations(prev => prev.filter(c => c.orderId !== orderId));
   });
 
   const handleDeliver = async (orderId: string) => {
@@ -75,7 +137,8 @@ export default function KitchenView() {
     finally { setDelivering(null); }
   };
 
-  const dismissAddition = (id: string) => setAdditions(prev => prev.filter(a => a.id !== id));
+  const dismissAddition    = (id: string) => setAdditions(prev => prev.filter(a => a.id !== id));
+  const dismissCancellation = (id: string) => setCancellations(prev => prev.filter(c => c.id !== id));
 
   const urgentCount = orders.filter(o => isUrgent(o.created_at, 20)).length;
   const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -98,6 +161,12 @@ export default function KitchenView() {
               {additions.length} Addition{additions.length > 1 ? 's' : ''}
             </span>
           )}
+          {cancellations.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-red-400 bg-red-500/15 border border-red-500/25 px-2.5 py-1 rounded-full whitespace-nowrap animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />
+              {cancellations.length} Cancellation{cancellations.length > 1 ? 's' : ''}
+            </span>
+          )}
           {urgentCount > 0 && (
             <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-red-400 bg-red-500/15 border border-red-500/25 px-2.5 py-1 rounded-full whitespace-nowrap animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />
@@ -109,7 +178,7 @@ export default function KitchenView() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {orders.length === 0 && additions.length === 0 ? (
+        {orders.length === 0 && additions.length === 0 && cancellations.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full">
             <div className="w-20 h-20 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-4">
               <svg className="w-9 h-9 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -122,10 +191,62 @@ export default function KitchenView() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
 
-            {/* FIX 2: Addition cards — shown ABOVE regular order cards, clearly labelled */}
+            {/* Cancellation cards — shown FIRST, most urgent */}
+            {cancellations.map(c => (
+              <div key={c.id} className="rounded-xl border border-red-500/70 overflow-hidden flex flex-col animate-slide-up shadow-lg shadow-red-500/15">
+                <div className="px-4 py-3 flex items-center justify-between bg-red-600">
+                  <div className="flex items-center gap-2.5">
+                    <span className="font-mono font-bold text-white text-2xl leading-none">{c.tableId}</span>
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-red-100 bg-red-700/50 px-1.5 py-0.5 rounded">
+                      {c.type === 'round' ? 'Round Cancelled' : 'Item Removed'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => dismissCancellation(c.id)}
+                    className="w-6 h-6 rounded-full bg-red-700/40 hover:bg-red-700/70 flex items-center justify-center text-red-100 transition-colors"
+                    title="Dismiss"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+                <div className="px-4 py-3 flex-1 space-y-2.5 bg-surface-card">
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-red-400/80 mb-1">
+                    {c.type === 'round' ? 'Stop making — entire round cancelled' : 'Stop making — this item was removed'}
+                  </p>
+                  {c.type === 'item' && c.cancelledItem && (
+                    <div className="flex items-start gap-2.5">
+                      <span className="font-mono font-bold text-red-400 text-lg leading-none w-8 flex-shrink-0 line-through">{c.cancelledItem.quantity}×</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-semibold leading-snug line-through opacity-75">{c.cancelledItem.name}</p>
+                        {c.cancelledItem.note && (
+                          <p className="text-red-400/60 text-xs mt-0.5">{c.cancelledItem.note}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {c.type === 'round' && c.cancelledItems && c.cancelledItems.map((item, i) => (
+                    <div key={i} className="flex items-start gap-2.5">
+                      <span className="font-mono font-bold text-red-400 text-lg leading-none w-8 flex-shrink-0 line-through">{item.quantity}×</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-semibold leading-snug line-through opacity-75">{item.name}</p>
+                        {item.note && <p className="text-red-400/60 text-xs mt-0.5">{item.note}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="px-4 pb-4 pt-2 bg-surface-card border-t border-surface-border">
+                  <button onClick={() => dismissCancellation(c.id)}
+                    className="w-full py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm font-semibold hover:bg-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                    Understood
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {/* Addition cards */}
             {additions.map(addition => (
               <div key={addition.id} className="rounded-xl border border-amber-500/60 overflow-hidden flex flex-col animate-slide-up shadow-lg shadow-amber-500/10">
-                {/* Header — amber to distinguish from new orders */}
                 <div className="px-4 py-3 flex items-center justify-between bg-amber-500">
                   <div className="flex items-center gap-2.5">
                     <span className="font-mono font-bold text-white text-2xl leading-none">{addition.tableId}</span>
@@ -139,7 +260,6 @@ export default function KitchenView() {
                     <button
                       onClick={() => dismissAddition(addition.id)}
                       className="w-6 h-6 rounded-full bg-amber-600/40 hover:bg-amber-600/70 flex items-center justify-center text-amber-100 transition-colors"
-                      title="Dismiss"
                     >
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>

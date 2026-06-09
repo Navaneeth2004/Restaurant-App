@@ -5,15 +5,9 @@ const db      = require('../db/database');
 
 // ── Migration: add payment columns if missing ─────────────────────────────
 (function migrate() {
-  try {
-    db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`);
-  } catch (_) {}
-  try {
-    db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`);
-  } catch (_) {}
-  try {
-    db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`);
-  } catch (_) {}
+  try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
+  try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
+  try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
 })();
 
 const _pendingTables = new Set();
@@ -130,9 +124,9 @@ router.post('/', (req, res) => {
   }
 });
 
-// ── PATCH cancel a single item from an active order ───────────────────────
+// ── PATCH cancel a single item from an active or delivered order ──────────
 router.patch('/:id/cancel-item', (req, res) => {
-  const { item_id } = req.body; // order_items.id
+  const { item_id } = req.body;
   if (!item_id) return res.status(400).json({ error: 'item_id required' });
 
   try {
@@ -147,15 +141,18 @@ router.patch('/:id/cancel-item', (req, res) => {
       db.prepare('DELETE FROM order_items WHERE id = ?').run(item_id);
       recalcTotal(req.params.id);
 
-      // If no items left, cancel the whole order
       const remaining = db.prepare('SELECT COUNT(*) as c FROM order_items WHERE order_id = ?').get(req.params.id).c;
       if (remaining === 0) {
         db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
-        db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
+        // Only clear table if no other active/delivered orders remain
+        const other = db.prepare(
+          "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ('active','delivered') AND id != ?"
+        ).get(order.table_id, req.params.id).c;
+        if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
         return { cancelled: true, order_cancelled: true, table_id: order.table_id };
       }
 
-      return getOrderWithItems(req.params.id);
+      return { updatedOrder: getOrderWithItems(req.params.id), cancelledItem: item, orderStatus: order.status };
     });
 
     const result = cancel();
@@ -166,9 +163,17 @@ router.patch('/:id/cancel-item', (req, res) => {
       req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
       req.io.emit('tables_updated');
     } else {
-      req.io.emit('order_updated', { order: result, isNew: false });
+      req.io.emit('order_updated', { order: result.updatedOrder, isNew: false });
+      // Notify kitchen about the cancellation
+      req.io.emit('order_item_cancelled', {
+        orderId: req.params.id,
+        tableId: result.updatedOrder.table_id,
+        cancelledItem: result.cancelledItem,
+        orderStatus: result.orderStatus,
+        updatedOrder: result.updatedOrder,
+      });
     }
-    res.json(result);
+    res.json(result.updatedOrder || { success: true });
   } catch (err) {
     console.error('[Orders] Cancel item error:', err.message);
     res.status(500).json({ error: 'Failed to cancel item' });
@@ -183,13 +188,13 @@ router.patch('/:id/cancel', (req, res) => {
       if (!order) return null;
       if (order.status === 'closed') return { error: 'Order already closed' };
 
+      const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(req.params.id);
       db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
-      // Only clear table if no other active/delivered orders remain
       const other = db.prepare(
         "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ('active','delivered') AND id != ?"
       ).get(order.table_id, req.params.id).c;
       if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
-      return { success: true, table_id: order.table_id };
+      return { success: true, table_id: order.table_id, tableId: order.table_id, items, orderStatus: order.status };
     });
 
     const result = cancel();
@@ -198,6 +203,13 @@ router.patch('/:id/cancel', (req, res) => {
 
     req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
     req.io.emit('tables_updated');
+    // Notify kitchen about round cancellation
+    req.io.emit('order_round_cancelled', {
+      orderId: req.params.id,
+      tableId: result.tableId,
+      cancelledItems: result.items,
+      orderStatus: result.orderStatus,
+    });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to cancel order' });
@@ -239,7 +251,7 @@ router.patch('/:id/close', (req, res) => {
       const payDetails = payment_details ? JSON.stringify(payment_details) : null;
       const change     = change_amount   || 0;
 
-      // Close all open orders for this table, recording payment on each
+      // Close all open orders for this table
       db.prepare(`
         UPDATE orders SET status = 'closed', payment_method = ?, payment_details = ?, change_amount = ?
         WHERE table_id = ? AND status IN ('active','delivered')
@@ -257,6 +269,7 @@ router.patch('/:id/close', (req, res) => {
     req.io.emit('tables_updated');
     res.json({ success: true });
   } catch (err) {
+    console.error('[Orders] Close error:', err.message);
     res.status(500).json({ error: 'Failed to close order' });
   }
 });

@@ -24,7 +24,7 @@ const zipUpload = multer({
   },
 });
 
-// ── MENU EXPORT — streams a .zip with menu.json + images/ ─────────────────
+// ── MENU EXPORT ───────────────────────────────────────────────────────────
 router.get('/menu', (req, res) => {
   const categories = db.prepare('SELECT * FROM categories ORDER BY sort_order, id').all();
   const items      = db.prepare(`
@@ -148,7 +148,6 @@ router.post(
 );
 
 // ── REVENUE EXPORT — Professional CSV / JSON ─────────────────────────────
-// GET /api/export/revenue?from=YYYY-MM-DD&to=YYYY-MM-DD&format=json|csv
 router.get('/revenue', (req, res) => {
   const { from, to, format = 'json' } = req.query;
   const today    = new Date().toISOString().split('T')[0];
@@ -186,6 +185,15 @@ router.get('/revenue', (req, res) => {
     });
   });
 
+  // ── Payment method breakdown ────────────────────────────────────────────
+  const paymentMap = {};
+  orders.filter(o => o.status === 'closed').forEach(o => {
+    const method = o.payment_method || 'unknown';
+    if (!paymentMap[method]) paymentMap[method] = { method, count: 0, revenue: 0 };
+    paymentMap[method].count   += 1;
+    paymentMap[method].revenue += o.total;
+  });
+
   const settingsRows = db.prepare('SELECT key, value FROM settings').all();
   const S            = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
   const currency     = S.currency_symbol || '₹';
@@ -199,7 +207,6 @@ router.get('/revenue', (req, res) => {
   const revenueExTax   = parseFloat((totalRevenue).toFixed(2));
   const totalInclTax   = parseFloat((totalRevenue + taxCollected).toFixed(2));
 
-  // Fill daily tax numbers
   Object.values(dailyMap).forEach(d => {
     d.tax           = parseFloat((d.revenue * taxPct).toFixed(2));
     d.total_incl_tax = parseFloat((d.revenue + d.tax).toFixed(2));
@@ -207,9 +214,9 @@ router.get('/revenue', (req, res) => {
   });
 
   const topItems = Object.values(itemMap).sort((a, b) => b.revenue - a.revenue);
+  const paymentBreakdown = Object.values(paymentMap).sort((a, b) => b.revenue - a.revenue);
 
   if (format === 'csv') {
-    // ── Build a professional multi-section CSV ──────────────────────────
     const NOW = new Date().toLocaleString();
     const sep = ',';
     const q   = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -217,14 +224,12 @@ router.get('/revenue', (req, res) => {
 
     const lines = [];
 
-    // ── HEADER ──────────────────────────────────────────────────────────
     lines.push(row(S.restaurant_name || 'Restaurant', 'Revenue Report'));
     lines.push(row('Generated', NOW));
     lines.push(row('Period', `${dateFrom}  to  ${dateTo}`));
     lines.push(row('Tax Rate', `${S.tax_percent || 5}%`));
     lines.push('');
 
-    // ── SUMMARY ─────────────────────────────────────────────────────────
     lines.push(row('── SUMMARY ──'));
     lines.push(row('Metric', 'Value'));
     lines.push(row('Total Revenue (pre-tax)', `${currency}${revenueExTax.toFixed(2)}`));
@@ -240,14 +245,23 @@ router.get('/revenue', (req, res) => {
     }
     lines.push('');
 
-    // ── DAILY BREAKDOWN ─────────────────────────────────────────────────
+    // ── PAYMENT METHOD BREAKDOWN ──────────────────────────────────────────
+    if (paymentBreakdown.length > 0) {
+      lines.push(row('── PAYMENT METHODS ──'));
+      lines.push(row('Method', 'Orders', `Revenue ${currency}`, '% of Total'));
+      paymentBreakdown.forEach(p => {
+        const pct = totalRevenue > 0 ? ((p.revenue / totalRevenue) * 100).toFixed(1) : '0.0';
+        lines.push(row(p.method.toUpperCase(), p.count, p.revenue.toFixed(2), `${pct}%`));
+      });
+      lines.push('');
+    }
+
     lines.push(row('── DAILY BREAKDOWN ──'));
     lines.push(row('Date', 'Orders', 'Items Sold', `Revenue (pre-tax) ${currency}`, `Tax ${currency}`, `Total incl. Tax ${currency}`));
     const dailyRows = Object.values(dailyMap);
     dailyRows.forEach(d => {
       lines.push(row(d.date, d.orders, d.items_sold, d.revenue.toFixed(2), d.tax.toFixed(2), d.total_incl_tax.toFixed(2)));
     });
-    // Totals row
     const dailyTotals = dailyRows.reduce(
       (acc, d) => ({ orders: acc.orders + d.orders, items: acc.items + d.items_sold, rev: acc.rev + d.revenue, tax: acc.tax + d.tax, total: acc.total + d.total_incl_tax }),
       { orders: 0, items: 0, rev: 0, tax: 0, total: 0 }
@@ -255,20 +269,17 @@ router.get('/revenue', (req, res) => {
     lines.push(row('TOTAL', dailyTotals.orders, dailyTotals.items, dailyTotals.rev.toFixed(2), dailyTotals.tax.toFixed(2), dailyTotals.total.toFixed(2)));
     lines.push('');
 
-    // ── TOP ITEMS ────────────────────────────────────────────────────────
     lines.push(row('── TOP ITEMS ──'));
     lines.push(row('Rank', 'Item Name', 'Qty Sold', `Revenue ${currency}`, '% of Total Revenue'));
     topItems.forEach((item, i) => {
       const pct = totalRevenue > 0 ? ((item.revenue / totalRevenue) * 100).toFixed(1) : '0.0';
       lines.push(row(i + 1, item.name, item.qty_sold, item.revenue.toFixed(2), `${pct}%`));
     });
-    // Totals row
     lines.push(row('TOTAL', '', totalItemsSold, revenueExTax.toFixed(2), '100.0%'));
     lines.push('');
 
-    // ── ORDER DETAIL ─────────────────────────────────────────────────────
     lines.push(row('── ORDER DETAIL ──'));
-    lines.push(row('Order ID', 'Table', 'Date', 'Time', 'Items', `Subtotal ${currency}`, `Tax ${currency}`, `Total incl. Tax ${currency}`, 'Status'));
+    lines.push(row('Order ID', 'Table', 'Date', 'Time', 'Items', `Subtotal ${currency}`, `Tax ${currency}`, `Total incl. Tax ${currency}`, 'Status', 'Payment Method'));
     orders.forEach(o => {
       const d    = new Date(o.created_at);
       const sub  = o.total;
@@ -283,19 +294,18 @@ router.get('/revenue', (req, res) => {
         sub.toFixed(2),
         tax.toFixed(2),
         incl.toFixed(2),
-        o.status
+        o.status,
+        o.payment_method || '—'
       ));
     });
-    // Grand totals row at bottom
     const grandTax   = parseFloat((totalRevenue * taxPct).toFixed(2));
     const grandTotal = parseFloat((totalRevenue + grandTax).toFixed(2));
-    lines.push(row('GRAND TOTAL', '', '', '', '', revenueExTax.toFixed(2), grandTax.toFixed(2), grandTotal.toFixed(2), ''));
+    lines.push(row('GRAND TOTAL', '', '', '', '', revenueExTax.toFixed(2), grandTax.toFixed(2), grandTotal.toFixed(2), '', ''));
     lines.push('');
 
     const dateStr = from ? `${dateFrom}_to_${dateTo}` : 'all';
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="revenue_report_${dateStr}.csv"`);
-    // BOM for Excel UTF-8 auto-detect
     return res.send('\uFEFF' + lines.join('\r\n'));
   }
 
@@ -316,17 +326,23 @@ router.get('/revenue', (req, res) => {
       avg_order_value:      parseFloat(avgOrderValue.toFixed(2)),
       currency,
     },
+    payment_breakdown: paymentBreakdown.map(p => ({
+      method:  p.method,
+      count:   p.count,
+      revenue: parseFloat(p.revenue.toFixed(2)),
+    })),
     daily_breakdown: Object.values(dailyMap),
     top_items: topItems.map(i => ({ ...i, revenue: parseFloat(i.revenue.toFixed(2)) })),
     orders: orders.map(o => ({
-      id:         o.id,
-      table:      o.table_label || o.table_id,
-      created_at: o.created_at,
-      status:     o.status,
-      subtotal:   parseFloat(o.total.toFixed(2)),
-      tax:        parseFloat((o.total * taxPct).toFixed(2)),
+      id:             o.id,
+      table:          o.table_label || o.table_id,
+      created_at:     o.created_at,
+      status:         o.status,
+      payment_method: o.payment_method || null,
+      subtotal:       parseFloat(o.total.toFixed(2)),
+      tax:            parseFloat((o.total * taxPct).toFixed(2)),
       total_incl_tax: parseFloat((o.total * (1 + taxPct)).toFixed(2)),
-      items:      o.items.map(i => ({
+      items:          o.items.map(i => ({
         name:     i.name,
         qty:      i.quantity,
         price:    i.price,

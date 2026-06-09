@@ -575,9 +575,13 @@ export default function AdminFloor() {
                     {rev > 0 && <p style={{ color:'#fff', fontSize:'12px', fontWeight:700, margin:0, fontFamily:'ui-monospace,monospace' }}>{sym}{rev.toFixed(2)}</p>}
                   </>
                 ) : (
-                  <span style={{ color: hv==='bill' ? '#818cf8' : '#3f3f46', fontSize:'10px', fontWeight:700, textTransform:'uppercase' }}>
-                    {hv==='bill' ? 'Bill' : 'Free'}
-                  </span>
+                  hv === 'bill' ? (
+                    <span style={{ display:'inline-flex', alignItems:'center', gap:'3px', padding:'2px 6px', borderRadius:'99px', background:'rgba(129,140,248,0.14)', color:'#818cf8', border:'1px solid rgba(129,140,248,0.3)', fontSize:'10px', fontWeight:700, fontFamily:'ui-monospace,monospace' }}>
+                      Awaiting Bill
+                    </span>
+                  ) : (
+                    <span style={{ color:'#3f3f46', fontSize:'10px', fontWeight:700, textTransform:'uppercase' }}>Free</span>
+                  )
                 )}
               </button>
             );

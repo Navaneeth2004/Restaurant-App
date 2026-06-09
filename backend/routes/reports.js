@@ -5,7 +5,6 @@ const db      = require('../db/database');
 router.get('/today', (req, res) => {
   const today = new Date().toISOString().split('T')[0];
 
-  // FIX #6: include BOTH delivered and closed orders in revenue
   const revenue = db.prepare(`
     SELECT COALESCE(SUM(total),0) as total, COUNT(*) as count
     FROM orders
@@ -25,7 +24,15 @@ router.get('/today', (req, res) => {
     LIMIT 5
   `).all(today);
 
-  res.json({ revenue: revenue.total, ordersCount: revenue.count, activeOrders: activeOrders.count, occupiedTables: occupiedTables.count, topItems });
+  // Payment method breakdown for today
+  const paymentBreakdown = db.prepare(`
+    SELECT payment_method, COUNT(*) as count, SUM(total) as total
+    FROM orders
+    WHERE status = 'closed' AND substr(created_at,1,10) = ?
+    GROUP BY payment_method
+  `).all(today);
+
+  res.json({ revenue: revenue.total, ordersCount: revenue.count, activeOrders: activeOrders.count, occupiedTables: occupiedTables.count, topItems, paymentBreakdown });
 });
 
 router.get('/history', (req, res) => {
