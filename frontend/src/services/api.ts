@@ -74,6 +74,9 @@ export const getOrderHistory   = (params?: Record<string, string>): Promise<Orde
 export const submitOrder       = (data: { table_id: string; items: any[] }): Promise<Order> => api.post('/orders', data).then(r => r.data);
 export const deliverOrder      = (id: string): Promise<Order> => api.patch(`/orders/${id}/deliver`).then(r => r.data);
 export const closeOrder        = (id: string): Promise<void> => api.patch(`/orders/${id}/close`).then(r => r.data);
+export const cancelOrderItem   = (orderId: string, itemId: number): Promise<void> => api.patch(`/orders/${orderId}/cancel-item`, { item_id: itemId }).then(r => r.data);
+export const cancelOrder       = (orderId: string): Promise<void> => api.patch(`/orders/${orderId}/cancel`).then(r => r.data);
+export const closeOrderWithPayment = (id: string, payment: { payment_method: string; payment_details?: any; change_amount?: number }): Promise<void> => api.patch(`/orders/${id}/close`, payment).then(r => r.data);
 
 export const getStaff          = (): Promise<Staff[]>     => api.get('/staff').then(r => r.data);
 export const createStaff       = (data: { name: string; pin: string; role: string }): Promise<Staff> => api.post('/staff', data).then(r => r.data);

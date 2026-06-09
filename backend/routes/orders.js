@@ -3,11 +3,19 @@ const router  = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const db      = require('../db/database');
 
-// ── In-flight lock: prevents two simultaneous submits for the same table ──
-// sql.js is synchronous so JS's single-threaded event loop normally prevents
-// true races, BUT async gaps (await in route handlers) can allow two requests
-// to both read "no existing order" before either has written. This set closes
-// that window.
+// ── Migration: add payment columns if missing ─────────────────────────────
+(function migrate() {
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`);
+  } catch (_) {}
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`);
+  } catch (_) {}
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`);
+  } catch (_) {}
+})();
+
 const _pendingTables = new Set();
 
 function getOrderWithItems(orderId) {
@@ -24,14 +32,12 @@ function recalcTotal(orderId) {
   return total;
 }
 
-// GET all active orders (kitchen)
 router.get('/active', (req, res) => {
   const orders = db.prepare("SELECT * FROM orders WHERE status = 'active' ORDER BY created_at ASC").all();
   orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
   res.json(orders);
 });
 
-// GET ALL non-closed orders for a table (used for billing across multiple rounds)
 router.get('/table/:tableId/all', (req, res) => {
   const orders = db.prepare(
     "SELECT * FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at ASC"
@@ -40,18 +46,14 @@ router.get('/table/:tableId/all', (req, res) => {
   res.json(orders);
 });
 
-// GET most recent active or delivered order for a specific table
 router.get('/table/:tableId', (req, res) => {
   let order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(req.params.tableId);
-  if (!order) {
-    order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY delivered_at DESC LIMIT 1").get(req.params.tableId);
-  }
+  if (!order) order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY delivered_at DESC LIMIT 1").get(req.params.tableId);
   if (!order) return res.json(null);
   order.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
   res.json(order);
 });
 
-// GET order history
 router.get('/history', (req, res) => {
   const limit = parseInt(req.query.limit) || 100;
   const orders = db.prepare("SELECT * FROM orders WHERE status IN ('delivered','closed') ORDER BY created_at DESC LIMIT ?").all(limit);
@@ -59,41 +61,26 @@ router.get('/history', (req, res) => {
   res.json(orders);
 });
 
-// GET single order
 router.get('/:id', (req, res) => {
   const order = getOrderWithItems(req.params.id);
   if (!order) return res.status(404).json({ error: 'Not found' });
   res.json(order);
 });
 
-// POST create or update order
-// CONCURRENCY FIX: wrapped entirely in a db.transaction so two simultaneous
-// submissions for the same table cannot both see "no existing order" and
-// both create a new order. The _pendingTables set adds a second layer of
-// protection against the async gap before the transaction starts.
 router.post('/', (req, res) => {
   const { table_id, items } = req.body;
-  if (!table_id || !items || !items.length) {
-    return res.status(400).json({ error: 'table_id and items required' });
-  }
+  if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
 
-  // Soft lock — reject if this table already has a submit in flight
-  if (_pendingTables.has(table_id)) {
-    return res.status(409).json({ error: 'Order for this table is already being processed. Please wait a moment.' });
-  }
+  if (_pendingTables.has(table_id)) return res.status(409).json({ error: 'Order already being processed. Please wait.' });
   _pendingTables.add(table_id);
 
   try {
-    let order;
-    let isNew;
-    let newItems = [];
+    let order, isNew, newItems = [];
 
-    // Everything inside one atomic transaction — no async gap possible here
     const saveOrder = db.transaction(() => {
       const existing = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
 
       if (existing) {
-        // Existing active order — compute which items are genuinely new additions
         const prevItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(existing.id);
         const prevMap = {};
         for (const pi of prevItems) {
@@ -102,33 +89,22 @@ router.post('/', (req, res) => {
         }
         for (const item of items) {
           const key = `${item.menu_item_id}|${item.note || ''}`;
-          const prevQty = prevMap[key] || 0;
-          const addedQty = item.quantity - prevQty;
-          if (addedQty > 0) {
-            newItems.push({ ...item, quantity: addedQty });
-          }
+          const added = item.quantity - (prevMap[key] || 0);
+          if (added > 0) newItems.push({ ...item, quantity: added });
         }
-
-        // Replace all items with the new full set
         db.prepare('DELETE FROM order_items WHERE order_id = ?').run(existing.id);
-        const insertItem = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
-        for (const it of items) {
-          insertItem.run(existing.id, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
-        }
+        const ins = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
+        for (const it of items) ins.run(existing.id, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
         recalcTotal(existing.id);
         isNew = false;
         return getOrderWithItems(existing.id);
-
       } else {
-        // New order
         const orderId = uuidv4();
         const now = new Date().toISOString();
         db.prepare('INSERT INTO orders (id, table_id, status, created_at) VALUES (?, ?, ?, ?)').run(orderId, table_id, 'active', now);
         db.prepare("UPDATE tables SET status = 'occupied' WHERE id = ?").run(table_id);
-        const insertItem = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
-        for (const it of items) {
-          insertItem.run(orderId, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
-        }
+        const ins = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
+        for (const it of items) ins.run(orderId, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
         recalcTotal(orderId);
         isNew = true;
         return getOrderWithItems(orderId);
@@ -136,24 +112,16 @@ router.post('/', (req, res) => {
     });
 
     order = saveOrder();
-
     if (isNew) {
       req.io.emit('new_order', { order });
       req.io.emit('order_updated', { order, isNew: true });
     } else {
       req.io.emit('order_updated', { order, isNew: false });
       if (newItems.length > 0) {
-        req.io.emit('order_additions', {
-          orderId: order.id,
-          tableId: order.table_id,
-          additions: newItems,
-          createdAt: new Date().toISOString(),
-        });
+        req.io.emit('order_additions', { orderId: order.id, tableId: order.table_id, additions: newItems, createdAt: new Date().toISOString() });
       }
     }
-
     res.status(isNew ? 201 : 200).json(order);
-
   } catch (err) {
     console.error('[Orders] Submit error:', err.message);
     res.status(500).json({ error: 'Failed to save order. Please try again.' });
@@ -162,67 +130,134 @@ router.post('/', (req, res) => {
   }
 });
 
-// PATCH mark delivered
-// CONCURRENCY FIX: status check + update in one transaction so two kitchen
-// staff clicking simultaneously don't both "deliver" the same order.
+// ── PATCH cancel a single item from an active order ───────────────────────
+router.patch('/:id/cancel-item', (req, res) => {
+  const { item_id } = req.body; // order_items.id
+  if (!item_id) return res.status(400).json({ error: 'item_id required' });
+
+  try {
+    const cancel = db.transaction(() => {
+      const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
+      if (!order) return null;
+      if (order.status === 'closed') return { error: 'Order already closed' };
+
+      const item = db.prepare('SELECT * FROM order_items WHERE id = ? AND order_id = ?').get(item_id, req.params.id);
+      if (!item) return { error: 'Item not found' };
+
+      db.prepare('DELETE FROM order_items WHERE id = ?').run(item_id);
+      recalcTotal(req.params.id);
+
+      // If no items left, cancel the whole order
+      const remaining = db.prepare('SELECT COUNT(*) as c FROM order_items WHERE order_id = ?').get(req.params.id).c;
+      if (remaining === 0) {
+        db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
+        db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
+        return { cancelled: true, order_cancelled: true, table_id: order.table_id };
+      }
+
+      return getOrderWithItems(req.params.id);
+    });
+
+    const result = cancel();
+    if (!result) return res.status(404).json({ error: 'Order not found' });
+    if (result.error) return res.status(400).json({ error: result.error });
+
+    if (result.order_cancelled) {
+      req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
+      req.io.emit('tables_updated');
+    } else {
+      req.io.emit('order_updated', { order: result, isNew: false });
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('[Orders] Cancel item error:', err.message);
+    res.status(500).json({ error: 'Failed to cancel item' });
+  }
+});
+
+// ── PATCH cancel entire order (before billing) ────────────────────────────
+router.patch('/:id/cancel', (req, res) => {
+  try {
+    const cancel = db.transaction(() => {
+      const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
+      if (!order) return null;
+      if (order.status === 'closed') return { error: 'Order already closed' };
+
+      db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
+      // Only clear table if no other active/delivered orders remain
+      const other = db.prepare(
+        "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ('active','delivered') AND id != ?"
+      ).get(order.table_id, req.params.id).c;
+      if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
+      return { success: true, table_id: order.table_id };
+    });
+
+    const result = cancel();
+    if (!result) return res.status(404).json({ error: 'Order not found' });
+    if (result.error) return res.status(400).json({ error: result.error });
+
+    req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
+    req.io.emit('tables_updated');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to cancel order' });
+  }
+});
+
 router.patch('/:id/deliver', (req, res) => {
   try {
     const deliver = db.transaction(() => {
       const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
       if (!order) return null;
-      // Idempotent: if already delivered, just return the current state
       if (order.status === 'delivered') return getOrderWithItems(req.params.id);
-      if (order.status !== 'active') return null; // closed — ignore
-
+      if (order.status !== 'active') return null;
       const now = new Date().toISOString();
       db.prepare("UPDATE orders SET status = 'delivered', delivered_at = ? WHERE id = ?").run(now, req.params.id);
       db.prepare("UPDATE tables SET status = 'waiting_bill' WHERE id = ?").run(order.table_id);
       return getOrderWithItems(req.params.id);
     });
-
     const updated = deliver();
     if (!updated) return res.status(404).json({ error: 'Order not found or already closed' });
-
     req.io.emit('order_delivered', { order: updated });
     req.io.emit('tables_updated');
     res.json(updated);
   } catch (err) {
-    console.error('[Orders] Deliver error:', err.message);
-    res.status(500).json({ error: 'Failed to mark delivered. Please try again.' });
+    res.status(500).json({ error: 'Failed to mark delivered' });
   }
 });
 
-// PATCH close order (bill paid)
-// CONCURRENCY FIX: two waiters clicking "Mark Paid" simultaneously is handled
-// gracefully — the transaction checks status before updating, so the second
-// call is a no-op and returns success (idempotent).
+// ── PATCH close order with payment details ────────────────────────────────
 router.patch('/:id/close', (req, res) => {
+  const { payment_method, payment_details, change_amount } = req.body || {};
+
   try {
     const close = db.transaction(() => {
       const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
       if (!order) return false;
 
-      // Check if there are actually any open orders to close
-      const openCount = db.prepare(
-        "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ('active','delivered')"
-      ).get(order.table_id).c;
+      const payMethod  = payment_method  || 'cash';
+      const payDetails = payment_details ? JSON.stringify(payment_details) : null;
+      const change     = change_amount   || 0;
 
-      // Idempotent — if already all closed, just clear the table and succeed
-      db.prepare("UPDATE orders SET status = 'closed' WHERE table_id = ? AND status IN ('active','delivered')").run(order.table_id);
+      // Close all open orders for this table, recording payment on each
+      db.prepare(`
+        UPDATE orders SET status = 'closed', payment_method = ?, payment_details = ?, change_amount = ?
+        WHERE table_id = ? AND status IN ('active','delivered')
+      `).run(payMethod, payDetails, change, order.table_id);
+
       db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
-      return true;
+      return { table_id: order.table_id };
     });
 
-    const ok = close();
-    if (!ok) return res.status(404).json({ error: 'Order not found' });
+    const result = close();
+    if (!result) return res.status(404).json({ error: 'Order not found' });
 
     const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
     req.io.emit('order_closed', { orderId: req.params.id, tableId: order?.table_id });
     req.io.emit('tables_updated');
     res.json({ success: true });
   } catch (err) {
-    console.error('[Orders] Close error:', err.message);
-    res.status(500).json({ error: 'Failed to close order. Please try again.' });
+    res.status(500).json({ error: 'Failed to close order' });
   }
 });
 

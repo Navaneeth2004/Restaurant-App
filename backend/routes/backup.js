@@ -284,3 +284,95 @@ router.delete('/gdrive/disconnect', (req, res) => {
 });
 
 module.exports = router;
+
+// ── Local backup routes ───────────────────────────────────────────────────
+
+const LOCAL_SCHEDULE_MS = { 'off':0, '1h':3600000, '2h':7200000, '6h':21600000, '12h':43200000, 'daily':86400000 };
+let _localTimer = null;
+
+function stopLocalSchedule() { if (_localTimer) { clearInterval(_localTimer); _localTimer = null; } }
+
+async function runLocalBackup() {
+  const meta = loadMeta();
+  const folder = meta.local_folder;
+  if (!folder || meta.local_schedule === 'off') return;
+  console.log('[Backup] Running local scheduled backup...');
+  try {
+    const buffer   = await buildBackupBuffer();
+    const dateStr  = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+    const filename = `pos_backup_${dateStr}.zip`;
+    const dest     = path.join(folder, filename);
+    fs.writeFileSync(dest, buffer);
+    // Keep only last 7 backups in local folder
+    const files = fs.readdirSync(folder)
+      .filter(f => f.startsWith('pos_backup_') && f.endsWith('.zip'))
+      .map(f => ({ name: f, time: fs.statSync(path.join(folder, f)).mtimeMs }))
+      .sort((a, b) => b.time - a.time);
+    files.slice(7).forEach(f => { try { fs.unlinkSync(path.join(folder, f.name)); } catch {} });
+    saveMeta({ local_last_backup: new Date().toISOString(), local_last_filename: filename });
+    console.log('[Backup] Local backup saved:', dest);
+  } catch (e) {
+    console.error('[Backup] Local backup failed:', e.message);
+  }
+}
+
+function startLocalSchedule(ms) {
+  stopLocalSchedule();
+  if (!ms) return;
+  _localTimer = setInterval(runLocalBackup, ms);
+  console.log(`[Backup] Local auto-backup every ${ms/60000} minutes.`);
+}
+
+// Init local schedule on module load
+(function() {
+  const meta = loadMeta();
+  const ms = LOCAL_SCHEDULE_MS[meta.local_schedule || 'off'] || 0;
+  if (ms > 0 && meta.local_folder) startLocalSchedule(ms);
+})();
+
+// GET /api/backup/local/status
+router.get('/local/status', (req, res) => {
+  const meta = loadMeta();
+  res.json({
+    folder:        meta.local_folder       || null,
+    schedule:      meta.local_schedule     || 'off',
+    last_backup:   meta.local_last_backup  || null,
+    last_filename: meta.local_last_filename|| null,
+  });
+});
+
+// PUT /api/backup/local/config
+router.put('/local/config', (req, res) => {
+  const { folder, schedule } = req.body;
+  if (folder && !fs.existsSync(folder)) {
+    try { fs.mkdirSync(folder, { recursive: true }); }
+    catch (e) { return res.status(400).json({ error: `Cannot create folder: ${e.message}` }); }
+  }
+  saveMeta({ local_folder: folder || null, local_schedule: schedule || 'off' });
+  const ms = LOCAL_SCHEDULE_MS[schedule || 'off'] || 0;
+  if (ms > 0 && folder) startLocalSchedule(ms);
+  else stopLocalSchedule();
+  res.json({ success: true });
+});
+
+// POST /api/backup/local/now — manual local backup
+router.post('/local/now', async (req, res) => {
+  const meta = loadMeta();
+  let folder = meta.local_folder || req.body?.folder;
+  if (!folder) {
+    // Default to backend/data/backups if no folder configured
+    folder = path.join(dataDir, 'backups');
+  }
+  try {
+    if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
+    const buffer   = await buildBackupBuffer();
+    const dateStr  = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+    const filename = `pos_backup_${dateStr}.zip`;
+    const dest     = path.join(folder, filename);
+    fs.writeFileSync(dest, buffer);
+    saveMeta({ local_last_backup: new Date().toISOString(), local_last_filename: filename, local_folder: folder });
+    res.json({ success: true, path: dest, filename });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Local backup failed' });
+  }
+});

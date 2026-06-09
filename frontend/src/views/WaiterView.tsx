@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getTables, getMenuItems, getCategories, getTableOrder, getTableOrders, submitOrder } from '../services/api';
+import { getTables, getMenuItems, getCategories, getTableOrder, getTableOrders, submitOrder, cancelOrderItem, cancelOrder } from '../services/api';
 import { useSocket } from '../hooks/useSocket';
 import { useToast } from '../context/ToastContext';
 import { useSettings } from '../context/SettingsContext';
@@ -118,67 +118,109 @@ interface OrderContentProps {
   sym: string;
   updateQty: (idx: number, d: number) => void;
   updateNote: (idx: number, note: string) => void;
+  onCancelItem?: (orderId: string, itemId: number) => void;
+  onCancelRound?: (orderId: string) => void;
 }
-function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable, sym, updateQty, updateNote }: OrderContentProps) {
+function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable, sym, updateQty, updateNote, onCancelItem, onCancelRound }: OrderContentProps) {
   return (
     <>
-      {/* Past delivered rounds */}
+      {/* Past delivered rounds — visible but clearly labelled as history */}
       {pastRounds.map((round, roundIdx) => (
-        <div key={round.id} className="px-3 pt-3 pb-1">
-          <p className="text-[9px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5 text-zinc-600">
-            <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
-            Round {roundIdx + 1} — Delivered
-          </p>
+        <div key={round.id} className="px-3 pt-3 pb-2">
+          {/* Round header — more visible than before */}
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">
+                Round {roundIdx + 1} — Delivered
+              </span>
+            </div>
+            <span className="font-mono text-xs text-zinc-500">
+              {sym}{round.items.reduce((s, i) => s + i.price * i.quantity, 0).toFixed(2)}
+            </span>
+          </div>
+
+          {/* Items — slightly muted but clearly readable */}
           {round.items.map((item, i) => (
-            <div key={i} className="flex items-center justify-between py-1.5 opacity-50">
+            <div key={i} className="flex items-center justify-between py-1 gap-2">
               <div className="flex-1 min-w-0">
-                <span className="text-zinc-500 text-xs">{item.name}</span>
-                {item.note && <div className="text-zinc-600 text-[10px] truncate italic">{item.note}</div>}
+                <span className="text-zinc-400 text-xs font-medium">
+                  <span className="text-zinc-500 font-bold">{item.quantity}×</span> {item.name}
+                </span>
+                {item.note && <div className="text-zinc-600 text-[10px] italic truncate">{item.note}</div>}
               </div>
-              <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                <span className="font-mono text-zinc-600 text-xs">×{item.quantity}</span>
-                <span className="font-mono text-zinc-600 text-xs">{sym}{(item.price * item.quantity).toFixed(2)}</span>
-              </div>
+              <span className="font-mono text-zinc-500 text-xs flex-shrink-0">
+                {sym}{(item.price * item.quantity).toFixed(2)}
+              </span>
             </div>
           ))}
-          <div className="border-t border-surface-border mt-2 mb-0" />
+          <div className="border-t border-surface-border mt-2" />
         </div>
       ))}
 
-      {/* Active round (in kitchen) */}
+      {/* Active order (in kitchen) */}
       {activeRound && activeRound.items.length > 0 && (
         <div className="px-3 pt-3 pb-1">
-          <p className="text-[9px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5 text-zinc-600">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand-500" />
-            {pastRounds.length > 0 ? `Round ${pastRounds.length + 1} — In Kitchen` : 'Active Order'}
-          </p>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-500 flex-shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+                {pastRounds.length > 0 ? `Round ${pastRounds.length + 1}` : 'Active Order'} — In Kitchen
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs text-zinc-500">
+                {sym}{activeRound.items.reduce((s, i) => s + i.price * i.quantity, 0).toFixed(2)}
+              </span>
+              {onCancelRound && (
+                <button
+                  onClick={() => onCancelRound(activeRound.id)}
+                  className="text-[10px] font-semibold text-red-400/70 hover:text-red-400 px-1.5 py-0.5 rounded border border-red-500/20 hover:border-red-500/40 transition-colors"
+                >
+                  Cancel round
+                </button>
+              )}
+            </div>
+          </div>
           {activeRound.items.map((item, i) => (
-            <div key={i} className="flex items-center justify-between py-1.5 opacity-60">
+            <div key={i} className="flex items-center justify-between py-1 gap-2">
               <div className="flex-1 min-w-0">
-                <span className="text-zinc-400 text-xs">{item.name}</span>
-                {item.note && <div className="text-zinc-600 text-[10px] truncate italic">{item.note}</div>}
+                <span className="text-zinc-300 text-xs font-medium">
+                  <span className="text-brand-400 font-bold">{item.quantity}×</span> {item.name}
+                </span>
+                {item.note && <div className="text-zinc-600 text-[10px] italic truncate">{item.note}</div>}
               </div>
-              <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                <span className="font-mono text-zinc-600 text-xs">×{item.quantity}</span>
-                <span className="font-mono text-zinc-500 text-xs">{sym}{(item.price * item.quantity).toFixed(2)}</span>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="font-mono text-zinc-400 text-xs">{sym}{(item.price * item.quantity).toFixed(2)}</span>
+                {onCancelItem && (
+                  <button
+                    onClick={() => onCancelItem(activeRound.id, item.id!)}
+                    className="w-5 h-5 rounded flex items-center justify-center text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    title="Remove item"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
               </div>
             </div>
           ))}
-          {cart.length > 0 && <div className="border-t border-surface-border mt-2 mb-0" />}
+          {cart.length > 0 && <div className="border-t border-surface-border mt-2" />}
         </div>
       )}
 
-      {/* All delivered, no active, no new items */}
+      {/* All delivered, no active, no cart */}
       {!activeRound && pastRounds.length > 0 && cart.length === 0 && (
         <div className="px-3 pt-2 pb-1">
           <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-600 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            All delivered — tap items to add more or generate bill
+            All delivered — add items or generate bill
           </p>
         </div>
       )}
 
-      {/* Cart (new items being added) */}
+      {/* Cart — new items being added */}
       {cart.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-8 px-4 text-zinc-600">
           <div className="w-10 h-10 rounded-xl border border-surface-border flex items-center justify-center mb-2">
@@ -191,9 +233,12 @@ function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable,
       ) : (
         <div className="divide-y divide-surface-border">
           {cart.length > 0 && (
-            <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 px-3 pt-2.5 pb-1">
-              {allOrders.length > 0 ? `Round ${pastRounds.length + (activeRound ? 1 : 0) + 1} — New Items` : 'Order'}
-            </p>
+            <div className="px-3 pt-2.5 pb-1 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-500" />
+              <span className="text-[9px] font-bold uppercase tracking-widest text-brand-400">
+                {allOrders.length > 0 ? `New Items — Round ${pastRounds.length + (activeRound ? 2 : 1)}` : 'Order'}
+              </span>
+            </div>
           )}
           {cart.map((item, idx) => (
             <div key={idx} className="px-3 py-2.5">
@@ -208,8 +253,6 @@ function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable,
                   <button onClick={() => updateQty(idx, +1)} className="w-6 h-6 rounded-lg bg-surface-raised border border-surface-border text-zinc-400 hover:text-white flex items-center justify-center text-sm">+</button>
                 </div>
               </div>
-              {/* KEY FIX: this input is stable because OrderContent is defined outside
-                  WaiterView — React won't unmount/remount it on cart state changes */}
               <input
                 className="mt-1.5 w-full bg-surface-raised border border-surface-border rounded-lg px-2 py-1 text-[11px] text-zinc-300 placeholder-zinc-600 outline-none focus:border-brand-500/50"
                 placeholder="Note, e.g. no onions"
@@ -428,6 +471,27 @@ export default function WaiterView() {
     finally { setLoading(false); }
   };
 
+  const cancelItem = async (orderId: string, itemId: number) => {
+    if (!window.confirm('Remove this item from the order?')) return;
+    try {
+      await cancelOrderItem(orderId, itemId);
+      toast('Item removed', 'success');
+      if (selectedTable) await loadTableOrders(selectedTable.id);
+      loadTables();
+    } catch (e: any) { toast(e.response?.data?.error || 'Failed', 'error'); }
+  };
+
+  const cancelRound = async (orderId: string) => {
+    if (!window.confirm('Cancel this entire round? Items in kitchen will be cancelled.')) return;
+    try {
+      await cancelOrder(orderId);
+      toast('Round cancelled', 'success');
+      setCart([]);
+      if (selectedTable) await loadTableOrders(selectedTable.id);
+      loadTables();
+    } catch (e: any) { toast(e.response?.data?.error || 'Failed', 'error'); }
+  };
+
   // Totals
   const allOrdersTotal = allOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0);
   const cartTotal      = cart.reduce((s, i) => s + i.price * i.quantity, 0);
@@ -534,6 +598,8 @@ export default function WaiterView() {
                   sym={sym}
                   updateQty={updateQty}
                   updateNote={updateNote}
+                  onCancelItem={cancelItem}
+                  onCancelRound={cancelRound}
                 />
               </div>
               <TotalsBar allOrders={allOrders} cart={cart} sym={sym} cartTotal={cartTotal} grandTotal={grandTotal} />
@@ -656,6 +722,8 @@ export default function WaiterView() {
                     sym={sym}
                     updateQty={updateQty}
                     updateNote={updateNote}
+                    onCancelItem={cancelItem}
+                    onCancelRound={cancelRound}
                   />
                 </div>
                 <TotalsBar allOrders={allOrders} cart={cart} sym={sym} cartTotal={cartTotal} grandTotal={grandTotal} />
