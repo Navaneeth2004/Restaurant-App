@@ -7,17 +7,12 @@ import { useTick } from '../hooks/useTick';
 import { playChime, playDeliveryChime } from '../utils/sound';
 import BillModal from '../components/BillModal';
 import TableTimer from '../components/TableTimer';
+import ConfirmModal from '../components/ConfirmModal';
 import type { Table, MenuItem, Category, Order } from '../types';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 type CartItem = { menu_item_id: number; name: string; price: number; quantity: number; note: string; };
 type MobileTab = 'tables' | 'menu' | 'order';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// These sub-components MUST live OUTSIDE WaiterView so React doesn't treat them
-// as new component types on every render (which would unmount/remount them and
-// cause the note input to lose focus after every keystroke).
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface CatTabsProps {
   categories: Category[];
@@ -124,10 +119,8 @@ interface OrderContentProps {
 function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable, sym, updateQty, updateNote, onCancelItem, onCancelRound }: OrderContentProps) {
   return (
     <>
-      {/* Past delivered rounds — visible but clearly labelled as history */}
       {pastRounds.map((round, roundIdx) => (
         <div key={round.id} className="px-3 pt-3 pb-2">
-          {/* Round header — more visible than before */}
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
@@ -139,8 +132,6 @@ function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable,
               {sym}{round.items.reduce((s, i) => s + i.price * i.quantity, 0).toFixed(2)}
             </span>
           </div>
-
-          {/* Items — slightly muted but clearly readable */}
           {round.items.map((item, i) => (
             <div key={i} className="flex items-center justify-between py-1 gap-2">
               <div className="flex-1 min-w-0">
@@ -158,7 +149,6 @@ function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable,
         </div>
       ))}
 
-      {/* Active order (in kitchen) */}
       {activeRound && activeRound.items.length > 0 && (
         <div className="px-3 pt-3 pb-1">
           <div className="flex items-center justify-between mb-2">
@@ -210,7 +200,6 @@ function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable,
         </div>
       )}
 
-      {/* All delivered, no active, no cart */}
       {!activeRound && pastRounds.length > 0 && cart.length === 0 && (
         <div className="px-3 pt-2 pb-1">
           <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-600 flex items-center gap-1.5">
@@ -220,7 +209,6 @@ function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable,
         </div>
       )}
 
-      {/* Cart — new items being added */}
       {cart.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-8 px-4 text-zinc-600">
           <div className="w-10 h-10 rounded-xl border border-surface-border flex items-center justify-center mb-2">
@@ -341,10 +329,6 @@ function ActionButtons({ loading, cart, selectedTable, hasBillableOrder, activeR
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main WaiterView component
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function WaiterView() {
   const [tables,        setTables]        = useState<Table[]>([]);
   const [menuItems,     setMenuItems]     = useState<MenuItem[]>([]);
@@ -357,6 +341,11 @@ export default function WaiterView() {
   const [billModal,     setBillModal]     = useState(false);
   const [loading,       setLoading]       = useState(false);
   const [mobileTab,     setMobileTab]     = useState<MobileTab>('tables');
+  // Themed confirm modal state
+  const [confirmModal,  setConfirmModal]  = useState<{
+    title: string; message: string; confirmLabel: string; danger?: boolean; onConfirm: () => void;
+  } | null>(null);
+
   const toast    = useToast();
   const settings = useSettings();
   const sym      = settings.currency_symbol || '₹';
@@ -394,34 +383,22 @@ export default function WaiterView() {
   useSocket('categories_updated', loadMenu);
 
   useSocket('order_updated', ({ order }: { order: Order }) => {
-    if (selectedTable && order.table_id === selectedTable.id) {
-      loadTableOrders(selectedTable.id);
-    }
+    if (selectedTable && order.table_id === selectedTable.id) loadTableOrders(selectedTable.id);
     loadTables();
   });
 
   useSocket('order_closed', ({ tableId }: { tableId: string }) => {
     loadTables();
     if (selectedTable && tableId === selectedTable.id) {
-      setActiveOrder(null);
-      setAllOrders([]);
-      setCart([]);
-      setSelectedTable(null);
+      setActiveOrder(null); setAllOrders([]); setCart([]); setSelectedTable(null);
     }
   });
 
-  // order_delivered: reload data AND show a notification toast so the waiter
-  // knows food is ready — works for both the dedicated Waiter view and the
-  // Admin view (which also renders WaiterView).
   useSocket('order_delivered', ({ order }: { order: Order }) => {
     loadTables();
-    if (selectedTable && order.table_id === selectedTable.id) {
-      loadTableOrders(selectedTable.id);
-    }
-    // Distinct "ding-dong" sound — different from kitchen new-order chime
+    if (selectedTable && order.table_id === selectedTable.id) loadTableOrders(selectedTable.id);
     playDeliveryChime();
-    const tableLabel =
-      tables.find(t => t.id === order.table_id)?.label || `Table ${order.table_id}`;
+    const tableLabel = tables.find(t => t.id === order.table_id)?.label || `Table ${order.table_id}`;
     toast(`🍽️ Order ready — ${tableLabel}`, 'success');
   });
 
@@ -471,28 +448,45 @@ export default function WaiterView() {
     finally { setLoading(false); }
   };
 
-  const cancelItem = async (orderId: string, itemId: number) => {
-    if (!window.confirm('Remove this item from the order?')) return;
-    try {
-      await cancelOrderItem(orderId, itemId);
-      toast('Item removed', 'success');
-      if (selectedTable) await loadTableOrders(selectedTable.id);
-      loadTables();
-    } catch (e: any) { toast(e.response?.data?.error || 'Failed', 'error'); }
+  // Themed confirm for cancel item
+  const cancelItem = (orderId: string, itemId: number) => {
+    setConfirmModal({
+      title: 'Remove Item',
+      message: 'This item will be removed from the order and the kitchen will be notified.',
+      confirmLabel: 'Remove Item',
+      danger: true,
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          await cancelOrderItem(orderId, itemId);
+          toast('Item removed', 'success');
+          if (selectedTable) await loadTableOrders(selectedTable.id);
+          loadTables();
+        } catch (e: any) { toast(e.response?.data?.error || 'Failed', 'error'); }
+      },
+    });
   };
 
-  const cancelRound = async (orderId: string) => {
-    if (!window.confirm('Cancel this entire round? Items in kitchen will be cancelled.')) return;
-    try {
-      await cancelOrder(orderId);
-      toast('Round cancelled', 'success');
-      setCart([]);
-      if (selectedTable) await loadTableOrders(selectedTable.id);
-      loadTables();
-    } catch (e: any) { toast(e.response?.data?.error || 'Failed', 'error'); }
+  // Themed confirm for cancel round
+  const cancelRound = (orderId: string) => {
+    setConfirmModal({
+      title: 'Cancel Entire Round',
+      message: 'All items in this round will be cancelled. The kitchen will be notified to stop preparing them.',
+      confirmLabel: 'Cancel Round',
+      danger: true,
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          await cancelOrder(orderId);
+          toast('Round cancelled', 'success');
+          setCart([]);
+          if (selectedTable) await loadTableOrders(selectedTable.id);
+          loadTables();
+        } catch (e: any) { toast(e.response?.data?.error || 'Failed', 'error'); }
+      },
+    });
   };
 
-  // Totals
   const allOrdersTotal = allOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0);
   const cartTotal      = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const grandTotal     = allOrdersTotal + cartTotal;
@@ -512,6 +506,17 @@ export default function WaiterView() {
 
   return (
     <div className="flex h-full overflow-hidden">
+      {/* Themed confirm modal */}
+      {confirmModal && (
+        <ConfirmModal
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmLabel={confirmModal.confirmLabel}
+          danger={confirmModal.danger}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal(null)}
+        />
+      )}
 
       {/* ── DESKTOP LAYOUT ── */}
       <div className="hidden md:flex h-full w-full overflow-hidden">
@@ -541,6 +546,7 @@ export default function WaiterView() {
                       {t.status === 'occupied'     && <span className="text-[8px] font-bold uppercase text-brand-400 bg-brand-500/15 px-1.5 py-0.5 rounded-full self-start">Active</span>}
                       {t.status === 'waiting_bill' && <span className="text-[8px] font-bold uppercase text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full self-start">Bill</span>}
                       {t.status === 'empty'        && <span className="text-[8px] font-bold uppercase text-zinc-700 px-1 py-0.5 rounded-full self-start">Empty</span>}
+                      {/* Show timer for both occupied AND waiting_bill */}
                       {t.occupied_since && t.status !== 'empty' && (
                         <TableTimer since={t.occupied_since} compact />
                       )}
@@ -590,28 +596,17 @@ export default function WaiterView() {
             <>
               <div className="flex-1 overflow-y-auto">
                 <OrderContent
-                  pastRounds={pastRounds}
-                  activeRound={activeRound}
-                  allOrders={allOrders}
-                  cart={cart}
-                  selectedTable={selectedTable}
-                  sym={sym}
-                  updateQty={updateQty}
-                  updateNote={updateNote}
-                  onCancelItem={cancelItem}
-                  onCancelRound={cancelRound}
+                  pastRounds={pastRounds} activeRound={activeRound} allOrders={allOrders}
+                  cart={cart} selectedTable={selectedTable} sym={sym}
+                  updateQty={updateQty} updateNote={updateNote}
+                  onCancelItem={cancelItem} onCancelRound={cancelRound}
                 />
               </div>
               <TotalsBar allOrders={allOrders} cart={cart} sym={sym} cartTotal={cartTotal} grandTotal={grandTotal} />
               <ActionButtons
-                loading={loading}
-                cart={cart}
-                selectedTable={selectedTable}
-                hasBillableOrder={hasBillableOrder}
-                activeRound={activeRound}
-                sendToKitchen={sendToKitchen}
-                onBill={handleBill}
-                clearCart={() => setCart([])}
+                loading={loading} cart={cart} selectedTable={selectedTable}
+                hasBillableOrder={hasBillableOrder} activeRound={activeRound}
+                sendToKitchen={sendToKitchen} onBill={handleBill} clearCart={() => setCart([])}
               />
             </>
           )}
@@ -662,6 +657,7 @@ export default function WaiterView() {
                       {t.status === 'occupied'     && <span className="text-[8px] font-bold uppercase text-brand-400 bg-brand-500/15 px-1.5 py-0.5 rounded-full">Active</span>}
                       {t.status === 'waiting_bill' && <span className="text-[8px] font-bold uppercase text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full">Bill</span>}
                       {t.status === 'empty'        && <span className="text-[8px] font-bold uppercase text-zinc-700 px-1 py-0.5 rounded-full">Empty</span>}
+                      {/* Timer for both occupied and waiting_bill */}
                       {t.occupied_since && t.status !== 'empty' && (
                         <TableTimer since={t.occupied_since} compact />
                       )}
@@ -714,28 +710,17 @@ export default function WaiterView() {
               <>
                 <div className="flex-1 overflow-y-auto">
                   <OrderContent
-                    pastRounds={pastRounds}
-                    activeRound={activeRound}
-                    allOrders={allOrders}
-                    cart={cart}
-                    selectedTable={selectedTable}
-                    sym={sym}
-                    updateQty={updateQty}
-                    updateNote={updateNote}
-                    onCancelItem={cancelItem}
-                    onCancelRound={cancelRound}
+                    pastRounds={pastRounds} activeRound={activeRound} allOrders={allOrders}
+                    cart={cart} selectedTable={selectedTable} sym={sym}
+                    updateQty={updateQty} updateNote={updateNote}
+                    onCancelItem={cancelItem} onCancelRound={cancelRound}
                   />
                 </div>
                 <TotalsBar allOrders={allOrders} cart={cart} sym={sym} cartTotal={cartTotal} grandTotal={grandTotal} />
                 <ActionButtons
-                  loading={loading}
-                  cart={cart}
-                  selectedTable={selectedTable}
-                  hasBillableOrder={hasBillableOrder}
-                  activeRound={activeRound}
-                  sendToKitchen={sendToKitchen}
-                  onBill={handleBill}
-                  clearCart={() => setCart([])}
+                  loading={loading} cart={cart} selectedTable={selectedTable}
+                  hasBillableOrder={hasBillableOrder} activeRound={activeRound}
+                  sendToKitchen={sendToKitchen} onBill={handleBill} clearCart={() => setCart([])}
                 />
               </>
             )}

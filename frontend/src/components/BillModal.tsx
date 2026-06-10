@@ -34,38 +34,8 @@ const PAYMENT_METHODS = [
 
 interface SplitEntry { method: string; amount: string; }
 
-// Large-difference threshold: warn if difference > 5% of total or > 20 units
 const WARN_THRESHOLD_PCT  = 0.05;
 const WARN_THRESHOLD_ABS  = 20;
-
-// Themed confirmation modal
-function ConfirmModal({ title, message, onConfirm, onCancel, confirmLabel = 'Confirm', danger = false }: {
-  title: string; message: string; onConfirm: () => void; onCancel: () => void;
-  confirmLabel?: string; danger?: boolean;
-}) {
-  return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-      <div className="bg-surface-card border border-surface-border rounded-2xl p-6 w-full max-w-sm animate-slide-up shadow-2xl">
-        <h3 className="font-bold text-white text-base mb-2">{title}</h3>
-        <p className="text-zinc-400 text-sm leading-relaxed mb-5">{message}</p>
-        <div className="flex gap-3">
-          <button
-            onClick={onCancel}
-            className="flex-1 py-2.5 rounded-xl border border-surface-border text-zinc-300 text-sm font-semibold hover:bg-surface-raised transition-colors"
-          >
-            Go Back
-          </button>
-          <button
-            onClick={onConfirm}
-            className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-colors ${danger ? 'bg-amber-500 text-white hover:bg-amber-600 border border-amber-600' : 'bg-brand-500 text-white hover:bg-brand-600 border border-brand-600'}`}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function BillModal({ orders, orderId, table, onClose, onClosed }: Props) {
   const settings = useSettings();
@@ -75,7 +45,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   const brand    = (settings.brand_color as string) || '#f97316';
   const logoUrl  = (settings as any).logo_url as string | undefined;
 
-  // Merge all order items
   const itemMap = new Map<string, { name: string; price: number; quantity: number; note: string }>();
   for (const order of orders) {
     for (const item of order.items) {
@@ -94,16 +63,14 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   const dateStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-  const [payMethod,    setPayMethod]    = useState('cash');
-  const [received,     setReceived]     = useState('');
-  const [splits,       setSplits]       = useState<SplitEntry[]>([
-    { method: 'cash', amount: '' },
-    { method: 'upi',  amount: '' },
-  ]);
-  const [activeTab,    setActiveTab]    = useState<'bill'|'payment'>('bill');
-  const [paying,       setPaying]       = useState(false);
-  const [warnModal,    setWarnModal]    = useState(false);
-  const [pendingPay,   setPendingPay]   = useState(false);
+  const [payMethod,        setPayMethod]        = useState('cash');
+  const [received,         setReceived]         = useState('');
+  const [splits,           setSplits]           = useState<SplitEntry[]>([{ method: 'cash', amount: '' }, { method: 'upi', amount: '' }]);
+  const [activeTab,        setActiveTab]        = useState<'bill'|'payment'>('bill');
+  const [paymentVisited,   setPaymentVisited]   = useState(false);
+  const [paying,           setPaying]           = useState(false);
+  const [showPaymentWarn,  setShowPaymentWarn]  = useState(false);
+  const [warnModal,        setWarnModal]        = useState(false);
 
   const receivedNum  = parseFloat(received) || 0;
   const change       = payMethod !== 'split' ? Math.max(0, receivedNum - total) : 0;
@@ -115,29 +82,25 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   const updateSplit = (i: number, field: keyof SplitEntry, val: string) =>
     setSplits(s => s.map((e, idx) => idx === i ? { ...e, [field]: val } : e));
 
+  const switchToPayment = () => {
+    setActiveTab('payment');
+    setPaymentVisited(true);
+  };
+
   const executePay = async () => {
     setPaying(true);
     setWarnModal(false);
-    setPendingPay(false);
+    setShowPaymentWarn(false);
     try {
       let paymentDetails: any = null;
       let changeAmt = 0;
-
       if (payMethod === 'split') {
-        paymentDetails = splits.filter(s => parseFloat(s.amount) > 0).map(s => ({
-          method: s.method,
-          amount: parseFloat(s.amount),
-        }));
+        paymentDetails = splits.filter(s => parseFloat(s.amount) > 0).map(s => ({ method: s.method, amount: parseFloat(s.amount) }));
       } else {
         changeAmt = change;
         if (received) paymentDetails = { received: receivedNum, change: changeAmt };
       }
-
-      await closeOrderWithPayment(orderId, {
-        payment_method:  payMethod,
-        payment_details: paymentDetails,
-        change_amount:   changeAmt,
-      });
+      await closeOrderWithPayment(orderId, { payment_method: payMethod, payment_details: paymentDetails, change_amount: changeAmt });
       toast('Table cleared!', 'success');
       onClosed();
     } catch (err: any) {
@@ -148,16 +111,19 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   };
 
   const handleMarkPaid = async () => {
+    // If payment tab was never visited, show a warning
+    if (!paymentVisited) {
+      setShowPaymentWarn(true);
+      return;
+    }
+
     if (payMethod === 'split') {
       const diff = Math.abs(splitBalance);
       const bigDifference = diff > total * WARN_THRESHOLD_PCT || diff > WARN_THRESHOLD_ABS;
       if (bigDifference && splitBalance > 0) {
-        // Underpaid by a significant amount — warn
-        setPendingPay(true);
         setWarnModal(true);
         return;
       }
-      // Small difference (rounding, discount) — proceed silently
     }
     await executePay();
   };
@@ -166,18 +132,78 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
 
   return (
     <>
-      {warnModal && (
-        <ConfirmModal
-          title="Large Payment Difference"
-          message={`The split total (${sym}${splitTotal.toFixed(2)}) is ${sym}${Math.abs(splitBalance).toFixed(2)} less than the bill total (${sym}${total.toFixed(2)}). Are you sure you want to proceed?`}
-          confirmLabel="Mark Paid Anyway"
-          danger
-          onConfirm={executePay}
-          onCancel={() => { setWarnModal(false); setPendingPay(false); setPaying(false); }}
-        />
+      {/* Payment tab not visited warning */}
+      {showPaymentWarn && (
+        <div
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
+          onClick={() => setShowPaymentWarn(false)}
+        >
+          <div
+            className="bg-surface-card border border-surface-border rounded-2xl p-6 w-full max-w-sm animate-slide-up shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/25 flex items-center justify-center flex-shrink-0">
+                <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-sm">No payment method selected</h3>
+                <p className="text-zinc-400 text-xs leading-relaxed mt-1">
+                  You haven't chosen a payment method yet. Would you like to add payment details, or mark as paid with default (cash)?
+                </p>
+                <p className="text-zinc-600 text-xs mt-2">
+                  You can always update payment details later in the History tab.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 flex-col">
+              <button
+                className="btn btn-brand w-full text-sm"
+                onClick={() => { setShowPaymentWarn(false); switchToPayment(); }}
+              >
+                Add payment details
+              </button>
+              <button
+                className="btn w-full text-sm"
+                onClick={() => { setShowPaymentWarn(false); executePay(); }}
+              >
+                Mark paid (cash)
+              </button>
+              <button
+                className="text-zinc-500 text-xs hover:text-zinc-300 transition-colors py-1"
+                onClick={() => setShowPaymentWarn(false)}
+              >
+                Go back
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* Full-screen on mobile, centered modal on desktop */}
+      {/* Large split difference warning */}
+      {warnModal && (
+        <div
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
+          onClick={() => setWarnModal(false)}
+        >
+          <div
+            className="bg-surface-card border border-surface-border rounded-2xl p-6 w-full max-w-sm animate-slide-up shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="font-bold text-white text-base mb-2">Large Payment Difference</h3>
+            <p className="text-zinc-400 text-sm leading-relaxed mb-5">
+              The split total ({sym}{splitTotal.toFixed(2)}) is {sym}{Math.abs(splitBalance).toFixed(2)} less than the bill ({sym}{total.toFixed(2)}). Proceed?
+            </p>
+            <div className="flex gap-3">
+              <button className="btn flex-1" onClick={() => setWarnModal(false)}>Go Back</button>
+              <button className="btn flex-1 btn-danger" onClick={executePay}>Mark Paid Anyway</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div
         className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col md:items-center md:justify-center md:p-4"
         onClick={onClose}
@@ -203,20 +229,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
           className="bill-print-area flex flex-col bg-white w-full md:max-w-sm md:rounded-2xl overflow-hidden shadow-2xl flex-1 md:flex-none md:max-h-[92vh]"
           onClick={e => e.stopPropagation()}
         >
-          {/* ── MOBILE TOP BAR (no-print) ── */}
-          <div className="no-print md:hidden flex-shrink-0 flex items-center px-4 py-3 border-b border-gray-100 bg-white">
-            <button onClick={onClose} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-900 transition-colors">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-              </svg>
-              <span className="text-sm font-medium">Back</span>
-            </button>
-            <span className="flex-1 text-center text-sm font-bold text-gray-800">
-              {table?.label || `Table ${orders[0]?.table_id}`}
-            </span>
-            <div className="w-14" />
-          </div>
-
           {/* ── HEADER ── */}
           <div className="bill-header flex-shrink-0" style={{ background: brand, padding: '14px 18px', textAlign: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 6 }}>
@@ -251,16 +263,18 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
 
           {/* ── TABS (no-print) ── */}
           <div className="no-print flex-shrink-0 flex bg-white border-b border-gray-100">
-            {[{ key: 'bill', label: 'Bill' }, { key: 'payment', label: 'Payment' }].map(tab => (
+            {[{ key: 'bill', label: 'Bill' }, { key: 'payment', label: paymentVisited ? 'Payment ✓' : 'Payment' }].map(tab => (
               <button
                 key={tab.key}
-                onClick={() => setActiveTab(tab.key as any)}
+                onClick={() => {
+                  if (tab.key === 'payment') switchToPayment();
+                  else setActiveTab('bill');
+                }}
                 style={{
                   flex: 1, padding: '11px 0', fontSize: 13, fontWeight: 700, fontFamily: sans,
                   borderBottom: activeTab === tab.key ? `2.5px solid ${brand}` : '2.5px solid transparent',
                   color: activeTab === tab.key ? brand : '#9ca3af',
                   background: 'white', border: 'none',
-                  borderBottom: activeTab === tab.key ? `2.5px solid ${brand}` : '2.5px solid transparent',
                   cursor: 'pointer', letterSpacing: '0.01em',
                 }}>
                 {tab.label}
@@ -271,7 +285,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
           {/* ── BILL TAB ── */}
           {activeTab === 'bill' && (
             <div className="bill-scroll flex-1 overflow-y-auto" style={{ background: '#fff' }}>
-              {/* Items */}
               <div style={{ padding: '14px 18px 0' }}>
                 <div style={{ borderTop: '1.5px dashed #e5e5e5', marginBottom: 10 }} />
                 {allItems.map((item, i) => (
@@ -295,17 +308,13 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
                   </div>
                 ))}
               </div>
-
-              {/* Totals */}
               <div style={{ padding: '0 18px 14px' }}>
                 <div style={{ borderTop: '1.5px dashed #e5e5e5', margin: '4px 0 10px' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 5, color: '#888', fontFamily: sans }}>
-                  <span>Subtotal</span>
-                  <span style={{ fontWeight: 600 }}>{sym}{subtotal.toFixed(2)}</span>
+                  <span>Subtotal</span><span style={{ fontWeight: 600 }}>{sym}{subtotal.toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4, color: '#888', fontFamily: sans }}>
-                  <span>Tax ({settings.tax_percent || 5}%)</span>
-                  <span style={{ fontWeight: 600 }}>{sym}{tax.toFixed(2)}</span>
+                  <span>Tax ({settings.tax_percent || 5}%)</span><span style={{ fontWeight: 600 }}>{sym}{tax.toFixed(2)}</span>
                 </div>
                 <div style={{ borderTop: '1.5px dashed #e5e5e5', margin: '8px 0' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -330,20 +339,14 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
           {/* ── PAYMENT TAB ── */}
           {activeTab === 'payment' && (
             <div className="no-print flex-1 overflow-y-auto" style={{ padding: '16px 18px', background: '#fff' }}>
-
-              {/* Total banner */}
               <div style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 padding: '12px 16px', background: '#f9fafb', borderRadius: 12,
                 border: '1.5px solid #e5e7eb', marginBottom: 16,
               }}>
                 <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', fontFamily: sans, marginBottom: 2 }}>
-                    Total Due
-                  </div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: brand, fontFamily: sans, letterSpacing: '-0.5px' }}>
-                    {sym}{total.toFixed(2)}
-                  </div>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', fontFamily: sans, marginBottom: 2 }}>Total Due</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: brand, fontFamily: sans, letterSpacing: '-0.5px' }}>{sym}{total.toFixed(2)}</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 10, color: '#9ca3af', fontFamily: sans }}>{allItems.reduce((s,i)=>s+i.quantity,0)} items</div>
@@ -351,54 +354,36 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
                 </div>
               </div>
 
-              {/* Payment method */}
-              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>
-                Payment Method
-              </div>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>Payment Method</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 18 }}>
                 {PAYMENT_METHODS.map(m => (
-                  <button
-                    key={m.key}
-                    onClick={() => setPayMethod(m.key)}
-                    style={{
-                      padding: '10px 12px', borderRadius: 10,
-                      border: `1.5px solid ${payMethod === m.key ? brand : '#e5e7eb'}`,
-                      background: payMethod === m.key ? `${brand}18` : '#fff',
-                      color: payMethod === m.key ? brand : '#374151',
-                      fontFamily: sans, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      transition: 'all 0.15s',
-                    }}>
+                  <button key={m.key} onClick={() => setPayMethod(m.key)} style={{
+                    padding: '10px 12px', borderRadius: 10,
+                    border: `1.5px solid ${payMethod === m.key ? brand : '#e5e7eb'}`,
+                    background: payMethod === m.key ? `${brand}18` : '#fff',
+                    color: payMethod === m.key ? brand : '#374151',
+                    fontFamily: sans, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.15s',
+                  }}>
                     <span style={{ color: payMethod === m.key ? brand : '#6b7280' }}>{m.icon}</span>
                     {m.label}
                   </button>
                 ))}
               </div>
 
-              {/* Split payment entries */}
               {payMethod === 'split' ? (
                 <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>
-                    Split Details
-                  </div>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>Split Details</div>
                   {splits.map((s, i) => (
                     <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
-                      <select
-                        value={s.method}
-                        onChange={e => updateSplit(i, 'method', e.target.value)}
+                      <select value={s.method} onChange={e => updateSplit(i, 'method', e.target.value)}
                         style={{ flex: 1.2, padding: '9px 10px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 13, color: '#374151', background: '#fff' }}>
-                        {PAYMENT_METHODS.filter(m => m.key !== 'split').map(m => (
-                          <option key={m.key} value={m.key}>{m.label}</option>
-                        ))}
+                        {PAYMENT_METHODS.filter(m => m.key !== 'split').map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
                       </select>
                       <div style={{ flex: 1, position: 'relative' }}>
                         <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontFamily: sans, fontSize: 13, color: '#9ca3af' }}>{sym}</span>
-                        <input
-                          type="number" min="0" step="0.01" placeholder="0.00"
-                          value={s.amount}
-                          onChange={e => updateSplit(i, 'amount', e.target.value)}
-                          style={{ width: '100%', padding: '9px 9px 9px 24px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 13, color: '#374151', boxSizing: 'border-box' }}
-                        />
+                        <input type="number" min="0" step="0.01" placeholder="0.00" value={s.amount} onChange={e => updateSplit(i, 'amount', e.target.value)}
+                          style={{ width: '100%', padding: '9px 9px 9px 24px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 13, color: '#374151', boxSizing: 'border-box' }} />
                       </div>
                       {splits.length > 2 && (
                         <button onClick={() => removeSplit(i)} style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid #fca5a5', background: '#fef2f2', color: '#ef4444', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
@@ -408,13 +393,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
                   <button onClick={addSplit} style={{ width: '100%', padding: '8px', borderRadius: 10, border: '1.5px dashed #d1d5db', background: '#f9fafb', color: '#6b7280', fontFamily: sans, fontSize: 13, cursor: 'pointer', marginBottom: 12 }}>
                     + Add another method
                   </button>
-
-                  {/* Split summary */}
-                  <div style={{
-                    padding: '10px 14px', borderRadius: 10,
-                    background: Math.abs(splitBalance) < 0.01 ? '#f0fdf4' : splitBalance > total * WARN_THRESHOLD_PCT ? '#fef2f2' : '#fffbeb',
-                    border: `1.5px solid ${Math.abs(splitBalance) < 0.01 ? '#bbf7d0' : splitBalance > total * WARN_THRESHOLD_PCT ? '#fca5a5' : '#fde68a'}`,
-                  }}>
+                  <div style={{ padding: '10px 14px', borderRadius: 10, background: Math.abs(splitBalance) < 0.01 ? '#f0fdf4' : splitBalance > total * WARN_THRESHOLD_PCT ? '#fef2f2' : '#fffbeb', border: `1.5px solid ${Math.abs(splitBalance) < 0.01 ? '#bbf7d0' : splitBalance > total * WARN_THRESHOLD_PCT ? '#fca5a5' : '#fde68a'}` }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: sans, fontSize: 13, marginBottom: 4 }}>
                       <span style={{ color: '#374151', fontWeight: 500 }}>Split total</span>
                       <span style={{ fontWeight: 700, color: Math.abs(splitBalance) < 0.01 ? '#16a34a' : '#374151' }}>{sym}{splitTotal.toFixed(2)}</span>
@@ -424,37 +403,20 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
                         <span style={{ color: splitBalance > total * WARN_THRESHOLD_PCT ? '#dc2626' : '#d97706', fontWeight: 500 }}>
                           {splitBalance > total * WARN_THRESHOLD_PCT ? 'Significant underpayment' : 'Difference (discount / rounding)'}
                         </span>
-                        <span style={{ fontWeight: 700, color: splitBalance > total * WARN_THRESHOLD_PCT ? '#dc2626' : '#d97706' }}>
-                          -{sym}{splitBalance.toFixed(2)}
-                        </span>
+                        <span style={{ fontWeight: 700, color: splitBalance > total * WARN_THRESHOLD_PCT ? '#dc2626' : '#d97706' }}>-{sym}{splitBalance.toFixed(2)}</span>
                       </div>
                     )}
-                    {Math.abs(splitBalance) < 0.01 && (
-                      <div style={{ fontSize: 11, color: '#16a34a', fontFamily: sans, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="#16a34a" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
-                        Balanced
-                      </div>
-                    )}
+                    {Math.abs(splitBalance) < 0.01 && <div style={{ fontSize: 11, color: '#16a34a', fontFamily: sans, display: 'flex', alignItems: 'center', gap: 4 }}><svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="#16a34a" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>Balanced</div>}
                   </div>
                 </div>
               ) : (
-                /* Cash/UPI/Card/Cheque — received + change */
                 <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>
-                    Amount Received
-                  </div>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>Amount Received</div>
                   <div style={{ position: 'relative', marginBottom: 12 }}>
                     <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontFamily: sans, fontSize: 16, color: '#9ca3af', fontWeight: 500 }}>{sym}</span>
-                    <input
-                      type="number" min="0" step="0.50"
-                      placeholder={total.toFixed(2)}
-                      value={received}
-                      onChange={e => setReceived(e.target.value)}
-                      style={{ width: '100%', padding: '12px 12px 12px 30px', borderRadius: 12, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 18, fontWeight: 700, color: '#111', boxSizing: 'border-box', outline: 'none' }}
-                    />
+                    <input type="number" min="0" step="0.50" placeholder={total.toFixed(2)} value={received} onChange={e => setReceived(e.target.value)}
+                      style={{ width: '100%', padding: '12px 12px 12px 30px', borderRadius: 12, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 18, fontWeight: 700, color: '#111', boxSizing: 'border-box', outline: 'none' }} />
                   </div>
-
-                  {/* Quick amounts */}
                   <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
                     {[total, Math.ceil(total / 10) * 10, Math.ceil(total / 50) * 50, Math.ceil(total / 100) * 100]
                       .filter((v, i, a) => a.indexOf(v) === i)
@@ -465,27 +427,14 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
                         </button>
                       ))}
                   </div>
-
-                  {/* Change display */}
-                  <div style={{
-                    padding: '12px 16px', borderRadius: 12,
-                    background: change > 0 ? '#f0fdf4' : '#f9fafb',
-                    border: `1.5px solid ${change > 0 ? '#bbf7d0' : '#e5e7eb'}`,
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  }}>
+                  <div style={{ padding: '12px 16px', borderRadius: 12, background: change > 0 ? '#f0fdf4' : '#f9fafb', border: `1.5px solid ${change > 0 ? '#bbf7d0' : '#e5e7eb'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                      <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: change > 0 ? '#16a34a' : '#9ca3af', fontFamily: sans, marginBottom: 2 }}>
-                        Change to return
-                      </div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: change > 0 ? '#16a34a' : '#d1d5db', fontFamily: sans }}>
-                        {sym}{change.toFixed(2)}
-                      </div>
+                      <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: change > 0 ? '#16a34a' : '#9ca3af', fontFamily: sans, marginBottom: 2 }}>Change to return</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: change > 0 ? '#16a34a' : '#d1d5db', fontFamily: sans }}>{sym}{change.toFixed(2)}</div>
                     </div>
                     {change > 0 && (
                       <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#16a34a" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                        </svg>
+                        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#16a34a" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
                       </div>
                     )}
                   </div>
@@ -501,8 +450,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
               disabled={paying}
               style={{
                 width: '100%', padding: '14px', borderRadius: 12,
-                background: paying ? '#9ca3af' : '#10b981',
-                border: 'none',
+                background: paying ? '#9ca3af' : '#10b981', border: 'none',
                 color: '#fff', fontWeight: 800, fontSize: 15,
                 cursor: paying ? 'not-allowed' : 'pointer',
                 fontFamily: sans, marginBottom: 10, letterSpacing: '0.01em',
@@ -515,7 +463,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
             </button>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => window.print()} style={{ flex: 1, padding: '10px', borderRadius: 10, border: '1.5px solid #e5e7eb', background: '#fff', color: '#374151', fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: sans, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659" /></svg>
+                <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z" /></svg>
                 Print
               </button>
               <button onClick={onClose} style={{ flex: 1, padding: '10px', borderRadius: 10, border: '1.5px solid #e5e7eb', background: '#fff', color: '#374151', fontWeight: 500, fontSize: 13, cursor: 'pointer', fontFamily: sans }}>

@@ -1,3 +1,5 @@
+'use strict';
+
 const express = require('express');
 const router  = express.Router();
 const { v4: uuidv4 } = require('uuid');
@@ -138,6 +140,9 @@ router.patch('/:id/cancel-item', (req, res) => {
       const item = db.prepare('SELECT * FROM order_items WHERE id = ? AND order_id = ?').get(item_id, req.params.id);
       if (!item) return { error: 'Item not found' };
 
+      // Snapshot the item BEFORE deleting it
+      const cancelledItem = { ...item };
+
       db.prepare('DELETE FROM order_items WHERE id = ?').run(item_id);
       recalcTotal(req.params.id);
 
@@ -149,10 +154,11 @@ router.patch('/:id/cancel-item', (req, res) => {
           "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ('active','delivered') AND id != ?"
         ).get(order.table_id, req.params.id).c;
         if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
-        return { cancelled: true, order_cancelled: true, table_id: order.table_id };
+        // FIX: still notify kitchen even when last item is cancelled
+        return { cancelled: true, order_cancelled: true, table_id: order.table_id, cancelledItem, orderStatus: order.status };
       }
 
-      return { updatedOrder: getOrderWithItems(req.params.id), cancelledItem: item, orderStatus: order.status };
+      return { updatedOrder: getOrderWithItems(req.params.id), cancelledItem, orderStatus: order.status };
     });
 
     const result = cancel();
@@ -160,11 +166,18 @@ router.patch('/:id/cancel-item', (req, res) => {
     if (result.error) return res.status(400).json({ error: result.error });
 
     if (result.order_cancelled) {
+      // FIX: always notify kitchen about the cancellation BEFORE closing
+      req.io.emit('order_item_cancelled', {
+        orderId: req.params.id,
+        tableId: result.table_id,
+        cancelledItem: result.cancelledItem,
+        orderStatus: result.orderStatus,
+        updatedOrder: { id: req.params.id, table_id: result.table_id, items: [] },
+      });
       req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
       req.io.emit('tables_updated');
     } else {
       req.io.emit('order_updated', { order: result.updatedOrder, isNew: false });
-      // Notify kitchen about the cancellation
       req.io.emit('order_item_cancelled', {
         orderId: req.params.id,
         tableId: result.updatedOrder.table_id,
@@ -203,7 +216,6 @@ router.patch('/:id/cancel', (req, res) => {
 
     req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
     req.io.emit('tables_updated');
-    // Notify kitchen about round cancellation
     req.io.emit('order_round_cancelled', {
       orderId: req.params.id,
       tableId: result.tableId,
@@ -238,23 +250,34 @@ router.patch('/:id/deliver', (req, res) => {
   }
 });
 
-// ── PATCH close order with payment details ────────────────────────────────
+// ── PATCH close order with payment details ─────────────────────────────────
+// FIX: robust column checking + better error logging
 router.patch('/:id/close', (req, res) => {
   const { payment_method, payment_details, change_amount } = req.body || {};
 
   try {
+    // Ensure columns exist (idempotent)
+    try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
+
     const close = db.transaction(() => {
       const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
       if (!order) return false;
 
       const payMethod  = payment_method  || 'cash';
       const payDetails = payment_details ? JSON.stringify(payment_details) : null;
-      const change     = change_amount   || 0;
+      const change     = typeof change_amount === 'number' ? change_amount : 0;
 
       // Close all open orders for this table
       db.prepare(`
-        UPDATE orders SET status = 'closed', payment_method = ?, payment_details = ?, change_amount = ?
-        WHERE table_id = ? AND status IN ('active','delivered')
+        UPDATE orders
+        SET status = 'closed',
+            payment_method  = ?,
+            payment_details = ?,
+            change_amount   = ?
+        WHERE table_id = ?
+          AND status IN ('active','delivered')
       `).run(payMethod, payDetails, change, order.table_id);
 
       db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
@@ -269,8 +292,8 @@ router.patch('/:id/close', (req, res) => {
     req.io.emit('tables_updated');
     res.json({ success: true });
   } catch (err) {
-    console.error('[Orders] Close error:', err.message);
-    res.status(500).json({ error: 'Failed to close order' });
+    console.error('[Orders] Close error:', err.message, err.stack);
+    res.status(500).json({ error: `Failed to close order: ${err.message}` });
   }
 });
 

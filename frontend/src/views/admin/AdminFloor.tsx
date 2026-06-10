@@ -572,6 +572,7 @@ export default function AdminFloor() {
                       <svg width="9" height="9" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                       {tLabel}
                     </span>
+                    {hv === 'bill' && <span style={{ display:'inline-flex', alignItems:'center', gap:'3px', padding:'2px 6px', borderRadius:'99px', background:'rgba(129,140,248,0.14)', color:'#818cf8', border:'1px solid rgba(129,140,248,0.3)', fontSize:'10px', fontWeight:700, fontFamily:'ui-monospace,monospace' }}>Bill</span>}
                     {rev > 0 && <p style={{ color:'#fff', fontSize:'12px', fontWeight:700, margin:0, fontFamily:'ui-monospace,monospace' }}>{sym}{rev.toFixed(2)}</p>}
                   </>
                 ) : (
