@@ -6,11 +6,6 @@ const BASE = ORIGIN + '/api';
 
 const api = axios.create({ baseURL: BASE, timeout: 10000 });
 
-// ── Auth token bootstrap ──────────────────────────────────────────────────
-// The server generates a random token on first run (saved to backend/data/api_token.txt).
-// The browser fetches it once from /api/auth/token (that endpoint itself is unprotected),
-// then attaches it automatically to every subsequent request as "Authorization: Bearer <token>".
-// This stops other devices on the same Wi-Fi from accessing the API without the token.
 let _token: string | null = null;
 
 async function ensureToken(): Promise<void> {
@@ -18,13 +13,12 @@ async function ensureToken(): Promise<void> {
   try {
     const res = await fetch(`${ORIGIN}/api/auth/token`);
     const data = await res.json();
-    _token = data.token ?? '';   // null if auth is disabled
+    _token = data.token ?? '';
   } catch {
-    _token = '';                 // network error — proceed without token (LAN-only)
+    _token = '';
   }
 }
 
-// Attach token to every request
 api.interceptors.request.use(async config => {
   await ensureToken();
   if (_token) {
@@ -77,6 +71,7 @@ export const closeOrder        = (id: string): Promise<void> => api.patch(`/orde
 export const cancelOrderItem   = (orderId: string, itemId: number): Promise<void> => api.patch(`/orders/${orderId}/cancel-item`, { item_id: itemId }).then(r => r.data);
 export const cancelOrder       = (orderId: string): Promise<void> => api.patch(`/orders/${orderId}/cancel`).then(r => r.data);
 export const closeOrderWithPayment = (id: string, payment: { payment_method: string; payment_details?: any; change_amount?: number }): Promise<void> => api.patch(`/orders/${id}/close`, payment).then(r => r.data);
+export const updateOrderPayment = (id: string, payment: { payment_method: string; payment_details?: any; change_amount?: number }): Promise<void> => api.patch(`/orders/${id}/payment`, payment).then(r => r.data);
 
 export const getStaff          = (): Promise<Staff[]>     => api.get('/staff').then(r => r.data);
 export const createStaff       = (data: { name: string; pin: string; role: string }): Promise<Staff> => api.post('/staff', data).then(r => r.data);

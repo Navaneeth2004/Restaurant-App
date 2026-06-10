@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { getReportToday, getReportHistory, getRevenueChart } from '../services/api';
 import { useSettings } from '../context/SettingsContext';
 import ExportTab from './reports/ExportTab';
+import PaymentEditModal from '../components/PaymentEditModal';
 import type { Order, ReportSummary, RevenueDay } from '../types';
 
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
@@ -41,7 +42,6 @@ function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
         existing.orders.push(order);
         existing.endedAt = order.created_at;
         existing.totalAmount += order.items.reduce((s, i) => s + i.price * i.quantity, 0);
-        // Use payment method from the last closed order
         if ((order as any).payment_method) {
           existing.paymentMethod = (order as any).payment_method;
         }
@@ -80,7 +80,7 @@ function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
   );
 }
 
-// Payment method badge
+// ── Payment method badge ──────────────────────────────────────────────────
 function PaymentBadge({ method }: { method: string | null }) {
   if (!method) return null;
 
@@ -308,16 +308,38 @@ function SessionRow({ session, sym, taxPct, brand }: {
   taxPct: number;
   brand: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [showBill, setShowBill] = useState(false);
+  const [expanded,        setExpanded]        = useState(false);
+  const [showBill,        setShowBill]        = useState(false);
+  const [showPaymentEdit, setShowPaymentEdit] = useState(false);
+  // Local state so payment badge updates instantly after edit without refetching
+  const [paymentMethod,   setPaymentMethod]   = useState<string | null>(session.paymentMethod);
+
   const tax   = session.totalAmount * taxPct;
   const total = session.totalAmount + tax;
   const date  = new Date(session.startedAt);
   const isMultiRound = session.orders.length > 1;
+  const orderIds = session.orders.map(o => o.id);
 
   return (
     <>
-      {showBill && <ReprintBill session={session} onClose={() => setShowBill(false)} />}
+      {showBill && (
+        <ReprintBill
+          session={{ ...session, paymentMethod }}
+          onClose={() => setShowBill(false)}
+        />
+      )}
+      {showPaymentEdit && (
+        <PaymentEditModal
+          orderIds={orderIds}
+          currentMethod={paymentMethod}
+          total={session.totalAmount}
+          onClose={() => setShowPaymentEdit(false)}
+          onSaved={(newMethod) => {
+            setPaymentMethod(newMethod);
+            setShowPaymentEdit(false);
+          }}
+        />
+      )}
 
       <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden hover:border-zinc-600 transition-colors">
         <button
@@ -336,9 +358,7 @@ function SessionRow({ session, sym, taxPct, brand }: {
                   {session.orders.length} rounds
                 </span>
               )}
-              {session.paymentMethod && (
-                <PaymentBadge method={session.paymentMethod} />
-              )}
+              {paymentMethod && <PaymentBadge method={paymentMethod} />}
             </div>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               <span className="text-zinc-500 text-xs">
@@ -398,10 +418,10 @@ function SessionRow({ session, sym, taxPct, brand }: {
                 <span>Total</span>
                 <span className="font-mono">{sym}{total.toFixed(2)}</span>
               </div>
-              {session.paymentMethod && (
+              {paymentMethod && (
                 <div className="flex justify-between text-xs text-zinc-500 pt-1">
                   <span>Payment method</span>
-                  <PaymentBadge method={session.paymentMethod} />
+                  <PaymentBadge method={paymentMethod} />
                 </div>
               )}
             </div>
@@ -421,7 +441,7 @@ function SessionRow({ session, sym, taxPct, brand }: {
               </div>
             )}
 
-            <div className="px-4 py-3 border-t border-surface-border/50 flex gap-2">
+            <div className="px-4 py-3 border-t border-surface-border/50 flex gap-2 flex-wrap">
               <button
                 onClick={() => setShowBill(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/10 border border-brand-500/25 text-brand-400 text-xs font-semibold hover:bg-brand-500/20 transition-colors"
@@ -430,6 +450,15 @@ function SessionRow({ session, sym, taxPct, brand }: {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5zm-3 0h.008v.008H15V10.5z" />
                 </svg>
                 Print Bill
+              </button>
+              <button
+                onClick={() => setShowPaymentEdit(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-raised border border-surface-border text-zinc-400 text-xs font-semibold hover:text-white hover:border-zinc-500 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
+                </svg>
+                {paymentMethod ? 'Edit Payment' : 'Add Payment'}
               </button>
             </div>
           </div>
@@ -476,7 +505,6 @@ export default function ReportsView() {
   const avgRev    = chart.length ? totalRev / chart.length : 0;
   const histTotal = sessions.reduce((s, sess) => s + sess.totalAmount * (1 + taxPct), 0);
 
-  // Payment breakdown for today
   const paymentBreakdown = (summary as any)?.paymentBreakdown as { payment_method: string; count: number; total: number }[] | undefined;
 
   const RevenueChart = () => (
@@ -659,7 +687,6 @@ export default function ReportsView() {
                 })}
               </div>
 
-              {/* Payment breakdown today */}
               {paymentBreakdown && paymentBreakdown.length > 0 && (
                 <div className="mt-4 pt-4 border-t border-surface-border">
                   <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-wider mb-2">Payment Methods Today</p>
@@ -724,7 +751,7 @@ export default function ReportsView() {
           ) : (
             <div className="space-y-2">
               <div className="px-1 mb-3">
-                <p className="text-zinc-600 text-xs">Click any row to expand items. Orders within 4 hours on the same table are grouped as one visit.</p>
+                <p className="text-zinc-600 text-xs">Click any row to expand. Expand to edit payment method or print bill.</p>
               </div>
               {sessions.map(session => (
                 <SessionRow

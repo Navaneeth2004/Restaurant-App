@@ -140,7 +140,6 @@ router.patch('/:id/cancel-item', (req, res) => {
       const item = db.prepare('SELECT * FROM order_items WHERE id = ? AND order_id = ?').get(item_id, req.params.id);
       if (!item) return { error: 'Item not found' };
 
-      // Snapshot the item BEFORE deleting it
       const cancelledItem = { ...item };
 
       db.prepare('DELETE FROM order_items WHERE id = ?').run(item_id);
@@ -149,12 +148,10 @@ router.patch('/:id/cancel-item', (req, res) => {
       const remaining = db.prepare('SELECT COUNT(*) as c FROM order_items WHERE order_id = ?').get(req.params.id).c;
       if (remaining === 0) {
         db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
-        // Only clear table if no other active/delivered orders remain
         const other = db.prepare(
           "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ('active','delivered') AND id != ?"
         ).get(order.table_id, req.params.id).c;
         if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
-        // FIX: still notify kitchen even when last item is cancelled
         return { cancelled: true, order_cancelled: true, table_id: order.table_id, cancelledItem, orderStatus: order.status };
       }
 
@@ -166,7 +163,6 @@ router.patch('/:id/cancel-item', (req, res) => {
     if (result.error) return res.status(400).json({ error: result.error });
 
     if (result.order_cancelled) {
-      // FIX: always notify kitchen about the cancellation BEFORE closing
       req.io.emit('order_item_cancelled', {
         orderId: req.params.id,
         tableId: result.table_id,
@@ -251,12 +247,10 @@ router.patch('/:id/deliver', (req, res) => {
 });
 
 // ── PATCH close order with payment details ─────────────────────────────────
-// FIX: robust column checking + better error logging
 router.patch('/:id/close', (req, res) => {
   const { payment_method, payment_details, change_amount } = req.body || {};
 
   try {
-    // Ensure columns exist (idempotent)
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
@@ -269,7 +263,6 @@ router.patch('/:id/close', (req, res) => {
       const payDetails = payment_details ? JSON.stringify(payment_details) : null;
       const change     = typeof change_amount === 'number' ? change_amount : 0;
 
-      // Close all open orders for this table
       db.prepare(`
         UPDATE orders
         SET status = 'closed',
@@ -294,6 +287,35 @@ router.patch('/:id/close', (req, res) => {
   } catch (err) {
     console.error('[Orders] Close error:', err.message, err.stack);
     res.status(500).json({ error: `Failed to close order: ${err.message}` });
+  }
+});
+
+// ── PATCH update payment on already-closed orders (for history editing) ───
+router.patch('/:id/payment', (req, res) => {
+  const { payment_method, payment_details, change_amount } = req.body || {};
+  if (!payment_method) return res.status(400).json({ error: 'payment_method required' });
+
+  try {
+    try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
+
+    const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const payDetails = payment_details ? JSON.stringify(payment_details) : null;
+    const change     = typeof change_amount === 'number' ? change_amount : 0;
+
+    db.prepare(`
+      UPDATE orders
+      SET payment_method = ?, payment_details = ?, change_amount = ?
+      WHERE id = ?
+    `).run(payment_method, payDetails, change, req.params.id);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Orders] Payment update error:', err.message);
+    res.status(500).json({ error: `Failed to update payment: ${err.message}` });
   }
 });
 

@@ -1,40 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getMenuItems, getCategories, createMenuItem, updateMenuItem, deleteMenuItem } from '../../services/api';
+import { getMenuItems, getCategories, createMenuItem, updateMenuItem, deleteMenuItem, reorderMenuItems } from '../../services/api';
 import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
+import ConfirmModal from '../../components/ConfirmModal';
 import type { MenuItem, Category } from '../../types';
 
 const API = process.env.REACT_APP_API_URL || window.location.origin;
-
-// ── Themed confirm modal ──────────────────────────────────────────────────
-interface ConfirmModalProps {
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  danger?: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
-}
-function ConfirmModal({ title, message, confirmLabel = 'Confirm', danger = false, onConfirm, onCancel }: ConfirmModalProps) {
-  return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="rounded-xl border border-surface-border bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h3 className="font-bold text-white text-base mb-2">{title}</h3>
-        <p className="text-zinc-400 text-sm leading-relaxed mb-5">{message}</p>
-        <div className="flex gap-3">
-          <button className="btn flex-1" onClick={onCancel}>Cancel</button>
-          <button
-            className={`btn flex-1 ${danger ? 'btn-danger' : 'btn-brand'}`}
-            onClick={onConfirm}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 interface ModalProps { item?: MenuItem; categories: Category[]; onSave: (fd: FormData) => void; onClose: () => void; }
 
@@ -120,20 +92,6 @@ function MenuItemModal({ item, categories, onSave, onClose }: ModalProps) {
   );
 }
 
-// ── Reorder API helper ────────────────────────────────────────────────────
-const BASE = process.env.REACT_APP_API_URL || window.location.origin;
-let _tok: string | null = null;
-async function tok(): Promise<string | null> {
-  if (_tok !== null) return _tok;
-  try { const r = await fetch(`${BASE}/api/auth/token`); const d = await r.json(); _tok = d.token ?? null; return _tok; } catch { return null; }
-}
-async function reorderMenuItems(order: { id: number; sort_order: number }[]): Promise<void> {
-  const t = await tok();
-  const h: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (t) h['Authorization'] = `Bearer ${t}`;
-  await fetch(`${BASE}/api/menu/reorder`, { method: 'PATCH', headers: h, body: JSON.stringify({ order }) });
-}
-
 export default function AdminMenu() {
   const [items,      setItems]      = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -143,15 +101,19 @@ export default function AdminMenu() {
   // Drag state
   const [draggingId,  setDraggingId]  = useState<number | null>(null);
   const [dragOverId,  setDragOverId]  = useState<number | null>(null);
+  // Track whether a reorder is in-flight so socket reload doesn't clobber optimistic state
+  const reordering = useRef(false);
   const toast    = useToast();
   const settings = useSettings();
   const sym      = settings.currency_symbol || '₹';
 
   const load = useCallback(async () => {
+    if (reordering.current) return; // don't reload while drag-save is in progress
     try { const [m,c] = await Promise.all([getMenuItems(), getCategories()]); setItems(m); setCategories(c); } catch {}
   }, []);
   useEffect(() => { load(); }, []);
-  useSocket('menu_updated', load); useSocket('categories_updated', load);
+  useSocket('menu_updated', load);
+  useSocket('categories_updated', load);
 
   const toggleAvail = async (item: MenuItem) => {
     const fd = new FormData(); fd.append('available', String(!item.available));
@@ -164,6 +126,7 @@ export default function AdminMenu() {
       setModal(null); load();
     } catch (e: any) { toast(e.response?.data?.error||'Failed','error'); }
   };
+
   const handleDelete = (id: number) => {
     setConfirm({
       title: 'Delete Menu Item',
@@ -171,7 +134,7 @@ export default function AdminMenu() {
       onConfirm: async () => {
         setConfirm(null);
         try { await deleteMenuItem(id); toast('Deleted','success'); load(); }
-        catch { toast('Failed — item may be in an active order','error'); }
+        catch (e: any) { toast(e.response?.data?.error || 'Failed — item may be in an active order','error'); }
       },
     });
   };
@@ -182,7 +145,6 @@ export default function AdminMenu() {
     if (draggingId === null || dragOverId === null || draggingId === dragOverId) {
       setDraggingId(null); setDragOverId(null); return;
     }
-    // Reorder within current filtered view
     const filtered = filterCat === 'all' ? [...items] : items.filter(i => i.category_id === filterCat);
     const fromIdx  = filtered.findIndex(i => i.id === draggingId);
     const toIdx    = filtered.findIndex(i => i.id === dragOverId);
@@ -190,7 +152,6 @@ export default function AdminMenu() {
     const [moved]   = reordered.splice(fromIdx, 1);
     reordered.splice(toIdx, 0, moved);
 
-    // Assign new sort_order values
     const withOrder = reordered.map((item, idx) => ({ ...item, sort_order: idx }));
 
     // Update local state optimistically
@@ -203,12 +164,20 @@ export default function AdminMenu() {
 
     setDraggingId(null); setDragOverId(null);
 
+    // Block socket reload while saving, then re-enable after DB confirms
+    reordering.current = true;
     try {
       await reorderMenuItems(withOrder.map(i => ({ id: i.id, sort_order: i.sort_order ?? 0 })));
+      toast('Order saved', 'success');
     } catch {
       toast('Failed to save order', 'error');
+      reordering.current = false;
       load();
+      return;
     }
+    reordering.current = false;
+    // Do one clean reload from DB to confirm
+    try { const [m] = await Promise.all([getMenuItems()]); setItems(m); } catch {}
   };
 
   const filtered = filterCat === 'all' ? items : items.filter(i => i.category_id === filterCat);
@@ -282,10 +251,6 @@ export default function AdminMenu() {
                   <span className="text-[10px] font-bold text-white uppercase tracking-widest bg-red-500/80 px-2 py-0.5 rounded-full">Sold Out</span>
                 </div>
               )}
-              {/* Drag handle indicator */}
-              <div className="absolute top-2 left-2 w-6 h-6 rounded-md bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-events-none">
-                <svg className="w-3.5 h-3.5 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" /></svg>
-              </div>
               <div className="absolute top-2 right-2">
                 <div className={`relative w-9 h-5 rounded-full border cursor-pointer transition-colors shadow-md ${item.available ? 'bg-brand-500 border-brand-600' : 'bg-zinc-700 border-zinc-600'}`}
                   onClick={e => { e.stopPropagation(); toggleAvail(item); }}>
@@ -327,6 +292,12 @@ export default function AdminMenu() {
 }
 
 // ── Auth token helpers ──────────────────────────────────────────────────────
+const BASE = process.env.REACT_APP_API_URL || window.location.origin;
+let _tok: string | null = null;
+async function tok(): Promise<string | null> {
+  if (_tok !== null) return _tok;
+  try { const r = await fetch(`${BASE}/api/auth/token`); const d = await r.json(); _tok = d.token ?? null; return _tok; } catch { return null; }
+}
 async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {
   const t = await tok();
   const h: Record<string, string> = { ...(opts.headers as any || {}) };

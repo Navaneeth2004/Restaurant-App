@@ -3,16 +3,23 @@ const router  = express.Router();
 const db      = require('../db/database');
 
 // NOTE: sort_order column is included in the CREATE TABLE schema in database.js
-// No runtime migration needed here.
 
 router.get('/', (req, res) => {
+  // FIX: join on status IN ('active','delivered') so waiting_bill tables
+  // also get their occupied_since timestamp, not just active ones.
   const tables = db.prepare(`
     SELECT t.*,
       o.created_at AS occupied_since
     FROM tables t
     LEFT JOIN orders o
       ON o.table_id = t.id
-      AND o.status = 'active'
+      AND o.status IN ('active', 'delivered')
+      AND o.created_at = (
+        SELECT MIN(o2.created_at)
+        FROM orders o2
+        WHERE o2.table_id = t.id
+          AND o2.status IN ('active', 'delivered')
+      )
     ORDER BY t.sort_order ASC, t.id ASC
   `).all();
   res.json(tables);
@@ -75,7 +82,6 @@ router.patch('/reorder', (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
-  // Block delete if table is occupied (has active or delivered orders)
   const table = db.prepare('SELECT * FROM tables WHERE id = ?').get(req.params.id);
   if (!table) return res.status(404).json({ error: 'Table not found' });
   if (table.status !== 'empty') {

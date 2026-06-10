@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { getTables, createTable, updateTable, deleteTable, reorderTables } from '../../services/api';
 import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
+import ConfirmModal from '../../components/ConfirmModal';
 import type { Table } from '../../types';
 
 const STATUS_STYLE: Record<string, string> = {
@@ -51,6 +52,7 @@ export default function AdminTables() {
   const [modal,     setModal]     = useState<{type:'add'|'edit'; table?: Table} | null>(null);
   const [dragging,  setDragging]  = useState<string | null>(null);
   const [dragOver,  setDragOver]  = useState<string | null>(null);
+  const [confirm,   setConfirm]   = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const toast = useToast();
 
   const load = useCallback(async () => {
@@ -67,20 +69,22 @@ export default function AdminTables() {
     try { await updateTable(id, f); toast('Updated','success'); setModal(null); load(); }
     catch (e: any) { toast(e.response?.data?.error||'Failed','error'); }
   };
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this table?')) return;
-    try { await deleteTable(id); toast('Deleted','success'); load(); }
-    catch (e: any) { toast(e.response?.data?.error||'Active order — cannot delete','error'); }
+
+  const handleDelete = (id: string) => {
+    setConfirm({
+      title: 'Delete Table',
+      message: 'This will permanently remove the table. This cannot be undone.',
+      onConfirm: async () => {
+        setConfirm(null);
+        try { await deleteTable(id); toast('Deleted','success'); load(); }
+        catch (e: any) { toast(e.response?.data?.error||'Active order — cannot delete','error'); }
+      },
+    });
   };
 
-  // Compute what the next table number/label should be
-  // Extract numeric suffixes from existing labels like "Table 1", "Table 2" etc
   const getNextDefaultLabel = () => {
     const nums = tables
-      .map(t => {
-        const m = t.label.match(/\d+$/);
-        return m ? parseInt(m[0]) : 0;
-      })
+      .map(t => { const m = t.label.match(/\d+$/); return m ? parseInt(m[0]) : 0; })
       .filter(n => n > 0);
     const nextNum = nums.length > 0 ? Math.max(...nums) + 1 : tables.length + 1;
     return `Table ${nextNum}`;
@@ -110,6 +114,17 @@ export default function AdminTables() {
 
   return (
     <div>
+      {confirm && (
+        <ConfirmModal
+          title={confirm.title}
+          message={confirm.message}
+          confirmLabel="Delete"
+          danger
+          onConfirm={confirm.onConfirm}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+
       <div className="mb-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
