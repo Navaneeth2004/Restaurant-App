@@ -81,11 +81,20 @@ export default function KitchenView() {
     setTimeout(() => setAdditions(prev => prev.filter(a => a.id !== addition.id)), 5 * 60 * 1000);
   });
 
-  // Item cancelled from active/delivered order
-  useSocket('order_item_cancelled', (data: { orderId: string; tableId: string; cancelledItem: OrderItem; orderStatus: string; updatedOrder: Order }) => {
+  // ── FIX: Item cancelled from active/delivered order ────────────────────
+  // When a single-item order has its only item removed, the backend fires
+  // order_item_cancelled AND order_closed. We must show a cancellation card
+  // regardless of whether the order is fully gone.
+  useSocket('order_item_cancelled', (data: {
+    orderId: string;
+    tableId: string;
+    cancelledItem: OrderItem;
+    orderStatus: string;
+    updatedOrder: Order;
+  }) => {
     playCancelChime();
-    // Update order in list if active
-    setOrders(prev => prev.map(o => o.id === data.orderId ? data.updatedOrder : o));
+
+    // Always show a cancellation card for the removed item
     const cancellation: Cancellation = {
       id: `cancel-item-${data.orderId}-${Date.now()}`,
       orderId: data.orderId,
@@ -96,6 +105,16 @@ export default function KitchenView() {
     };
     setCancellations(prev => [...prev, cancellation]);
     setTimeout(() => setCancellations(prev => prev.filter(c => c.id !== cancellation.id)), 5 * 60 * 1000);
+
+    // Update or remove the order from the active list
+    const updatedItems = data.updatedOrder?.items ?? [];
+    if (updatedItems.length === 0) {
+      // Order is now empty — remove from kitchen view
+      setOrders(prev => prev.filter(o => o.id !== data.orderId));
+      setAdditions(prev => prev.filter(a => a.orderId !== data.orderId));
+    } else {
+      setOrders(prev => prev.map(o => o.id === data.orderId ? data.updatedOrder : o));
+    }
   });
 
   // Entire round cancelled
@@ -123,7 +142,8 @@ export default function KitchenView() {
   useSocket('order_closed', ({ orderId }: { orderId: string }) => {
     setOrders(prev => prev.filter(o => o.id !== orderId));
     setAdditions(prev => prev.filter(a => a.orderId !== orderId));
-    setCancellations(prev => prev.filter(c => c.orderId !== orderId));
+    // Note: we do NOT remove cancellations here — they need to stay visible
+    // so kitchen staff can see what was cancelled even after the order closes.
   });
 
   const handleDeliver = async (orderId: string) => {

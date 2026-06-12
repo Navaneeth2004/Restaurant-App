@@ -1,5 +1,8 @@
+'use client';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ConfirmModal from '../../components/ConfirmModal';
+import { useAdminLock, PinModal } from '../../context/AdminLockContext';
+import { verifyPin as apiVerifyPin } from '../../services/api';
 
 const API = process.env.REACT_APP_API_URL || window.location.origin;
 
@@ -59,7 +62,6 @@ const SCHEDULES = [
   { key: 'daily', label: 'Daily' },
 ];
 
-// ── Icon helpers ──────────────────────────────────────────────────────────
 const IconDownload = ({ className = 'w-4 h-4' }: { className?: string }) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
 );
@@ -129,8 +131,6 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-// ── Factory Reset Modal ───────────────────────────────────────────────────
-// Three-step confirmation: checkbox → confirm modal → type phrase
 interface ResetModalProps { onClose: () => void; onDone: () => void; }
 
 function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
@@ -155,8 +155,6 @@ function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4" onClick={onClose}>
       <div className="rounded-xl border border-red-500/40 bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl" onClick={e => e.stopPropagation()}>
-
-        {/* Step 1: Warning */}
         {step === 1 && (
           <>
             <div className="flex items-start gap-3 mb-4">
@@ -165,9 +163,7 @@ function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
               </div>
               <div>
                 <h3 className="font-bold text-red-400 text-sm">Factory Reset</h3>
-                <p className="text-zinc-400 text-xs leading-relaxed mt-1">
-                  This will permanently delete all order history, clear all table states, and remove all uploaded photos and logos.
-                </p>
+                <p className="text-zinc-400 text-xs leading-relaxed mt-1">This will permanently delete all order history, clear all table states, and remove all uploaded photos and logos.</p>
               </div>
             </div>
             <div className="rounded-lg bg-red-500/8 border border-red-500/20 p-3 mb-4 space-y-1.5 text-xs text-red-400/80">
@@ -183,14 +179,10 @@ function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
             <p className="text-zinc-600 text-xs mb-4">Take a backup first if you need to keep any history.</p>
             <div className="flex gap-2">
               <button className="btn flex-1" onClick={onClose}>Cancel</button>
-              <button className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25" onClick={() => setStep(2)}>
-                I understand, continue
-              </button>
+              <button className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25" onClick={() => setStep(2)}>I understand, continue</button>
             </div>
           </>
         )}
-
-        {/* Step 2: Second confirmation modal embedded */}
         {step === 2 && (
           <>
             <div className="flex items-start gap-3 mb-4">
@@ -199,9 +191,7 @@ function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
               </div>
               <div>
                 <h3 className="font-bold text-red-400 text-sm">Are you absolutely sure?</h3>
-                <p className="text-zinc-400 text-xs leading-relaxed mt-1">
-                  This action cannot be undone. There is no undo, no recovery, no second chance.
-                </p>
+                <p className="text-zinc-400 text-xs leading-relaxed mt-1">This action cannot be undone. There is no undo, no recovery, no second chance.</p>
               </div>
             </div>
             <div className="rounded-lg bg-zinc-800/60 border border-zinc-700 p-3 mb-4">
@@ -210,14 +200,10 @@ function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
             </div>
             <div className="flex gap-2">
               <button className="btn flex-1" onClick={onClose}>No, cancel</button>
-              <button className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25" onClick={() => setStep(3)}>
-                Yes, I have a backup
-              </button>
+              <button className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25" onClick={() => setStep(3)}>Yes, I have a backup</button>
             </div>
           </>
         )}
-
-        {/* Step 3: Type the confirmation phrase */}
         {step === 3 && (
           <>
             <div className="flex items-start gap-3 mb-4">
@@ -226,28 +212,14 @@ function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
               </div>
               <div>
                 <h3 className="font-bold text-red-400 text-sm">Final confirmation</h3>
-                <p className="text-zinc-400 text-xs leading-relaxed mt-1">
-                  Type <span className="font-mono font-bold text-red-300 select-all">{PHRASE}</span> to confirm the reset.
-                </p>
+                <p className="text-zinc-400 text-xs leading-relaxed mt-1">Type <span className="font-mono font-bold text-red-300 select-all">{PHRASE}</span> to confirm the reset.</p>
               </div>
             </div>
-            <input
-              className="input w-full mb-3 font-mono text-red-300 border-red-500/30 focus:border-red-500/60"
-              placeholder={PHRASE}
-              value={typed}
-              onChange={e => { setTyped(e.target.value); setErr(''); }}
-              autoFocus
-              spellCheck={false}
-              autoComplete="off"
-            />
+            <input className="input w-full mb-3 font-mono text-red-300 border-red-500/30 focus:border-red-500/60" placeholder={PHRASE} value={typed} onChange={e => { setTyped(e.target.value); setErr(''); }} autoFocus spellCheck={false} autoComplete="off" />
             {err && <p className="text-red-400 text-xs mb-3">{err}</p>}
             <div className="flex gap-2">
               <button className="btn flex-1" onClick={onClose} disabled={loading}>Cancel</button>
-              <button
-                className="btn flex-1 bg-red-600 border-red-700 text-white hover:bg-red-700 disabled:opacity-40"
-                onClick={doReset}
-                disabled={loading || typed !== PHRASE}
-              >
+              <button className="btn flex-1 bg-red-600 border-red-700 text-white hover:bg-red-700 disabled:opacity-40" onClick={doReset} disabled={loading || typed !== PHRASE}>
                 {loading ? <><Spinner /> Resetting…</> : 'Reset Now'}
               </button>
             </div>
@@ -258,8 +230,8 @@ function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
   );
 }
 
-// ── Main AdminBackup component ────────────────────────────────────────────
 export default function AdminBackup() {
+  const { config: lockConfig, requirePin } = useAdminLock();
   const [status,        setStatus]        = useState<DriveStatus | null>(null);
   const [localStatus,   setLocalStatus]   = useState<LocalStatus | null>(null);
   const [downloading,   setDownloading]   = useState(false);
@@ -280,10 +252,12 @@ export default function AdminBackup() {
   const [msg,           setMsg]           = useState<{ ok: boolean; text: string } | null>(null);
   const [showResetPanel, setShowResetPanel] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
-  // Hidden reset: click version text 5 times quickly
   const [secretClicks,   setSecretClicks]  = useState(0);
   const secretTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
+  // Track the popup window to detect close
+  const popupRef = useRef<Window | null>(null);
+  const popupCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const flash = (ok: boolean, text: string) => { setMsg({ ok, text }); setTimeout(() => setMsg(null), 7000); };
 
@@ -306,23 +280,28 @@ export default function AdminBackup() {
 
   useEffect(() => { loadStatus(); loadLocalStatus(); }, []);
 
+  // ── FIX: listen for gdrive_connected AND detect popup close ──────────
   useEffect(() => {
     const h = (e: MessageEvent) => {
-      if (e.data === 'gdrive_connected') { setConnecting(false); flash(true, 'Google Drive connected!'); loadStatus(); }
+      if (e.data === 'gdrive_connected') {
+        setConnecting(false);
+        if (popupCheckRef.current) clearInterval(popupCheckRef.current);
+        flash(true, 'Google Drive connected!');
+        loadStatus();
+      }
     };
     window.addEventListener('message', h);
-    return () => window.removeEventListener('message', h);
+    return () => {
+      window.removeEventListener('message', h);
+      if (popupCheckRef.current) clearInterval(popupCheckRef.current);
+    };
   }, []);
 
-  // Secret click handler — 5 clicks within 2 seconds reveals reset
   const handleSecretClick = () => {
     setSecretClicks(n => {
       const next = n + 1;
       if (secretTimer.current) clearTimeout(secretTimer.current);
-      if (next >= 5) {
-        setShowResetPanel(true);
-        return 0;
-      }
+      if (next >= 5) { setShowResetPanel(true); return 0; }
       secretTimer.current = setTimeout(() => setSecretClicks(0), 2000);
       return next;
     });
@@ -378,13 +357,31 @@ export default function AdminBackup() {
     finally { setSavingCreds(false); }
   };
 
+  // ── FIX: Connect button no longer gets stuck if popup is closed ──────
   const handleConnect = async () => {
     setConnecting(true);
     try {
       const d = await authedJson(`${API}/api/backup/gdrive/auth`);
       const popup = window.open(d.url, 'gdrive_auth', 'width=500,height=650,scrollbars=yes');
-      if (!popup) { flash(false, 'Popup blocked — allow popups for this page.'); setConnecting(false); }
-    } catch (e: any) { flash(false, e.message || 'Failed'); setConnecting(false); }
+      if (!popup) {
+        flash(false, 'Popup blocked — allow popups for this page.');
+        setConnecting(false);
+        return;
+      }
+      popupRef.current = popup;
+      // Poll every 500ms to detect if user closed the popup without completing auth
+      if (popupCheckRef.current) clearInterval(popupCheckRef.current);
+      popupCheckRef.current = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(popupCheckRef.current!);
+          popupCheckRef.current = null;
+          setConnecting(false); // reset button regardless
+        }
+      }, 500);
+    } catch (e: any) {
+      flash(false, e.message || 'Failed');
+      setConnecting(false);
+    }
   };
 
   const handleUpload = async () => {
@@ -438,17 +435,40 @@ export default function AdminBackup() {
     catch (e: any) { flash(false, e.message || 'Failed'); }
   };
 
+  // ── PIN-protected action wrappers ─────────────────────────────────────
+  const guardedDownload = () => {
+    if (!lockConfig.enabled) { handleDownload(); return; }
+    requirePin(handleDownload, 'Confirm Download', 'Enter admin PIN to download backup');
+  };
+
+  const guardedConnect = () => {
+    if (!lockConfig.enabled) { handleConnect(); return; }
+    requirePin(handleConnect, 'Confirm Google Drive', 'Enter admin PIN to connect Google Drive');
+  };
+
+  const guardedUpload = () => {
+    if (!lockConfig.enabled) { handleUpload(); return; }
+    requirePin(handleUpload, 'Confirm Drive Backup', 'Enter admin PIN to back up to Drive');
+  };
+
+  const guardedSaveCreds = () => {
+    if (!lockConfig.enabled) { handleSaveCreds(); return; }
+    requirePin(handleSaveCreds, 'Confirm Credentials', 'Enter admin PIN to save credentials');
+  };
+
+  const guardedShowResetModal = () => {
+    if (!lockConfig.enabled) { setShowResetModal(true); return; }
+    requirePin(() => setShowResetModal(true), 'Confirm Factory Reset', 'Enter admin PIN to access reset');
+  };
+
   const schedLabel   = SCHEDULES.find(s => s.key === (status?.schedule || 'off'))?.label || 'Off';
   const redirectUri  = status?.redirect_uri || `${window.location.origin}/api/backup/gdrive/callback`;
 
   return (
     <div className="space-y-4 max-w-xl">
-      {/* Header */}
       <div>
         <h3 className="font-bold text-white text-base mb-1">Backup &amp; Restore</h3>
-        <p className="text-zinc-500 text-xs leading-relaxed">
-          Protects your menu, orders, staff and settings. Back up regularly.
-        </p>
+        <p className="text-zinc-500 text-xs leading-relaxed">Protects your menu, orders, staff and settings. Back up regularly.</p>
       </div>
 
       {msg && <Flash ok={msg.ok} text={msg.text} />}
@@ -470,7 +490,7 @@ export default function AdminBackup() {
               <div key={label} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-raised border border-surface-border text-xs text-zinc-400">{icon}{label}</div>
             ))}
           </div>
-          <button onClick={handleDownload} disabled={downloading} className="btn btn-brand btn-sm flex items-center gap-2">
+          <button onClick={guardedDownload} disabled={downloading} className="btn btn-brand btn-sm flex items-center gap-2">
             {downloading ? <><Spinner />Preparing…</> : <><IconDownload className="w-3.5 h-3.5" />Download Backup</>}
           </button>
         </div>
@@ -500,67 +520,40 @@ export default function AdminBackup() {
         <div className="p-4 border-b border-surface-border">
           <div className="flex items-center justify-between gap-2 mb-1">
             <p className="text-white text-sm font-semibold">Local Auto-Backup</p>
-            <div className="flex items-center gap-2">
-              {localStatus?.schedule && localStatus.schedule !== 'off' && (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/15 border border-brand-500/25 text-brand-400">
-                  {SCHEDULES.find(s => s.key === localStatus.schedule)?.label}
-                </span>
-              )}
-            </div>
+            {localStatus?.schedule && localStatus.schedule !== 'off' && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/15 border border-brand-500/25 text-brand-400">
+                {SCHEDULES.find(s => s.key === localStatus.schedule)?.label}
+              </span>
+            )}
           </div>
-          <p className="text-zinc-500 text-xs leading-relaxed">
-            Automatically save backups to a folder on this computer. Keeps the last 7 backups.
-          </p>
+          <p className="text-zinc-500 text-xs leading-relaxed">Automatically save backups to a folder on this computer. Keeps the last 7 backups.</p>
           {localStatus?.last_backup && (
-            <p className="text-zinc-600 text-xs mt-1">
-              Last saved: <span className="text-zinc-400">{timeAgo(localStatus.last_backup)}</span>
+            <p className="text-zinc-600 text-xs mt-1">Last saved: <span className="text-zinc-400">{timeAgo(localStatus.last_backup)}</span>
               {localStatus.last_filename && <span className="text-zinc-600"> — {localStatus.last_filename}</span>}
             </p>
           )}
         </div>
-
         <div className="p-4 space-y-3">
           <div>
             <label className="label">Backup Folder Path</label>
-            <input
-              className="input text-xs font-mono"
-              placeholder="e.g. C:\Backups\POS  or  /home/user/pos-backups"
-              value={localFolder}
-              onChange={e => setLocalFolder(e.target.value)}
-            />
+            <input className="input text-xs font-mono" placeholder="e.g. C:\Backups\POS  or  /home/user/pos-backups" value={localFolder} onChange={e => setLocalFolder(e.target.value)} />
             <p className="text-zinc-600 text-[10px] mt-1">Leave blank to use backend/data/backups/ (inside the app folder)</p>
           </div>
-
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              <IconClock />
-              <p className="text-white text-xs font-semibold">Auto-backup Schedule</p>
-            </div>
+            <div className="flex items-center gap-2 mb-2"><IconClock /><p className="text-white text-xs font-semibold">Auto-backup Schedule</p></div>
             <div className="grid grid-cols-3 gap-1.5 mb-3">
               {SCHEDULES.map(s => (
                 <button key={s.key} onClick={() => setSelectedLocalSched(s.key)}
-                  className={`py-2 rounded-lg border text-xs font-medium transition-all ${
-                    selectedLocalSched === s.key
-                      ? 'bg-brand-500 border-brand-600 text-white'
-                      : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'
-                  }`}>
+                  className={`py-2 rounded-lg border text-xs font-medium transition-all ${selectedLocalSched === s.key ? 'bg-brand-500 border-brand-600 text-white' : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'}`}>
                   {s.label}
                 </button>
               ))}
             </div>
             <div className="flex gap-2 flex-wrap">
-              <button
-                className="btn btn-brand btn-sm flex items-center gap-2"
-                onClick={handleSaveLocalSchedule}
-                disabled={saveLocalSched}
-              >
+              <button className="btn btn-brand btn-sm flex items-center gap-2" onClick={handleSaveLocalSchedule} disabled={saveLocalSched}>
                 {saveLocalSched ? <><Spinner />Saving…</> : 'Save Schedule'}
               </button>
-              <button
-                className="btn btn-sm flex items-center gap-2"
-                onClick={handleLocalBackupNow}
-                disabled={localBacking}
-              >
+              <button className="btn btn-sm flex items-center gap-2" onClick={handleLocalBackupNow} disabled={localBacking}>
                 {localBacking ? <><Spinner />Backing up…</> : <><IconDownload className="w-3.5 h-3.5" />Back Up Now</>}
               </button>
             </div>
@@ -570,7 +563,6 @@ export default function AdminBackup() {
 
       {/* ── Google Drive ── */}
       <Card className="overflow-hidden">
-        {/* Header */}
         <div className="p-4 border-b border-surface-border">
           <div className="flex items-center justify-between gap-2 mb-1">
             <p className="text-white text-sm font-semibold">Google Drive Backup</p>
@@ -579,90 +571,48 @@ export default function AdminBackup() {
           <div className="flex items-center gap-2 flex-wrap">
             {status?.connected
               ? <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400"/>Connected</span>
-              : status !== null
-                ? <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-500"><span className="w-1.5 h-1.5 rounded-full bg-zinc-600"/>Not connected</span>
-                : null
+              : status !== null ? <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-500"><span className="w-1.5 h-1.5 rounded-full bg-zinc-600"/>Not connected</span> : null
             }
-            {status?.last_backup && (
-              <span className="text-zinc-600 text-xs">Last: <span className="text-zinc-400">{timeAgo(status.last_backup)}</span></span>
-            )}
+            {status?.last_backup && <span className="text-zinc-600 text-xs">Last: <span className="text-zinc-400">{timeAgo(status.last_backup)}</span></span>}
             {status?.connected && status.schedule !== 'off' && (
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/15 border border-brand-500/25 text-brand-400">Auto: {schedLabel}</span>
             )}
           </div>
         </div>
 
-        {/* Step-by-step setup guide */}
         {status !== null && !status.configured && !showCreds && (
           <div className="p-4 border-b border-surface-border">
             <div className="flex items-center justify-between mb-3">
               <p className="text-zinc-300 text-xs font-semibold">Setup Guide — Google Drive Backup</p>
-              <button
-                onClick={() => setShowDriveGuide(g => !g)}
-                className="text-[10px] text-zinc-500 hover:text-zinc-300 flex items-center gap-1 transition-colors"
-              >
+              <button onClick={() => setShowDriveGuide(g => !g)} className="text-[10px] text-zinc-500 hover:text-zinc-300 flex items-center gap-1 transition-colors">
                 {showDriveGuide ? 'Hide' : 'Show steps'}
                 <svg className={`w-3 h-3 transition-transform ${showDriveGuide ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
               </button>
             </div>
-            <p className="text-zinc-500 text-xs leading-relaxed mb-3">
-              Needs a free Google Cloud OAuth key — takes about 5 minutes, done once.
-            </p>
+            <p className="text-zinc-500 text-xs leading-relaxed mb-3">Needs a free Google Cloud OAuth key — takes about 5 minutes, done once.</p>
 
             {showDriveGuide && (
               <div className="space-y-3 mb-4">
                 {[
-                  {
-                    n: 1,
-                    title: 'Open Google Cloud Console',
-                    body: <>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="text-brand-400 underline underline-offset-2">console.cloud.google.com</a>. Sign in with your Google account (any Gmail account works — no paid plan needed).</>,
-                  },
-                  {
-                    n: 2,
-                    title: 'Create a new project',
-                    body: <>Click the project dropdown at the top → <span className="text-zinc-300 font-medium">New Project</span>. Name it anything, e.g. "Restaurant POS". Click <span className="text-zinc-300 font-medium">Create</span>.</>,
-                  },
-                  {
-                    n: 3,
-                    title: 'Enable the Google Drive API',
-                    body: <>In the left menu go to <span className="text-zinc-300 font-medium">APIs &amp; Services → Library</span>. Search for <span className="font-mono text-zinc-300">Google Drive API</span> and click <span className="text-zinc-300 font-medium">Enable</span>.</>,
-                  },
-                  {
-                    n: 4,
-                    title: 'Configure the OAuth consent screen',
-                    body: <>Go to <span className="text-zinc-300 font-medium">APIs &amp; Services → OAuth consent screen</span>. Choose <span className="text-zinc-300 font-medium">External</span>, fill in an app name (e.g. "Restaurant POS"), your email, and click Save. On the Scopes page just click Save. On the Test users page add your own Gmail address, then click Save.</>,
-                  },
-                  {
-                    n: 5,
-                    title: 'Create OAuth credentials',
-                    body: <>Go to <span className="text-zinc-300 font-medium">APIs &amp; Services → Credentials</span> → <span className="text-zinc-300 font-medium">+ Create Credentials → OAuth 2.0 Client ID</span>. Set Application type to <span className="text-zinc-300 font-medium">Web application</span>. Under <span className="text-zinc-300 font-medium">Authorised redirect URIs</span>, paste the URI below exactly.</>,
-                  },
-                  {
-                    n: 6,
-                    title: 'Copy your Client ID and Client Secret',
-                    body: <>After saving you'll see a popup with <span className="text-zinc-300 font-medium">Client ID</span> and <span className="text-zinc-300 font-medium">Client Secret</span>. Copy both and paste them into the form below.</>,
-                  },
+                  { n:1, title:'Open Google Cloud Console', body:<>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="text-brand-400 underline underline-offset-2">console.cloud.google.com</a>. Sign in with your Google account.</> },
+                  { n:2, title:'Create a new project', body:<>Click the project dropdown → <span className="text-zinc-300 font-medium">New Project</span>. Name it anything.</> },
+                  { n:3, title:'Enable the Google Drive API', body:<>Go to <span className="text-zinc-300 font-medium">APIs &amp; Services → Library</span>. Search <span className="font-mono text-zinc-300">Google Drive API</span> and enable it.</> },
+                  { n:4, title:'Configure OAuth consent screen', body:<>Go to <span className="text-zinc-300 font-medium">OAuth consent screen</span>. Choose External, fill app name, add your email as test user.</> },
+                  { n:5, title:'Create OAuth credentials', body:<>Go to <span className="text-zinc-300 font-medium">Credentials → + Create → OAuth 2.0 Client ID</span>. Set type to Web application. Add the redirect URI below.</> },
+                  { n:6, title:'Copy Client ID and Secret', body:<>After saving, copy the <span className="text-zinc-300 font-medium">Client ID</span> and <span className="text-zinc-300 font-medium">Client Secret</span> into the form below.</> },
                 ].map(step => (
                   <div key={step.n} className="flex gap-3">
-                    <div className="w-5 h-5 rounded-full bg-brand-500/20 border border-brand-500/30 text-brand-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
-                      {step.n}
-                    </div>
-                    <div>
-                      <p className="text-zinc-200 text-xs font-semibold mb-0.5">{step.title}</p>
-                      <p className="text-zinc-500 text-xs leading-relaxed">{step.body}</p>
-                    </div>
+                    <div className="w-5 h-5 rounded-full bg-brand-500/20 border border-brand-500/30 text-brand-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{step.n}</div>
+                    <div><p className="text-zinc-200 text-xs font-semibold mb-0.5">{step.title}</p><p className="text-zinc-500 text-xs leading-relaxed">{step.body}</p></div>
                   </div>
                 ))}
-
                 <div className="mt-3">
-                  <p className="text-zinc-500 text-xs mb-1.5">Your redirect URI (copy this into Google Console — Step 5):</p>
+                  <p className="text-zinc-500 text-xs mb-1.5">Your redirect URI (paste into Google Console — Step 5):</p>
                   <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2">
                     <code className="text-zinc-200 text-[11px] break-all flex-1 select-all">{redirectUri}</code>
                     <CopyButton text={redirectUri} />
                   </div>
-                  <p className="text-amber-400 text-[10px] leading-relaxed mt-1.5">
-                    This URI changes if you switch between localhost and the network IP. Always copy from here.
-                  </p>
+                  <p className="text-amber-400 text-[10px] leading-relaxed mt-1.5">This URI changes if you switch between localhost and the network IP. Always copy from here.</p>
                 </div>
               </div>
             )}
@@ -674,13 +624,10 @@ export default function AdminBackup() {
               </div>
             )}
 
-            <button className="btn btn-brand btn-sm" onClick={() => { setShowCreds(true); setShowDriveGuide(false); }}>
-              Enter credentials
-            </button>
+            <button className="btn btn-brand btn-sm" onClick={() => { setShowCreds(true); setShowDriveGuide(false); }}>Enter credentials</button>
           </div>
         )}
 
-        {/* Credential form */}
         {showCreds && (
           <div className="p-4 border-b border-surface-border space-y-3">
             <p className="text-white text-xs font-semibold">{status?.configured ? 'Update credentials' : 'Enter OAuth credentials'}</p>
@@ -693,7 +640,7 @@ export default function AdminBackup() {
               <input className="input font-mono text-xs" type="password" placeholder="GOCSPX-..." value={clientSecret} onChange={e => setClientSecret(e.target.value)} />
             </div>
             <div className="flex gap-2 flex-wrap">
-              <button className="btn btn-brand btn-sm" onClick={handleSaveCreds} disabled={savingCreds || !clientId || !clientSecret}>
+              <button className="btn btn-brand btn-sm" onClick={guardedSaveCreds} disabled={savingCreds || !clientId || !clientSecret}>
                 {savingCreds ? <><Spinner />Saving…</> : 'Save Credentials'}
               </button>
               <button className="btn btn-sm" onClick={() => setShowCreds(false)}>Cancel</button>
@@ -701,7 +648,6 @@ export default function AdminBackup() {
           </div>
         )}
 
-        {/* Configured but not connected */}
         {status?.configured && !status.connected && !showCreds && (
           <div className="p-4 border-b border-surface-border space-y-3">
             <div>
@@ -712,7 +658,7 @@ export default function AdminBackup() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button className="btn btn-brand btn-sm flex items-center gap-2" onClick={handleConnect} disabled={connecting}>
+              <button className="btn btn-brand btn-sm flex items-center gap-2" onClick={guardedConnect} disabled={connecting}>
                 {connecting ? <><Spinner />Waiting for Google…</> : <><IconCloud className="w-3.5 h-3.5" />Connect Google Drive</>}
               </button>
               <button className="btn btn-sm" onClick={() => setShowCreds(true)}>Update credentials</button>
@@ -720,47 +666,33 @@ export default function AdminBackup() {
           </div>
         )}
 
-        {/* Connected — manual backup */}
         {status?.connected && (
           <div className="p-4 border-b border-surface-border">
-            <p className="text-zinc-500 text-xs mb-3">
-              Saves to <span className="text-zinc-300">Restaurant POS Backups / restaurant_pos_backup.zip</span> — overwrites each time.
-            </p>
-            <button className="btn btn-brand btn-sm flex items-center gap-2" onClick={handleUpload} disabled={uploading}>
+            <p className="text-zinc-500 text-xs mb-3">Saves to <span className="text-zinc-300">Restaurant POS Backups / restaurant_pos_backup.zip</span> — overwrites each time.</p>
+            <button className="btn btn-brand btn-sm flex items-center gap-2" onClick={guardedUpload} disabled={uploading}>
               {uploading ? <><Spinner />Uploading…</> : <><IconCloud className="w-3.5 h-3.5" />Back Up to Drive Now</>}
             </button>
           </div>
         )}
 
-        {/* Schedule */}
         {status?.configured && (
           <div className="p-4 border-b border-surface-border">
-            <div className="flex items-center gap-2 mb-2">
-              <IconClock />
-              <p className="text-white text-xs font-semibold">Drive Auto-backup Schedule</p>
-            </div>
+            <div className="flex items-center gap-2 mb-2"><IconClock /><p className="text-white text-xs font-semibold">Drive Auto-backup Schedule</p></div>
             {!status.connected && <p className="text-zinc-600 text-xs mb-2">Connect Google Drive first to use auto-backup.</p>}
             <div className="grid grid-cols-3 gap-1.5 mb-3">
               {SCHEDULES.map(s => (
-                <button key={s.key} onClick={() => setSelectedSched(s.key)}
-                  disabled={!status.connected}
-                  className={`py-2 rounded-lg border text-xs font-medium transition-all ${
-                    selectedSched === s.key
-                      ? 'bg-brand-500 border-brand-600 text-white'
-                      : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600 disabled:opacity-30 disabled:cursor-not-allowed'
-                  }`}>
+                <button key={s.key} onClick={() => setSelectedSched(s.key)} disabled={!status.connected}
+                  className={`py-2 rounded-lg border text-xs font-medium transition-all ${selectedSched === s.key ? 'bg-brand-500 border-brand-600 text-white' : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600 disabled:opacity-30 disabled:cursor-not-allowed'}`}>
                   {s.label}
                 </button>
               ))}
             </div>
-            <button className="btn btn-sm flex items-center gap-2" onClick={handleSaveSchedule}
-              disabled={savingSched || selectedSched === status.schedule || !status.connected}>
+            <button className="btn btn-sm flex items-center gap-2" onClick={handleSaveSchedule} disabled={savingSched || selectedSched === status.schedule || !status.connected}>
               {savingSched ? <><Spinner />Saving…</> : 'Save Schedule'}
             </button>
           </div>
         )}
 
-        {/* Bottom actions */}
         {status?.connected && (
           <div className="p-4 flex flex-wrap gap-2">
             <button className="btn btn-sm" onClick={() => setShowCreds(true)}>Update credentials</button>
@@ -769,7 +701,6 @@ export default function AdminBackup() {
         )}
       </Card>
 
-      {/* Manual restore note */}
       <div className="rounded-xl border border-surface-border bg-surface-raised px-4 py-3">
         <p className="text-zinc-500 text-xs leading-relaxed">
           <span className="text-zinc-300 font-semibold">To restore manually:</span>{' '}
@@ -777,16 +708,8 @@ export default function AdminBackup() {
         </p>
       </div>
 
-      {/* ── Hidden factory reset trigger ── */}
-      {/* Clicking the version string 5× quickly reveals it */}
       <div className="text-center pt-2">
-        <span
-          className="text-zinc-800 text-[10px] cursor-default select-none"
-          onClick={handleSecretClick}
-          title=""
-        >
-          v1.0.0
-        </span>
+        <span className="text-zinc-800 text-[10px] cursor-default select-none" onClick={handleSecretClick} title="">v1.0.0</span>
       </div>
 
       {showResetPanel && (
@@ -795,28 +718,16 @@ export default function AdminBackup() {
             <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
             <div className="flex-1">
               <p className="text-red-400 text-xs font-semibold">Danger Zone</p>
-              <p className="text-zinc-600 text-xs mt-0.5 leading-relaxed">
-                Factory reset wipes all order history and images. Staff and menu are kept.
-                Take a backup before proceeding.
-              </p>
+              <p className="text-zinc-600 text-xs mt-0.5 leading-relaxed">Factory reset wipes all order history and images. Staff and menu are kept. Take a backup before proceeding.</p>
             </div>
-            <button
-              className="btn btn-sm bg-transparent border-transparent text-zinc-600 hover:text-zinc-400 flex-shrink-0 text-xs"
-              onClick={() => setShowResetPanel(false)}
-            >
-              Hide
-            </button>
+            <button className="btn btn-sm bg-transparent border-transparent text-zinc-600 hover:text-zinc-400 flex-shrink-0 text-xs" onClick={() => setShowResetPanel(false)}>Hide</button>
           </div>
-          <button
-            className="mt-3 w-full py-2 rounded-lg border border-red-500/30 bg-red-500/8 text-red-400 text-xs font-semibold hover:bg-red-500/15 transition-colors"
-            onClick={() => setShowResetModal(true)}
-          >
+          <button className="mt-3 w-full py-2 rounded-lg border border-red-500/30 bg-red-500/8 text-red-400 text-xs font-semibold hover:bg-red-500/15 transition-colors" onClick={guardedShowResetModal}>
             Factory Reset…
           </button>
         </div>
       )}
 
-      {/* Factory reset modal (3-step) */}
       {showResetModal && (
         <FactoryResetModal
           onClose={() => setShowResetModal(false)}

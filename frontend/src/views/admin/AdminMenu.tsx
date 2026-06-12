@@ -3,6 +3,7 @@ import { getMenuItems, getCategories, createMenuItem, updateMenuItem, deleteMenu
 import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
+import { useAdminLock } from '../../context/AdminLockContext';
 import ConfirmModal from '../../components/ConfirmModal';
 import type { MenuItem, Category } from '../../types';
 
@@ -98,10 +99,8 @@ export default function AdminMenu() {
   const [filterCat,  setFilterCat]  = useState<'all'|number>('all');
   const [modal,      setModal]      = useState<{item?: MenuItem}|null>(null);
   const [confirm,    setConfirm]    = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
-  // Drag state
   const [draggingId,  setDraggingId]  = useState<number | null>(null);
   const [dragOverId,  setDragOverId]  = useState<number | null>(null);
-  // Track reorder in-flight; also store the last reorder result to protect against stale socket events
   const reordering      = useRef(false);
   const lastReorderTime = useRef(0);
   const toast    = useToast();
@@ -109,7 +108,6 @@ export default function AdminMenu() {
   const sym      = settings.currency_symbol || '₹';
 
   const load = useCallback(async () => {
-    // Don't reload if a reorder just completed in the last 3 seconds
     if (reordering.current) return;
     if (Date.now() - lastReorderTime.current < 3000) return;
     try { const [m,c] = await Promise.all([getMenuItems(), getCategories()]); setItems(m); setCategories(c); } catch {}
@@ -142,7 +140,6 @@ export default function AdminMenu() {
     });
   };
 
-  // ── Drag and drop handlers ────────────────────────────────────────────
   const handleDragStart = (id: number) => setDraggingId(id);
   const handleDragEnd   = async () => {
     if (draggingId === null || dragOverId === null || draggingId === dragOverId) {
@@ -154,36 +151,21 @@ export default function AdminMenu() {
     const reordered = [...filtered];
     const [moved]   = reordered.splice(fromIdx, 1);
     reordered.splice(toIdx, 0, moved);
-
     const withOrder = reordered.map((item, idx) => ({ ...item, sort_order: idx }));
-
-    // Update local state optimistically
-    if (filterCat === 'all') {
-      setItems(withOrder);
-    } else {
-      const others = items.filter(i => i.category_id !== filterCat);
-      setItems([...others, ...withOrder]);
-    }
-
+    if (filterCat === 'all') { setItems(withOrder); }
+    else { const others = items.filter(i => i.category_id !== filterCat); setItems([...others, ...withOrder]); }
     setDraggingId(null); setDragOverId(null);
-
-    // Block socket reload while saving
     reordering.current = true;
     try {
       await reorderMenuItems(withOrder.map(i => ({ id: i.id, sort_order: i.sort_order ?? 0 })));
-      // Record time so load() stays suppressed for a brief window after socket event fires
       lastReorderTime.current = Date.now();
     } catch {
       toast('Failed to save order', 'error');
       reordering.current = false;
-      load();
-      return;
+      load(); return;
     }
     reordering.current = false;
-    // One final clean reload to sync with DB, but only after the suppression window
-    setTimeout(async () => {
-      try { const [m] = await Promise.all([getMenuItems()]); setItems(m); } catch {}
-    }, 3100);
+    setTimeout(async () => { try { const [m] = await Promise.all([getMenuItems()]); setItems(m); } catch {} }, 3100);
   };
 
   const filtered = filterCat === 'all' ? items : items.filter(i => i.category_id === filterCat);
@@ -191,14 +173,7 @@ export default function AdminMenu() {
   return (
     <div>
       {confirm && (
-        <ConfirmModal
-          title={confirm.title}
-          message={confirm.message}
-          confirmLabel="Delete"
-          danger
-          onConfirm={confirm.onConfirm}
-          onCancel={() => setConfirm(null)}
-        />
+        <ConfirmModal title={confirm.title} message={confirm.message} confirmLabel="Delete" danger onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} />
       )}
 
       <div className="mb-5">
@@ -319,8 +294,9 @@ export function MenuExportImport() {
   const [exporting,    setExporting]    = React.useState(false);
   const fileRef = React.useRef<HTMLInputElement>(null);
   const toast   = useToast();
+  const { requirePin, config: lockConfig } = useAdminLock();
 
-  const handleExport = async () => {
+  const doExport = async () => {
     setExporting(true);
     try {
       const res = await authedFetch(`${BASE}/api/export/menu`);
@@ -344,42 +320,53 @@ export function MenuExportImport() {
     }
   };
 
+  const handleExport = () => {
+    if (!lockConfig.enabled) { doExport(); return; }
+    requirePin(doExport, 'Export Menu', 'Enter admin PIN to download menu');
+  };
+
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setImporting(true);
-    setImportResult(null);
-    setImportError(null);
-    try {
-      let res: Response;
-      if (file.name.endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
-        const fd = new FormData();
-        fd.append('menuzip', file);
-        res = await authedFetch(`${BASE}/api/export/menu/import`, { method: 'POST', body: fd });
-      } else if (file.name.endsWith('.json') || file.type === 'application/json') {
-        const text = await file.text();
-        const data = JSON.parse(text);
-        res = await authedFetch(`${BASE}/api/export/menu/import`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data),
-        });
-      } else {
-        throw new Error('Please choose a .zip or .json file');
+
+    const doImport = async () => {
+      setImporting(true);
+      setImportResult(null);
+      setImportError(null);
+      try {
+        let res: Response;
+        if (file.name.endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
+          const fd = new FormData();
+          fd.append('menuzip', file);
+          res = await authedFetch(`${BASE}/api/export/menu/import`, { method: 'POST', body: fd });
+        } else if (file.name.endsWith('.json') || file.type === 'application/json') {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          res = await authedFetch(`${BASE}/api/export/menu/import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+          });
+        } else {
+          throw new Error('Please choose a .zip or .json file');
+        }
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Import failed');
+        const imgNote = result.images_imported > 0 ? `, ${result.images_imported} images` : '';
+        setImportResult(`Done — ${result.categories_added} categories added, ${result.items_added} items added${imgNote}, ${result.items_skipped} skipped`);
+        toast('Menu imported successfully', 'success');
+      } catch (e: any) {
+        const msg = e.message || 'Import failed — check file format';
+        setImportError(msg);
+        toast(msg, 'error');
+      } finally {
+        setImporting(false);
+        if (fileRef.current) fileRef.current.value = '';
       }
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Import failed');
-      const imgNote = result.images_imported > 0 ? `, ${result.images_imported} images` : '';
-      setImportResult(`Done — ${result.categories_added} categories added, ${result.items_added} items added${imgNote}, ${result.items_skipped} skipped`);
-      toast('Menu imported successfully', 'success');
-    } catch (e: any) {
-      const msg = e.message || 'Import failed — check file format';
-      setImportError(msg);
-      toast(msg, 'error');
-    } finally {
-      setImporting(false);
-      if (fileRef.current) fileRef.current.value = '';
-    }
+    };
+
+    if (!lockConfig.enabled) { doImport(); return; }
+    requirePin(doImport, 'Import Menu', 'Enter admin PIN to import menu');
   };
 
   return (
@@ -391,6 +378,9 @@ export function MenuExportImport() {
           <div className="flex items-center gap-2 mb-2">
             <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
             <span className="text-white text-xs font-semibold">Export Menu</span>
+            {lockConfig.enabled && (
+              <svg className="w-3 h-3 text-zinc-600 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+            )}
           </div>
           <p className="text-zinc-600 text-xs mb-3">Downloads a <span className="text-zinc-400 font-mono">.zip</span> with all categories, items and photos.</p>
           <button className="btn btn-brand btn-sm w-full" onClick={handleExport} disabled={exporting}>
@@ -401,6 +391,9 @@ export function MenuExportImport() {
           <div className="flex items-center gap-2 mb-2">
             <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5m0 0L7.5 12m4.5-4.5V21" /></svg>
             <span className="text-white text-xs font-semibold">Import Menu</span>
+            {lockConfig.enabled && (
+              <svg className="w-3 h-3 text-zinc-600 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+            )}
           </div>
           <p className="text-zinc-600 text-xs mb-3">Upload a <span className="text-zinc-400 font-mono">.zip</span> or <span className="text-zinc-400 font-mono">.json</span>. Existing items are kept; duplicates skipped.</p>
           <button className="btn btn-sm w-full border-surface-border" onClick={() => fileRef.current?.click()} disabled={importing}>

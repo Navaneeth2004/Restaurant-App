@@ -90,18 +90,11 @@
     margin: 0;
   }
 
-  /* Hide everything using visibility so nested elements can override */
-  body * {
-    visibility: hidden !important;
-  }
+  body * { visibility: hidden !important; }
 
-  /* Show only the bill receipt card and all its children */
   .bill-print-area,
-  .bill-print-area * {
-    visibility: visible !important;
-  }
+  .bill-print-area * { visibility: visible !important; }
 
-  /* Pull the receipt card to the top-left corner of the page */
   .bill-print-area {
     position: fixed !important;
     top: 0 !important;
@@ -110,24 +103,54 @@
     max-width: 100% !important;
     box-shadow: none !important;
     border-radius: 0 !important;
-    background: white !important;
-    color: black !important;
+    background: #ffffff !important;
+    color: #000000 !important;
     padding: 4mm 4mm 6mm !important;
   }
 
-  /* Hide the action buttons inside the receipt */
-  .no-print {
-    display: none !important;
-  }
+  .no-print { display: none !important; }
 
   body {
     background: white !important;
-    font-size: 11px !important;
-    line-height: 1.4 !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
   }
 
+  /* Force all bill text to pure black */
+  .bill-print-area p,
+  .bill-print-area span,
+  .bill-print-area div,
+  .bill-print-area td,
+  .bill-print-area th {
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .bill-print-area .border-dashed,
   .border-dashed {
     border-style: dashed !important;
-    border-color: #999 !important;
+    border-color: #555555 !important;
+    border-width: 1px !important;
+  }
+
+  .bill-print-area .bill-header {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Muted greys → readable dark grey */
+  .bill-print-area [style*="color: #bbb"],
+  .bill-print-area [style*="color: #aaa"],
+  .bill-print-area [style*="color: #9ca3af"] {
+    color: #444444 !important;
+  }
+
+  .bill-print-area [style*="color: #888"],
+  .bill-print-area [style*="color: #666"] {
+    color: #333333 !important;
   }
 }

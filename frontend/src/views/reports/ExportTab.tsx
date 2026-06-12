@@ -1,13 +1,5 @@
-/**
- * frontend/src/views/reports/ExportTab.tsx
- *
- * Unified export panel — replaces VyaparExport.tsx.
- * Covers:
- *   - "Our Format" (date range → CSV or JSON, moved from History tab)
- *   - "Vyapar Format" (single day or date range → Vyapar-compatible CSV)
- */
-
 import React, { useState } from 'react';
+import { useAdminLock } from '../../context/AdminLockContext';
 
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 
@@ -41,7 +33,6 @@ async function downloadFile(url: string, filename: string): Promise<void> {
   URL.revokeObjectURL(blobUrl);
 }
 
-// ── Shared status display ─────────────────────────────────────────────────
 function Status({ ok, msg }: { ok: boolean | null; msg: string }) {
   if (ok === null) return null;
   return (
@@ -57,13 +48,13 @@ function Status({ ok, msg }: { ok: boolean | null; msg: string }) {
   );
 }
 
-// ── Section: Our Format ───────────────────────────────────────────────────
 function OurFormatSection() {
   const today = new Date().toISOString().split('T')[0];
   const [from,    setFrom]    = useState('');
   const [to,      setTo]      = useState('');
   const [loading, setLoading] = useState<'csv' | 'json' | null>(null);
   const [status,  setStatus]  = useState<{ ok: boolean; msg: string } | null>(null);
+  const { requirePin, config: lockConfig } = useAdminLock();
 
   const label = () => {
     if (from && to)   return `${from}_to_${to}`;
@@ -72,7 +63,7 @@ function OurFormatSection() {
     return 'all';
   };
 
-  const run = async (fmt: 'csv' | 'json') => {
+  const doRun = async (fmt: 'csv' | 'json') => {
     setLoading(fmt);
     setStatus(null);
     try {
@@ -88,6 +79,11 @@ function OurFormatSection() {
     } finally {
       setLoading(null);
     }
+  };
+
+  const run = (fmt: 'csv' | 'json') => {
+    if (!lockConfig.enabled) { doRun(fmt); return; }
+    requirePin(() => doRun(fmt), 'Download Report', 'Enter admin PIN to export report');
   };
 
   return (
@@ -134,7 +130,13 @@ function OurFormatSection() {
 
       {status && <Status ok={status.ok} msg={status.msg} />}
 
-      {/* What's included */}
+      {lockConfig.enabled && (
+        <p className="text-zinc-600 text-[10px] mt-3 flex items-center gap-1">
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+          PIN required to download
+        </p>
+      )}
+
       <div className="mt-4 pt-4 border-t border-surface-border grid grid-cols-2 sm:grid-cols-4 gap-2">
         {['Summary block', 'Tax collected', 'Avg order value', 'Items sold',
           'Revenue excl. tax', 'Daily breakdown', 'Top items ranking', 'Full order detail'].map(f => (
@@ -150,15 +152,15 @@ function OurFormatSection() {
   );
 }
 
-// ── Section: Vyapar Format ────────────────────────────────────────────────
 function VyaparSection() {
   const today = new Date().toISOString().split('T')[0];
   const [from,    setFrom]    = useState(today);
   const [to,      setTo]      = useState(today);
   const [loading, setLoading] = useState(false);
   const [status,  setStatus]  = useState<{ ok: boolean; msg: string } | null>(null);
+  const { requirePin, config: lockConfig } = useAdminLock();
 
-  const run = async () => {
+  const doRun = async () => {
     setLoading(true);
     setStatus(null);
     try {
@@ -174,6 +176,11 @@ function VyaparSection() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const run = () => {
+    if (!lockConfig.enabled) { doRun(); return; }
+    requirePin(doRun, 'Download Vyapar Export', 'Enter admin PIN to export Vyapar CSV');
   };
 
   return (
@@ -207,7 +214,13 @@ function VyaparSection() {
 
       {status && <Status ok={status.ok} msg={status.msg} />}
 
-      {/* Column preview table */}
+      {lockConfig.enabled && (
+        <p className="text-zinc-600 text-[10px] mt-3 flex items-center gap-1">
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+          PIN required to download
+        </p>
+      )}
+
       <div className="mt-4 pt-4 border-t border-surface-border">
         <p className="text-zinc-600 text-[10px] mb-2 uppercase tracking-wider font-semibold">CSV columns</p>
         <div className="overflow-x-auto">
@@ -244,7 +257,6 @@ function VyaparSection() {
   );
 }
 
-// ── Icon helper ───────────────────────────────────────────────────────────
 function DownloadIcon() {
   return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -253,7 +265,6 @@ function DownloadIcon() {
   );
 }
 
-// ── Main export tab ───────────────────────────────────────────────────────
 export default function ExportTab() {
   return (
     <div className="space-y-5">
