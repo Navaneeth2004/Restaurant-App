@@ -43,14 +43,11 @@ export default function LoginScreen() {
     if (pin.length >= 4 && !loading) tryLogin(pin);
   };
 
-  // Layout: 1 2 3 / 4 5 6 / 7 8 9 / ⌫ 0 ✓
-  // The empty slot (was bottom-left) is now ⌫
-  // The ⌫ slot (was bottom-right) is now ✓ (Login)
   const cells: ('digit' | 'back' | 'login')[] = [
-    'digit','digit','digit',  // 1 2 3
-    'digit','digit','digit',  // 4 5 6
-    'digit','digit','digit',  // 7 8 9
-    'back', 'digit','login',  // ⌫ 0 ✓
+    'digit','digit','digit',
+    'digit','digit','digit',
+    'digit','digit','digit',
+    'back', 'digit','login',
   ];
   const digitValues = [1,2,3,4,5,6,7,8,9,0];
   let digitIdx = 0;
@@ -64,11 +61,11 @@ export default function LoginScreen() {
       <div className="relative w-full max-w-sm">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 overflow-hidden shadow-xl shadow-brand-500/30">
-            {logoUrl && (
+          {logoUrl && (
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 overflow-hidden shadow-xl shadow-brand-500/30">
               <img src={`${API_BASE}${logoUrl}`} alt="logo" className="w-full h-full object-cover" />
-            )}
-          </div>
+            </div>
+          )}
           <h1 className="font-display font-700 text-2xl text-white tracking-tight">
             {settings.restaurant_name}
           </h1>
@@ -87,7 +84,7 @@ export default function LoginScreen() {
             ))}
           </div>
 
-          {/* Numpad — 4 rows × 3 cols */}
+          {/* Numpad */}
           <div className="grid grid-cols-3 gap-2.5">
             {cells.map((type, i) => {
               if (type === 'digit') {
@@ -119,7 +116,6 @@ export default function LoginScreen() {
                 );
               }
 
-              // login button
               return (
                 <button
                   key={i}

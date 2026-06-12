@@ -1,15 +1,3 @@
-/**
- * AdminLockContext.tsx
- *
- * Provides:
- * - Whether the "admin lock" feature is enabled (persisted in settings)
- * - Lock timeout (minutes, 0 = always ask)
- * - Whether the admin panel is currently locked
- * - A PIN modal component to unlock
- * - A method to request pin entry (returns a Promise<boolean>)
- * - A manual lock button handler
- */
-
 import React, {
   createContext,
   useContext,
@@ -18,11 +6,11 @@ import React, {
   useCallback,
   useRef,
 } from 'react';
+import { useToast } from './ToastContext';
 
-// ── Types ─────────────────────────────────────────────────────────────────
 interface AdminLockConfig {
   enabled: boolean;
-  timeout_mins: number; // 0 = always lock when leaving admin; >0 = grace period
+  timeout_mins: number;
 }
 
 interface AdminLockCtx {
@@ -31,9 +19,7 @@ interface AdminLockCtx {
   isLocked: boolean;
   lock: () => void;
   unlock: () => void;
-  /** Returns true if pin is correct / feature disabled. Shows modal if needed. */
   requestPin: () => Promise<boolean>;
-  /** Show inline pin modal for sensitive actions (download, reset, etc.) */
   requirePin: (onSuccess: () => void, title?: string, subtitle?: string) => void;
 }
 
@@ -61,7 +47,6 @@ const Ctx = createContext<AdminLockCtx>({
   requirePin: () => {},
 });
 
-// ── PinModal ──────────────────────────────────────────────────────────────
 interface PinModalProps {
   title?: string;
   subtitle?: string;
@@ -72,15 +57,15 @@ interface PinModalProps {
 
 export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, onCancel, verifyFn }: PinModalProps) {
   const [pin, setPin] = useState('');
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [shake, setShake] = useState(false);
+  const toast = useToast();
 
   const handleDigit = (d: string) => {
     if (loading) return;
     const next = pin + d;
     if (next.length > 6) return;
     setPin(next);
-    setError('');
   };
 
   const handleBack = () => {
@@ -95,11 +80,12 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
       if (ok) {
         onSuccess(pin);
       } else {
-        setError('Incorrect PIN');
-        setTimeout(() => setPin(''), 400);
+        toast('Incorrect PIN — try again', 'error');
+        setShake(true);
+        setTimeout(() => { setPin(''); setShake(false); }, 400);
       }
     } catch {
-      setError('Error verifying PIN');
+      toast('Error verifying PIN', 'error');
     } finally {
       setLoading(false);
     }
@@ -131,7 +117,8 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
         </div>
 
         {/* PIN dots */}
-        <div className="flex justify-center gap-3 mb-5">
+        <div className={`flex justify-center gap-3 mb-5 ${shake ? 'animate-[wiggle_0.3s_ease-in-out]' : ''}`}
+          style={shake ? { animation: 'shake 0.3s ease-in-out' } : {}}>
           {[0,1,2,3,4,5].map(i => (
             <div key={i} className={`w-3 h-3 rounded-full border-2 transition-all duration-200 ${
               i < pin.length
@@ -140,10 +127,6 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
             }`} />
           ))}
         </div>
-
-        {error && (
-          <p className="text-center text-red-400 text-xs mb-3 animate-slide-up">{error}</p>
-        )}
 
         {/* Numpad */}
         <div className="grid grid-cols-3 gap-2">
@@ -204,21 +187,17 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
   );
 }
 
-// ── Provider ──────────────────────────────────────────────────────────────
 export function AdminLockProvider({ children, verifyPin }: {
   children: React.ReactNode;
   verifyPin: (pin: string) => Promise<boolean>;
 }) {
   const [config, setConfigState] = useState<AdminLockConfig>(loadConfig);
   const [isLocked, setIsLocked] = useState(false);
-  // For modal-based PIN requests (resolves Promise)
   const [showModal, setShowModal] = useState(false);
   const [modalProps, setModalProps] = useState<{ title?: string; subtitle?: string }>({});
   const resolveRef = useRef<((ok: boolean) => void) | null>(null);
-  // For inline requirePin (callback-based)
   const [inlineModal, setInlineModal] = useState(false);
   const [inlineProps, setInlineProps] = useState<{ title?: string; subtitle?: string; onSuccess: () => void }>({ onSuccess: () => {} });
-  // Track last unlock time for timeout
   const lastUnlockRef = useRef<number>(Date.now());
 
   const setConfig = useCallback((c: AdminLockConfig) => {
@@ -226,23 +205,15 @@ export function AdminLockProvider({ children, verifyPin }: {
     saveConfig(c);
   }, []);
 
-  const lock = useCallback(() => {
-    setIsLocked(true);
-  }, []);
+  const lock = useCallback(() => { setIsLocked(true); }, []);
+  const unlock = useCallback(() => { setIsLocked(false); lastUnlockRef.current = Date.now(); }, []);
 
-  const unlock = useCallback(() => {
-    setIsLocked(false);
-    lastUnlockRef.current = Date.now();
-  }, []);
-
-  /** Check if grace period has passed */
   const isExpired = useCallback(() => {
     if (config.timeout_mins <= 0) return true;
     const elapsed = (Date.now() - lastUnlockRef.current) / 60000;
     return elapsed > config.timeout_mins;
   }, [config.timeout_mins]);
 
-  /** Returns promise resolving to true if pin ok or feature disabled */
   const requestPin = useCallback((): Promise<boolean> => {
     if (!config.enabled) return Promise.resolve(true);
     if (!isLocked && !isExpired()) return Promise.resolve(true);
@@ -253,7 +224,6 @@ export function AdminLockProvider({ children, verifyPin }: {
     });
   }, [config.enabled, isLocked, isExpired]);
 
-  /** Show inline pin modal and call onSuccess if correct */
   const requirePin = useCallback((onSuccess: () => void, title?: string, subtitle?: string) => {
     if (!config.enabled) { onSuccess(); return; }
     setInlineProps({ title, subtitle, onSuccess });
@@ -290,7 +260,6 @@ export function AdminLockProvider({ children, verifyPin }: {
     }}>
       {children}
 
-      {/* Admin panel unlock modal */}
       {showModal && (
         <PinModal
           title="Admin PIN Required"
@@ -301,7 +270,6 @@ export function AdminLockProvider({ children, verifyPin }: {
         />
       )}
 
-      {/* Inline action PIN modal */}
       {inlineModal && (
         <PinModal
           title={inlineProps.title || 'Confirm Admin PIN'}

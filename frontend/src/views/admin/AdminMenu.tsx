@@ -113,7 +113,14 @@ export default function AdminMenu() {
     try { const [m,c] = await Promise.all([getMenuItems(), getCategories()]); setItems(m); setCategories(c); } catch {}
   }, []);
   useEffect(() => { load(); }, []);
-  useSocket('menu_updated', load);
+  // Guard ref so the socket callback always sees the live reordering/lastReorderTime values
+  const socketLoadRef = useRef(load);
+  useEffect(() => { socketLoadRef.current = load; }, [load]);
+  useSocket('menu_updated', useCallback(() => {
+    if (reordering.current) return;
+    if (Date.now() - lastReorderTime.current < 3000) return;
+    socketLoadRef.current();
+  }, []));
   useSocket('categories_updated', load);
 
   const toggleAvail = async (item: MenuItem) => {
