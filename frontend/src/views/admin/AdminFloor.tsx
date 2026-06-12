@@ -554,7 +554,7 @@ export default function AdminFloor() {
       </div>
 
       {/* ── MOBILE ── */}
-      <div className="flex md:hidden" style={{ flex:1, overflow:'hidden', flexDirection:'column' }}>
+      <div className="flex md:hidden" style={{ flex:1, overflowY:'auto', flexDirection:'column' }}>
         {/* Stats strip */}
         <div style={{ flexShrink:0, overflowX:'auto', display:'flex', gap:'8px', padding:'12px 16px', borderBottom:'1px solid #27272a', scrollbarWidth:'none' }}>
           {[
@@ -646,7 +646,7 @@ export default function AdminFloor() {
           })}
         </div>
 
-        <div style={{ flex:1, overflow:'hidden' }}>
+        <div style={{ flex:1, overflowY:'auto', padding:'16px' }}>
           {selectedTable ? (
             <DetailPanel
               table={selectedTable}

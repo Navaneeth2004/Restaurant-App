@@ -580,7 +580,7 @@ export default function AdminBackup() {
           </div>
         </div>
 
-        {status !== null && !status.configured && !showCreds && (
+        {status !== null && !status.connected && !showCreds && (
           <div className="p-4 border-b border-surface-border">
             <div className="flex items-center justify-between mb-3">
               <p className="text-zinc-300 text-xs font-semibold">Setup Guide — Google Drive Backup</p>

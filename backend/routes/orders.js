@@ -253,16 +253,23 @@ router.patch('/:id/deliver', (req, res) => {
 });
 
 // ── PATCH close order with payment details ─────────────────────────────────
-// Protected against concurrent double-close: if two waiters both hit this
-// endpoint for the same order at the same time, only one will succeed.
+// Protected against concurrent double-close by locking on table_id, not orderId.
+// This prevents two devices from both closing multiple rounds of the same table.
 router.patch('/:id/close', (req, res) => {
   const orderId = req.params.id;
 
-  // Fast-path: if already being closed, return gracefully
-  if (_closingOrders.has(orderId)) {
-    return res.status(409).json({ error: 'This order is already being closed. Please wait.' });
+  // Resolve the table_id early so we can lock on the table, not the order.
+  // Multiple rounds for the same table have different order IDs, so locking
+  // on orderId alone lets two concurrent requests slip through.
+  const orderRow = db.prepare('SELECT table_id FROM orders WHERE id = ?').get(orderId);
+  if (!orderRow) return res.status(404).json({ error: 'Order not found' });
+
+  const lockKey = `table:${orderRow.table_id}`;
+
+  if (_closingOrders.has(lockKey)) {
+    return res.status(409).json({ error: 'This table is already being closed. Please wait.' });
   }
-  _closingOrders.add(orderId);
+  _closingOrders.add(lockKey);
 
   const { payment_method, payment_details, change_amount, customer_name, customer_phone } = req.body || {};
 
@@ -314,8 +321,8 @@ router.patch('/:id/close', (req, res) => {
     }
 
     // Emit even if already closed so the second waiter's UI also clears
-    const orderRow = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
-    req.io.emit('order_closed', { orderId, tableId: orderRow?.table_id });
+    const finalOrder = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
+    req.io.emit('order_closed', { orderId, tableId: finalOrder?.table_id });
     req.io.emit('tables_updated');
 
     if (result.alreadyClosed) {
@@ -328,7 +335,7 @@ router.patch('/:id/close', (req, res) => {
     console.error('[Orders] Close error:', err.message, err.stack);
     res.status(500).json({ error: `Failed to close order: ${err.message}` });
   } finally {
-    _closingOrders.delete(orderId);
+    _closingOrders.delete(lockKey);
   }
 });
 
