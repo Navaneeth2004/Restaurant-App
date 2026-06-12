@@ -14,7 +14,11 @@ const db      = require('../db/database');
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
 })();
 
+// ── In-memory guards ──────────────────────────────────────────────────────
+// Prevents two concurrent POST /orders for the same table racing each other
 const _pendingTables = new Set();
+// Prevents two concurrent PATCH /close for the same order
+const _closingOrders = new Set();
 
 function getOrderWithItems(orderId) {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
@@ -249,10 +253,21 @@ router.patch('/:id/deliver', (req, res) => {
 });
 
 // ── PATCH close order with payment details ─────────────────────────────────
+// Protected against concurrent double-close: if two waiters both hit this
+// endpoint for the same order at the same time, only one will succeed.
 router.patch('/:id/close', (req, res) => {
+  const orderId = req.params.id;
+
+  // Fast-path: if already being closed, return gracefully
+  if (_closingOrders.has(orderId)) {
+    return res.status(409).json({ error: 'This order is already being closed. Please wait.' });
+  }
+  _closingOrders.add(orderId);
+
   const { payment_method, payment_details, change_amount, customer_name, customer_phone } = req.body || {};
 
   try {
+    // Ensure columns exist (idempotent)
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
@@ -260,8 +275,14 @@ router.patch('/:id/close', (req, res) => {
     try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
 
     const close = db.transaction(() => {
-      const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
-      if (!order) return false;
+      const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
+      if (!order) return { notFound: true };
+
+      // ── Idempotency: already closed → return success without erroring ──
+      // This handles the "two waiters both clicked pay" scenario gracefully.
+      if (order.status === 'closed') {
+        return { alreadyClosed: true, table_id: order.table_id };
+      }
 
       const payMethod  = payment_method  || 'cash';
       const payDetails = payment_details ? JSON.stringify(payment_details) : null;
@@ -269,6 +290,7 @@ router.patch('/:id/close', (req, res) => {
       const custName   = customer_name  || null;
       const custPhone  = customer_phone || null;
 
+      // Close all active/delivered orders for this table atomically
       db.prepare(`
         UPDATE orders
         SET status = 'closed',
@@ -286,15 +308,27 @@ router.patch('/:id/close', (req, res) => {
     });
 
     const result = close();
-    if (!result) return res.status(404).json({ error: 'Order not found' });
 
-    const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
-    req.io.emit('order_closed', { orderId: req.params.id, tableId: order?.table_id });
+    if (result.notFound) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Emit even if already closed so the second waiter's UI also clears
+    const orderRow = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
+    req.io.emit('order_closed', { orderId, tableId: orderRow?.table_id });
     req.io.emit('tables_updated');
+
+    if (result.alreadyClosed) {
+      // Second waiter: table was already paid — return success so their UI clears normally
+      return res.json({ success: true, note: 'Order was already closed by another device.' });
+    }
+
     res.json({ success: true });
   } catch (err) {
     console.error('[Orders] Close error:', err.message, err.stack);
     res.status(500).json({ error: `Failed to close order: ${err.message}` });
+  } finally {
+    _closingOrders.delete(orderId);
   }
 });
 

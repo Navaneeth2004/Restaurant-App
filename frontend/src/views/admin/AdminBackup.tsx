@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import ConfirmModal from '../../components/ConfirmModal';
 
 const API = process.env.REACT_APP_API_URL || window.location.origin;
 
@@ -30,7 +31,14 @@ interface DriveStatus {
   last_filename: string | null;
   folder_name:   string | null;
   schedule:      string;
-  redirect_uri:  string; // exact URI the server will use
+  redirect_uri:  string;
+}
+
+interface LocalStatus {
+  folder:        string | null;
+  schedule:      string;
+  last_backup:   string | null;
+  last_filename: string | null;
 }
 
 function timeAgo(iso: string): string {
@@ -51,6 +59,7 @@ const SCHEDULES = [
   { key: 'daily', label: 'Daily' },
 ];
 
+// ── Icon helpers ──────────────────────────────────────────────────────────
 const IconDownload = ({ className = 'w-4 h-4' }: { className?: string }) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
 );
@@ -120,19 +129,160 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// ── Factory Reset Modal ───────────────────────────────────────────────────
+// Three-step confirmation: checkbox → confirm modal → type phrase
+interface ResetModalProps { onClose: () => void; onDone: () => void; }
+
+function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
+  const PHRASE = 'RESET EVERYTHING';
+  const [step,    setStep]    = useState<1 | 2 | 3>(1);
+  const [typed,   setTyped]   = useState('');
+  const [loading, setLoading] = useState(false);
+  const [err,     setErr]     = useState('');
+
+  const doReset = async () => {
+    if (typed !== PHRASE) { setErr(`Type exactly: ${PHRASE}`); return; }
+    setLoading(true); setErr('');
+    try {
+      await authedJson(`${API}/api/reset`, { method: 'POST', body: JSON.stringify({ confirm: PHRASE }) });
+      onDone();
+    } catch (e: any) {
+      setErr(e.message || 'Reset failed');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="rounded-xl border border-red-500/40 bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl" onClick={e => e.stopPropagation()}>
+
+        {/* Step 1: Warning */}
+        {step === 1 && (
+          <>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/25 flex items-center justify-center flex-shrink-0">
+                <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-red-400 text-sm">Factory Reset</h3>
+                <p className="text-zinc-400 text-xs leading-relaxed mt-1">
+                  This will permanently delete all order history, clear all table states, and remove all uploaded photos and logos.
+                </p>
+              </div>
+            </div>
+            <div className="rounded-lg bg-red-500/8 border border-red-500/20 p-3 mb-4 space-y-1.5 text-xs text-red-400/80">
+              <p className="font-semibold text-red-400">What gets deleted:</p>
+              <p>• All orders and order history</p>
+              <p>• All food photos and the restaurant logo</p>
+              <p>• Table statuses reset to empty</p>
+              <p className="font-semibold text-emerald-400/80 pt-1">What is kept:</p>
+              <p>• Menu items and categories</p>
+              <p>• Staff and PINs</p>
+              <p>• Restaurant settings and brand color</p>
+            </div>
+            <p className="text-zinc-600 text-xs mb-4">Take a backup first if you need to keep any history.</p>
+            <div className="flex gap-2">
+              <button className="btn flex-1" onClick={onClose}>Cancel</button>
+              <button className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25" onClick={() => setStep(2)}>
+                I understand, continue
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Step 2: Second confirmation modal embedded */}
+        {step === 2 && (
+          <>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/25 flex items-center justify-center flex-shrink-0">
+                <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-red-400 text-sm">Are you absolutely sure?</h3>
+                <p className="text-zinc-400 text-xs leading-relaxed mt-1">
+                  This action cannot be undone. There is no undo, no recovery, no second chance.
+                </p>
+              </div>
+            </div>
+            <div className="rounded-lg bg-zinc-800/60 border border-zinc-700 p-3 mb-4">
+              <p className="text-zinc-300 text-xs font-semibold mb-0.5">Did you take a backup?</p>
+              <p className="text-zinc-500 text-xs">Use the Download Backup button above before proceeding.</p>
+            </div>
+            <div className="flex gap-2">
+              <button className="btn flex-1" onClick={onClose}>No, cancel</button>
+              <button className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25" onClick={() => setStep(3)}>
+                Yes, I have a backup
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Step 3: Type the confirmation phrase */}
+        {step === 3 && (
+          <>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/25 flex items-center justify-center flex-shrink-0">
+                <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-red-400 text-sm">Final confirmation</h3>
+                <p className="text-zinc-400 text-xs leading-relaxed mt-1">
+                  Type <span className="font-mono font-bold text-red-300 select-all">{PHRASE}</span> to confirm the reset.
+                </p>
+              </div>
+            </div>
+            <input
+              className="input w-full mb-3 font-mono text-red-300 border-red-500/30 focus:border-red-500/60"
+              placeholder={PHRASE}
+              value={typed}
+              onChange={e => { setTyped(e.target.value); setErr(''); }}
+              autoFocus
+              spellCheck={false}
+              autoComplete="off"
+            />
+            {err && <p className="text-red-400 text-xs mb-3">{err}</p>}
+            <div className="flex gap-2">
+              <button className="btn flex-1" onClick={onClose} disabled={loading}>Cancel</button>
+              <button
+                className="btn flex-1 bg-red-600 border-red-700 text-white hover:bg-red-700 disabled:opacity-40"
+                onClick={doReset}
+                disabled={loading || typed !== PHRASE}
+              >
+                {loading ? <><Spinner /> Resetting…</> : 'Reset Now'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main AdminBackup component ────────────────────────────────────────────
 export default function AdminBackup() {
   const [status,        setStatus]        = useState<DriveStatus | null>(null);
+  const [localStatus,   setLocalStatus]   = useState<LocalStatus | null>(null);
   const [downloading,   setDownloading]   = useState(false);
   const [uploading,     setUploading]     = useState(false);
   const [connecting,    setConnecting]    = useState(false);
   const [restoring,     setRestoring]     = useState(false);
   const [savingCreds,   setSavingCreds]   = useState(false);
   const [savingSched,   setSavingSched]   = useState(false);
+  const [saveLocalSched, setSaveLocalSched] = useState(false);
+  const [localBacking,  setLocalBacking]  = useState(false);
   const [showCreds,     setShowCreds]     = useState(false);
+  const [showDriveGuide, setShowDriveGuide] = useState(false);
   const [clientId,      setClientId]      = useState('');
   const [clientSecret,  setClientSecret]  = useState('');
   const [selectedSched, setSelectedSched] = useState('off');
+  const [selectedLocalSched, setSelectedLocalSched] = useState('off');
+  const [localFolder,   setLocalFolder]   = useState('');
   const [msg,           setMsg]           = useState<{ ok: boolean; text: string } | null>(null);
+  const [showResetPanel, setShowResetPanel] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  // Hidden reset: click version text 5 times quickly
+  const [secretClicks,   setSecretClicks]  = useState(0);
+  const secretTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
 
   const flash = (ok: boolean, text: string) => { setMsg({ ok, text }); setTimeout(() => setMsg(null), 7000); };
@@ -145,7 +295,16 @@ export default function AdminBackup() {
     } catch {}
   }, []);
 
-  useEffect(() => { loadStatus(); }, []);
+  const loadLocalStatus = useCallback(async () => {
+    try {
+      const d = await authedJson(`${API}/api/backup/local/status`);
+      setLocalStatus(d);
+      setSelectedLocalSched(d.schedule || 'off');
+      if (d.folder) setLocalFolder(d.folder);
+    } catch {}
+  }, []);
+
+  useEffect(() => { loadStatus(); loadLocalStatus(); }, []);
 
   useEffect(() => {
     const h = (e: MessageEvent) => {
@@ -154,6 +313,20 @@ export default function AdminBackup() {
     window.addEventListener('message', h);
     return () => window.removeEventListener('message', h);
   }, []);
+
+  // Secret click handler — 5 clicks within 2 seconds reveals reset
+  const handleSecretClick = () => {
+    setSecretClicks(n => {
+      const next = n + 1;
+      if (secretTimer.current) clearTimeout(secretTimer.current);
+      if (next >= 5) {
+        setShowResetPanel(true);
+        return 0;
+      }
+      secretTimer.current = setTimeout(() => setSecretClicks(0), 2000);
+      return next;
+    });
+  };
 
   const handleDownload = async () => {
     setDownloading(true);
@@ -194,7 +367,6 @@ export default function AdminBackup() {
     if (!clientId.trim() || !clientSecret.trim()) { flash(false, 'Both fields are required.'); return; }
     setSavingCreds(true);
     try {
-      // FIX: only send client_id and client_secret — backend derives redirect_uri from request
       await authedJson(`${API}/api/backup/gdrive/credentials`, {
         method: 'PUT',
         body: JSON.stringify({ client_id: clientId.trim(), client_secret: clientSecret.trim() }),
@@ -237,6 +409,29 @@ export default function AdminBackup() {
     finally { setSavingSched(false); }
   };
 
+  const handleSaveLocalSchedule = async () => {
+    setSaveLocalSched(true);
+    try {
+      await authedJson(`${API}/api/backup/local/config`, {
+        method: 'PUT',
+        body: JSON.stringify({ folder: localFolder.trim() || null, schedule: selectedLocalSched }),
+      });
+      flash(true, selectedLocalSched === 'off' ? 'Local auto-backup disabled.' : `Local auto-backup: ${SCHEDULES.find(s=>s.key===selectedLocalSched)?.label}`);
+      loadLocalStatus();
+    } catch (e: any) { flash(false, e.message || 'Failed'); }
+    finally { setSaveLocalSched(false); }
+  };
+
+  const handleLocalBackupNow = async () => {
+    setLocalBacking(true);
+    try {
+      const d = await authedJson(`${API}/api/backup/local/now`, { method:'POST', body:JSON.stringify({ folder: localFolder.trim() || null }) });
+      flash(true, `Saved to ${d.path}`);
+      loadLocalStatus();
+    } catch (e: any) { flash(false, e.message || 'Local backup failed'); }
+    finally { setLocalBacking(false); }
+  };
+
   const handleDisconnect = async () => {
     if (!window.confirm('Disconnect Google Drive? Backups in Drive will not be deleted.')) return;
     try { await authedJson(`${API}/api/backup/gdrive/disconnect`, { method:'DELETE' }); flash(true, 'Disconnected.'); loadStatus(); }
@@ -248,6 +443,7 @@ export default function AdminBackup() {
 
   return (
     <div className="space-y-4 max-w-xl">
+      {/* Header */}
       <div>
         <h3 className="font-bold text-white text-base mb-1">Backup &amp; Restore</h3>
         <p className="text-zinc-500 text-xs leading-relaxed">
@@ -299,6 +495,79 @@ export default function AdminBackup() {
         </div>
       </Card>
 
+      {/* ── Local Auto-Backup ── */}
+      <Card className="overflow-hidden">
+        <div className="p-4 border-b border-surface-border">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <p className="text-white text-sm font-semibold">Local Auto-Backup</p>
+            <div className="flex items-center gap-2">
+              {localStatus?.schedule && localStatus.schedule !== 'off' && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/15 border border-brand-500/25 text-brand-400">
+                  {SCHEDULES.find(s => s.key === localStatus.schedule)?.label}
+                </span>
+              )}
+            </div>
+          </div>
+          <p className="text-zinc-500 text-xs leading-relaxed">
+            Automatically save backups to a folder on this computer. Keeps the last 7 backups.
+          </p>
+          {localStatus?.last_backup && (
+            <p className="text-zinc-600 text-xs mt-1">
+              Last saved: <span className="text-zinc-400">{timeAgo(localStatus.last_backup)}</span>
+              {localStatus.last_filename && <span className="text-zinc-600"> — {localStatus.last_filename}</span>}
+            </p>
+          )}
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="label">Backup Folder Path</label>
+            <input
+              className="input text-xs font-mono"
+              placeholder="e.g. C:\Backups\POS  or  /home/user/pos-backups"
+              value={localFolder}
+              onChange={e => setLocalFolder(e.target.value)}
+            />
+            <p className="text-zinc-600 text-[10px] mt-1">Leave blank to use backend/data/backups/ (inside the app folder)</p>
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <IconClock />
+              <p className="text-white text-xs font-semibold">Auto-backup Schedule</p>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5 mb-3">
+              {SCHEDULES.map(s => (
+                <button key={s.key} onClick={() => setSelectedLocalSched(s.key)}
+                  className={`py-2 rounded-lg border text-xs font-medium transition-all ${
+                    selectedLocalSched === s.key
+                      ? 'bg-brand-500 border-brand-600 text-white'
+                      : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'
+                  }`}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                className="btn btn-brand btn-sm flex items-center gap-2"
+                onClick={handleSaveLocalSchedule}
+                disabled={saveLocalSched}
+              >
+                {saveLocalSched ? <><Spinner />Saving…</> : 'Save Schedule'}
+              </button>
+              <button
+                className="btn btn-sm flex items-center gap-2"
+                onClick={handleLocalBackupNow}
+                disabled={localBacking}
+              >
+                {localBacking ? <><Spinner />Backing up…</> : <><IconDownload className="w-3.5 h-3.5" />Back Up Now</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Card>
+
       {/* ── Google Drive ── */}
       <Card className="overflow-hidden">
         {/* Header */}
@@ -323,31 +592,96 @@ export default function AdminBackup() {
           </div>
         </div>
 
-        {/* Setup notice */}
+        {/* Step-by-step setup guide */}
         {status !== null && !status.configured && !showCreds && (
           <div className="p-4 border-b border-surface-border">
-            <p className="text-zinc-300 text-xs font-semibold mb-1">One-time setup required</p>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-zinc-300 text-xs font-semibold">Setup Guide — Google Drive Backup</p>
+              <button
+                onClick={() => setShowDriveGuide(g => !g)}
+                className="text-[10px] text-zinc-500 hover:text-zinc-300 flex items-center gap-1 transition-colors"
+              >
+                {showDriveGuide ? 'Hide' : 'Show steps'}
+                <svg className={`w-3 h-3 transition-transform ${showDriveGuide ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+              </button>
+            </div>
             <p className="text-zinc-500 text-xs leading-relaxed mb-3">
               Needs a free Google Cloud OAuth key — takes about 5 minutes, done once.
             </p>
-            <ol className="text-zinc-500 text-xs space-y-1 mb-3 pl-4 list-decimal">
-              <li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-brand-400 underline underline-offset-2">Google Cloud Console → Credentials</a></li>
-              <li>Create credentials → OAuth 2.0 Client ID → Web application</li>
-              <li>Add this as an Authorised redirect URI:</li>
-            </ol>
-            <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 mb-3">
-              <code className="text-zinc-200 text-[11px] break-all flex-1 select-all">{redirectUri}</code>
-              <CopyButton text={redirectUri} />
-            </div>
-            <p className="text-amber-400 text-[10px] leading-relaxed mb-3">
-              This URI changes if you switch between localhost and the network IP. Always copy from here — do not type it manually.
-            </p>
-            <button className="btn btn-brand btn-sm" onClick={() => setShowCreds(true)}>Enter credentials</button>
+
+            {showDriveGuide && (
+              <div className="space-y-3 mb-4">
+                {[
+                  {
+                    n: 1,
+                    title: 'Open Google Cloud Console',
+                    body: <>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="text-brand-400 underline underline-offset-2">console.cloud.google.com</a>. Sign in with your Google account (any Gmail account works — no paid plan needed).</>,
+                  },
+                  {
+                    n: 2,
+                    title: 'Create a new project',
+                    body: <>Click the project dropdown at the top → <span className="text-zinc-300 font-medium">New Project</span>. Name it anything, e.g. "Restaurant POS". Click <span className="text-zinc-300 font-medium">Create</span>.</>,
+                  },
+                  {
+                    n: 3,
+                    title: 'Enable the Google Drive API',
+                    body: <>In the left menu go to <span className="text-zinc-300 font-medium">APIs &amp; Services → Library</span>. Search for <span className="font-mono text-zinc-300">Google Drive API</span> and click <span className="text-zinc-300 font-medium">Enable</span>.</>,
+                  },
+                  {
+                    n: 4,
+                    title: 'Configure the OAuth consent screen',
+                    body: <>Go to <span className="text-zinc-300 font-medium">APIs &amp; Services → OAuth consent screen</span>. Choose <span className="text-zinc-300 font-medium">External</span>, fill in an app name (e.g. "Restaurant POS"), your email, and click Save. On the Scopes page just click Save. On the Test users page add your own Gmail address, then click Save.</>,
+                  },
+                  {
+                    n: 5,
+                    title: 'Create OAuth credentials',
+                    body: <>Go to <span className="text-zinc-300 font-medium">APIs &amp; Services → Credentials</span> → <span className="text-zinc-300 font-medium">+ Create Credentials → OAuth 2.0 Client ID</span>. Set Application type to <span className="text-zinc-300 font-medium">Web application</span>. Under <span className="text-zinc-300 font-medium">Authorised redirect URIs</span>, paste the URI below exactly.</>,
+                  },
+                  {
+                    n: 6,
+                    title: 'Copy your Client ID and Client Secret',
+                    body: <>After saving you'll see a popup with <span className="text-zinc-300 font-medium">Client ID</span> and <span className="text-zinc-300 font-medium">Client Secret</span>. Copy both and paste them into the form below.</>,
+                  },
+                ].map(step => (
+                  <div key={step.n} className="flex gap-3">
+                    <div className="w-5 h-5 rounded-full bg-brand-500/20 border border-brand-500/30 text-brand-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                      {step.n}
+                    </div>
+                    <div>
+                      <p className="text-zinc-200 text-xs font-semibold mb-0.5">{step.title}</p>
+                      <p className="text-zinc-500 text-xs leading-relaxed">{step.body}</p>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="mt-3">
+                  <p className="text-zinc-500 text-xs mb-1.5">Your redirect URI (copy this into Google Console — Step 5):</p>
+                  <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2">
+                    <code className="text-zinc-200 text-[11px] break-all flex-1 select-all">{redirectUri}</code>
+                    <CopyButton text={redirectUri} />
+                  </div>
+                  <p className="text-amber-400 text-[10px] leading-relaxed mt-1.5">
+                    This URI changes if you switch between localhost and the network IP. Always copy from here.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {!showDriveGuide && (
+              <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 mb-3">
+                <code className="text-zinc-200 text-[11px] break-all flex-1 select-all">{redirectUri}</code>
+                <CopyButton text={redirectUri} />
+              </div>
+            )}
+
+            <button className="btn btn-brand btn-sm" onClick={() => { setShowCreds(true); setShowDriveGuide(false); }}>
+              Enter credentials
+            </button>
           </div>
         )}
 
         {/* Credential form */}
-        {(showCreds || (status !== null && !status.configured && showCreds)) && (
+        {showCreds && (
           <div className="p-4 border-b border-surface-border space-y-3">
             <p className="text-white text-xs font-semibold">{status?.configured ? 'Update credentials' : 'Enter OAuth credentials'}</p>
             <div>
@@ -370,9 +704,8 @@ export default function AdminBackup() {
         {/* Configured but not connected */}
         {status?.configured && !status.connected && !showCreds && (
           <div className="p-4 border-b border-surface-border space-y-3">
-            {/* Always show the exact redirect URI so they can verify it matches */}
             <div>
-              <p className="text-zinc-500 text-xs mb-1">Redirect URI in Google Console must match exactly:</p>
+              <p className="text-zinc-500 text-xs mb-1">Redirect URI must match exactly in Google Console:</p>
               <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2">
                 <code className="text-zinc-200 text-[11px] break-all flex-1 select-all">{redirectUri}</code>
                 <CopyButton text={redirectUri} />
@@ -399,12 +732,12 @@ export default function AdminBackup() {
           </div>
         )}
 
-        {/* Schedule — shown whenever configured */}
+        {/* Schedule */}
         {status?.configured && (
           <div className="p-4 border-b border-surface-border">
             <div className="flex items-center gap-2 mb-2">
               <IconClock />
-              <p className="text-white text-xs font-semibold">Auto-backup Schedule</p>
+              <p className="text-white text-xs font-semibold">Drive Auto-backup Schedule</p>
             </div>
             {!status.connected && <p className="text-zinc-600 text-xs mb-2">Connect Google Drive first to use auto-backup.</p>}
             <div className="grid grid-cols-3 gap-1.5 mb-3">
@@ -443,6 +776,57 @@ export default function AdminBackup() {
           stop the POS, replace <span className="font-mono text-zinc-400">backend/data/restaurant.db</span> and <span className="font-mono text-zinc-400">uploads/</span> with files from the zip, then restart.
         </p>
       </div>
+
+      {/* ── Hidden factory reset trigger ── */}
+      {/* Clicking the version string 5× quickly reveals it */}
+      <div className="text-center pt-2">
+        <span
+          className="text-zinc-800 text-[10px] cursor-default select-none"
+          onClick={handleSecretClick}
+          title=""
+        >
+          v1.0.0
+        </span>
+      </div>
+
+      {showResetPanel && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 animate-slide-up">
+          <div className="flex items-start gap-3">
+            <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+            <div className="flex-1">
+              <p className="text-red-400 text-xs font-semibold">Danger Zone</p>
+              <p className="text-zinc-600 text-xs mt-0.5 leading-relaxed">
+                Factory reset wipes all order history and images. Staff and menu are kept.
+                Take a backup before proceeding.
+              </p>
+            </div>
+            <button
+              className="btn btn-sm bg-transparent border-transparent text-zinc-600 hover:text-zinc-400 flex-shrink-0 text-xs"
+              onClick={() => setShowResetPanel(false)}
+            >
+              Hide
+            </button>
+          </div>
+          <button
+            className="mt-3 w-full py-2 rounded-lg border border-red-500/30 bg-red-500/8 text-red-400 text-xs font-semibold hover:bg-red-500/15 transition-colors"
+            onClick={() => setShowResetModal(true)}
+          >
+            Factory Reset…
+          </button>
+        </div>
+      )}
+
+      {/* Factory reset modal (3-step) */}
+      {showResetModal && (
+        <FactoryResetModal
+          onClose={() => setShowResetModal(false)}
+          onDone={() => {
+            setShowResetModal(false);
+            setShowResetPanel(false);
+            flash(true, 'Factory reset complete. All orders and images have been wiped.');
+          }}
+        />
+      )}
     </div>
   );
 }

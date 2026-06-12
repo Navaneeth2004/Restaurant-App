@@ -23,25 +23,40 @@ interface TableSession {
   customerPhone: string | null;
 }
 
+/**
+ * Groups orders into dining sessions.
+ *
+ * Key rule: once a table's orders are all 'closed', any subsequent order
+ * for that table is ALWAYS a new session — regardless of time gap.
+ * This prevents a post-billing dine from being lumped in as "round 2".
+ *
+ * Within a session, multiple rounds (active/delivered orders that were
+ * open simultaneously) are merged together.
+ */
 function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
+  // Sort oldest-first so we process rounds in order
   const sorted = [...orders].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
 
   const sessions: TableSession[] = [];
-  const tableLastOrder: Record<string, number> = {};
+
+  // For each table, track the index of the currently-open session
+  const tableOpenSession: Record<string, number> = {};
 
   for (const order of sorted) {
     const key = order.table_id;
-    const existingIdx = tableLastOrder[key];
+    const existingIdx = tableOpenSession[key];
 
     if (existingIdx !== undefined) {
       const existing = sessions[existingIdx];
-      const lastOrderTime = new Date(existing.endedAt).getTime();
-      const thisOrderTime = new Date(order.created_at).getTime();
-      const diffHours = (thisOrderTime - lastOrderTime) / (1000 * 60 * 60);
 
-      if (diffHours < 4) {
+      // If the current session already has a 'closed' order that was
+      // the billing event, this new order must start a fresh session.
+      const sessionWasBilled = existing.orders.some(o => o.status === 'closed');
+
+      if (!sessionWasBilled) {
+        // Still within the same dining: merge this round in
         existing.orders.push(order);
         existing.endedAt = order.created_at;
         existing.totalAmount += order.items.reduce((s, i) => s + i.price * i.quantity, 0);
@@ -66,7 +81,10 @@ function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       }
     }
 
-    const allItems = order.items.map(i => ({ name: i.name, price: i.price, quantity: i.quantity, note: i.note || '' }));
+    // Start a new session
+    const allItems = order.items.map(i => ({
+      name: i.name, price: i.price, quantity: i.quantity, note: i.note || '',
+    }));
     let parsedPayDetails: any = null;
     try {
       if ((order as any).payment_details) {
@@ -76,7 +94,7 @@ function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       }
     } catch {}
     const session: TableSession = {
-      sessionKey: `${order.table_id}-${order.created_at}`,
+      sessionKey: `${order.table_id}-${order.created_at}-${sessions.length}`,
       tableId: order.table_id,
       orders: [order],
       totalAmount: order.items.reduce((s, i) => s + i.price * i.quantity, 0),
@@ -88,7 +106,7 @@ function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       customerName: (order as any).customer_name || null,
       customerPhone: (order as any).customer_phone || null,
     };
-    tableLastOrder[key] = sessions.length;
+    tableOpenSession[key] = sessions.length;
     sessions.push(session);
   }
 
@@ -145,28 +163,6 @@ function PaymentBadge({ method }: { method: string | null }) {
       {c.icon}
       {c.label}
     </span>
-  );
-}
-
-// ── Split details inline display ─────────────────────────────────────────
-function SplitDetails({ details, sym }: { details: any; sym: string }) {
-  if (!details) return null;
-  let entries: { method: string; amount: number }[] = [];
-  try {
-    if (Array.isArray(details)) entries = details;
-    else if (typeof details === 'string') entries = JSON.parse(details);
-  } catch { return null; }
-  if (!entries.length) return null;
-
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      {entries.map((e, i) => (
-        <span key={i} className="inline-flex items-center gap-1 text-[10px] font-medium text-zinc-400 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700">
-          <PaymentBadge method={e.method} />
-          <span className="font-mono text-zinc-300">{sym}{e.amount.toFixed(2)}</span>
-        </span>
-      ))}
-    </div>
   );
 }
 
@@ -255,9 +251,7 @@ function ReprintBill({ session, onClose }: ReprintBillProps) {
               <span style={{ fontFamily: sans, fontSize: 11, color: '#999' }}>
                 {session.allItems.reduce((s, i) => s + i.quantity, 0)} items
               </span>
-              {session.paymentMethod && (
-                <PaymentBadge method={session.paymentMethod} />
-              )}
+              {session.paymentMethod && <PaymentBadge method={session.paymentMethod} />}
             </div>
           </div>
 
@@ -366,7 +360,6 @@ function SessionRow({ session, sym, taxPct, brand }: {
   const isMultiRound = session.orders.length > 1;
   const orderIds = session.orders.map(o => o.id);
 
-  // Parse split details
   let splitEntries: { method: string; amount: number }[] = [];
   if (paymentMethod === 'split' && paymentDetails) {
     try {
@@ -410,7 +403,6 @@ function SessionRow({ session, sym, taxPct, brand }: {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-white text-sm font-semibold">Table {session.tableId}</span>
-              {/* Customer name shown inline without expanding */}
               {session.customerName && (
                 <span className="text-zinc-400 text-xs font-medium truncate max-w-[120px]" title={session.customerName}>
                   {session.customerName}
@@ -432,7 +424,6 @@ function SessionRow({ session, sym, taxPct, brand }: {
               <span className="text-zinc-500 text-xs">
                 {session.allItems.reduce((s, i) => s + i.quantity, 0)} items
               </span>
-              {/* Show split breakdown inline */}
               {paymentMethod === 'split' && splitEntries.length > 0 && (
                 <>
                   <span className="text-zinc-700 text-xs">·</span>
@@ -463,7 +454,6 @@ function SessionRow({ session, sym, taxPct, brand }: {
 
         {expanded && (
           <div className="border-t border-surface-border bg-surface-raised/50">
-            {/* Customer info in expanded view */}
             {(session.customerName || session.customerPhone) && (
               <div className="px-4 pt-3 pb-2 border-b border-surface-border/50">
                 <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-1.5">Customer</p>
@@ -524,7 +514,6 @@ function SessionRow({ session, sym, taxPct, brand }: {
                     <span>Payment method</span>
                     <PaymentBadge method={paymentMethod} />
                   </div>
-                  {/* Split breakdown in expanded view */}
                   {paymentMethod === 'split' && splitEntries.length > 0 && (
                     <div className="mt-1.5 space-y-1 pl-2">
                       {splitEntries.map((e, i) => (
@@ -620,15 +609,12 @@ export default function ReportsView() {
 
   const paymentBreakdown = (summary as any)?.paymentBreakdown as { payment_method: string; count: number; total: number }[] | undefined;
 
-  // ── Compute busiest hour from chart orders ────────────────────────────
-  // (We don't have hourly data in the 30-day chart, so we show day-level insights)
   const bestDay    = chart.reduce((best, d) => d.revenue > (best?.revenue ?? 0) ? d : best, chart[0] ?? null);
   const worstDay   = chart.filter(d => d.revenue > 0).reduce((worst, d) => d.revenue < (worst?.revenue ?? Infinity) ? d : worst, null as RevenueDay | null);
   const totalOrdersChart = chart.reduce((s, d) => s + d.orders, 0);
   const activeDays = chart.filter(d => d.orders > 0).length;
   const avgOrdersPerActiveDay = activeDays > 0 ? (totalOrdersChart / activeDays) : 0;
 
-  // Payment method spread across 30 days (from history if loaded, else today)
   const revenueGrowth = (() => {
     if (chart.length < 2) return null;
     const half = Math.floor(chart.length / 2);
@@ -717,13 +703,11 @@ export default function ReportsView() {
     </div>
   );
 
-  // ── 30-day insights panel (replaces Top Items + Today at a Glance) ───
   const InsightsPanel = () => (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
       <h3 className="font-bold text-white text-sm mb-1">30-Day Insights</h3>
       <p className="text-zinc-600 text-xs mb-4">Trends and patterns from the last month</p>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        {/* Best day */}
         <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
           <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">Best Day</p>
           {bestDay ? (
@@ -733,19 +717,16 @@ export default function ReportsView() {
             </>
           ) : <p className="text-zinc-700 text-xs">No data</p>}
         </div>
-        {/* Active days */}
         <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
           <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">Active Days</p>
           <p className="font-mono font-bold text-white text-base">{activeDays}<span className="text-zinc-600 text-xs font-normal"> / 30</span></p>
           <p className="text-zinc-500 text-[10px] mt-0.5">{Math.round((activeDays / 30) * 100)}% of the month</p>
         </div>
-        {/* Avg orders on active days */}
         <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
           <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">Avg Orders/Day</p>
           <p className="font-mono font-bold text-white text-base">{avgOrdersPerActiveDay.toFixed(1)}</p>
           <p className="text-zinc-500 text-[10px] mt-0.5">on active days</p>
         </div>
-        {/* Revenue trend */}
         <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
           <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">15-Day Trend</p>
           {revenueGrowth !== null ? (
@@ -757,7 +738,6 @@ export default function ReportsView() {
             </>
           ) : <p className="text-zinc-700 text-xs">Insufficient data</p>}
         </div>
-        {/* Avg order value over 30d */}
         <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
           <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">30-Day Avg Order</p>
           <p className="font-mono font-bold text-white text-base">
@@ -765,7 +745,6 @@ export default function ReportsView() {
           </p>
           <p className="text-zinc-500 text-[10px] mt-0.5">across {totalOrdersChart} orders</p>
         </div>
-        {/* Quietest day */}
         <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
           <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">Quietest Day</p>
           {worstDay ? (
@@ -779,12 +758,10 @@ export default function ReportsView() {
     </div>
   );
 
-  // ── Payment methods 30-day panel ──────────────────────────────────────
   const PaymentTrendsPanel = () => (
     <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
       <h3 className="font-bold text-white text-sm mb-1">Today's Overview</h3>
       <p className="text-zinc-600 text-xs mb-4">Live numbers for the current day</p>
-
       <div className="space-y-4">
         {[
           { label: 'Orders in kitchen', value: summary?.activeOrders ?? 0, max: Math.max(summary?.ordersCount ?? 1, summary?.activeOrders ?? 1, 1), color: '#f97316' },
@@ -806,7 +783,6 @@ export default function ReportsView() {
           );
         })}
       </div>
-
       {paymentBreakdown && paymentBreakdown.length > 0 && (
         <div className="mt-4 pt-4 border-t border-surface-border">
           <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-wider mb-2">Payment Methods Today</p>
@@ -823,7 +799,6 @@ export default function ReportsView() {
           </div>
         </div>
       )}
-
       <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-surface-border">
         <div className="rounded-lg bg-surface-raised p-3">
           <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1">Today Avg Order</p>
@@ -841,7 +816,6 @@ export default function ReportsView() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
       <div className="flex-shrink-0 flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-surface-border bg-surface-card/50">
         <h2 className="font-bold text-white text-sm">Reports</h2>
         <span className="text-zinc-500 text-xs hidden sm:block">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
@@ -859,7 +833,6 @@ export default function ReportsView() {
         </div>
       </div>
 
-      {/* ── ANALYTICS ── */}
       {section === 'analytics' && (
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -878,19 +851,15 @@ export default function ReportsView() {
               </div>
             ))}
           </div>
-
           <RevenueChart />
-
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <InsightsPanel />
             <PaymentTrendsPanel />
           </div>
-
           <OrderVolumeChart />
         </div>
       )}
 
-      {/* ── HISTORY ── */}
       {section === 'history' && (
         <div className="flex-1 overflow-y-auto p-4 sm:p-5">
           <div className="flex items-center gap-2 mb-4 flex-wrap">
