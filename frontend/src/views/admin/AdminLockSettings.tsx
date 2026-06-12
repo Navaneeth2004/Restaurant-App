@@ -87,7 +87,8 @@ export default function AdminLockSettings() {
               >
                 {t.label}
               </button>
-            ))}\n          </div>
+            ))}          
+            </div>
         </div>
       )}
     </div>
