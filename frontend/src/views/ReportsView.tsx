@@ -34,14 +34,11 @@ interface TableSession {
  * open simultaneously) are merged together.
  */
 function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
-  // Sort oldest-first so we process rounds in order
   const sorted = [...orders].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
 
   const sessions: TableSession[] = [];
-
-  // For each table, track the index of the currently-open session
   const tableOpenSession: Record<string, number> = {};
 
   for (const order of sorted) {
@@ -51,12 +48,18 @@ function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
     if (existingIdx !== undefined) {
       const existing = sessions[existingIdx];
 
-      // If the current session already has a 'closed' order that was
-      // the billing event, this new order must start a fresh session.
-      const sessionWasBilled = existing.orders.some(o => o.status === 'closed');
+      // Only start a new session if:
+      // 1. The existing session has a closed (billed) order AND
+      // 2. This order was created more than 5 minutes after the last order
+      //    in the session (meaning it's genuinely a new dining, not just
+      //    another round being closed in the same transaction)
+      const sessionHasClosed = existing.orders.some(o => o.status === 'closed');
+      const lastOrderTime = new Date(existing.endedAt).getTime();
+      const thisOrderTime = new Date(order.created_at).getTime();
+      const isNewDining = sessionHasClosed && (thisOrderTime - lastOrderTime) > 5 * 60 * 1000;
 
-      if (!sessionWasBilled) {
-        // Still within the same dining: merge this round in
+      if (!isNewDining) {
+        // Same dining — merge this round in
         existing.orders.push(order);
         existing.endedAt = order.created_at;
         existing.totalAmount += order.items.reduce((s, i) => s + i.price * i.quantity, 0);
@@ -754,65 +757,91 @@ export default function ReportsView() {
             </>
           ) : <p className="text-zinc-700 text-xs">No data</p>}
         </div>
+        <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
+          <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">Total Revenue</p>
+          <p className="font-mono font-bold text-brand-400 text-base">{sym}{totalRev.toFixed(2)}</p>
+          <p className="text-zinc-500 text-[10px] mt-0.5">last 30 days</p>
+        </div>
+        <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
+          <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">Best Streak</p>
+          {(() => {
+            let best = 0, cur = 0;
+            chart.forEach(d => { if (d.orders > 0) { cur++; best = Math.max(best, cur); } else cur = 0; });
+            return best > 0
+              ? <><p className="font-mono font-bold text-white text-base">{best} days</p><p className="text-zinc-500 text-[10px] mt-0.5">consecutive active days</p></>
+              : <p className="text-zinc-700 text-xs">No data</p>;
+          })()}
+        </div>
+        <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
+          <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">Est. Tax Collected</p>
+          <p className="font-mono font-bold text-white text-base">
+            {totalRev > 0 ? `${sym}${(totalRev * parseFloat(settings.tax_percent || '5') / 100).toFixed(2)}` : '—'}
+          </p>
+          <p className="text-zinc-500 text-[10px] mt-0.5">{settings.tax_percent || 5}% on {sym}{totalRev.toFixed(2)}</p>
+        </div>
       </div>
     </div>
   );
 
-  const PaymentTrendsPanel = () => (
-    <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
-      <h3 className="font-bold text-white text-sm mb-1">Today's Overview</h3>
-      <p className="text-zinc-600 text-xs mb-4">Live numbers for the current day</p>
-      <div className="space-y-4">
-        {[
-          { label: 'Orders in kitchen', value: summary?.activeOrders ?? 0, max: Math.max(summary?.ordersCount ?? 1, summary?.activeOrders ?? 1, 1), color: '#f97316' },
-          { label: 'Completed today',   value: summary?.ordersCount ?? 0,  max: Math.max(summary?.ordersCount ?? 1, 1), color: '#10b981' },
-          { label: 'Tables in use',     value: summary?.occupiedTables ?? 0, max: 8, color: '#3b82f6' },
-        ].map((row, i) => {
-          const pct = Math.min(100, row.max > 0 ? (row.value / row.max) * 100 : 0);
-          return (
-            <div key={i}>
-              <div className="flex justify-between items-center mb-1.5">
-                <span className="text-zinc-400 text-xs">{row.label}</span>
-                <span className="font-mono text-white text-sm font-bold">{row.value}</span>
-              </div>
-              <div className="h-2 bg-surface-raised rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-500"
-                  style={{ width: `${Math.max(pct, row.value > 0 ? 4 : 0)}%`, backgroundColor: row.color }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {paymentBreakdown && paymentBreakdown.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-surface-border">
-          <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-wider mb-2">Payment Methods Today</p>
-          <div className="space-y-2">
-            {paymentBreakdown.map((p, i) => (
-              <div key={i} className="flex items-center justify-between">
-                <PaymentBadge method={p.payment_method} />
-                <div className="flex items-center gap-2">
-                  <span className="text-zinc-500 text-xs">{p.count} orders</span>
-                  <span className="font-mono text-white text-xs font-semibold">{sym}{p.total.toFixed(2)}</span>
+  const BestDaysPanel = () => {
+    // Aggregate revenue and orders by day-of-week from the 30-day chart
+    const dowMap: Record<number, { revenue: number; orders: number; days: number }> = {};
+    for (let i = 0; i < 7; i++) dowMap[i] = { revenue: 0, orders: 0, days: 0 };
+    chart.forEach(d => {
+      const dow = new Date(d.day + 'T12:00:00').getDay(); // 0=Sun, 1=Mon...
+      dowMap[dow].revenue += d.revenue;
+      dowMap[dow].orders  += d.orders;
+      dowMap[dow].days    += 1;
+    });
+
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const maxAvgRev = Math.max(
+      ...Object.values(dowMap).map(d => d.days > 0 ? d.revenue / d.days : 0),
+      0.01
+    );
+
+    return (
+      <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
+        <h3 className="font-bold text-white text-sm mb-1">Best Days of the Week</h3>
+        <p className="text-zinc-600 text-xs mb-4">Average daily revenue by weekday — last 30 days</p>
+        <div className="space-y-3">
+          {Array.from({ length: 7 }, (_, i) => {
+            const d   = dowMap[i];
+            const avg = d.days > 0 ? d.revenue / d.days : 0;
+            const pct = maxAvgRev > 0 ? (avg / maxAvgRev) * 100 : 0;
+            const isToday = new Date().getDay() === i;
+            return (
+              <div key={i}>
+                <div className="flex justify-between items-center mb-1.5">
+                  <span className={`text-xs font-semibold ${isToday ? 'text-brand-400' : 'text-zinc-400'}`}>
+                    {dayNames[i]}{isToday ? ' ·today' : ''}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-zinc-500 text-xs">{d.orders} orders</span>
+                    <span className="font-mono text-white text-sm font-bold">
+                      {avg > 0 ? `${sym}${avg.toFixed(2)}` : '—'}
+                    </span>
+                  </div>
+                </div>
+                <div className="h-2 bg-surface-raised rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.max(pct, d.orders > 0 ? 2 : 0)}%`,
+                      backgroundColor: isToday ? 'var(--brand, #f97316)' : '#6366f1',
+                    }}
+                  />
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
-      )}
-      <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-surface-border">
-        <div className="rounded-lg bg-surface-raised p-3">
-          <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1">Today Avg Order</p>
-          <p className="font-mono font-bold text-white text-base break-all">
-            {summary && summary.ordersCount > 0 ? `${sym}${(summary.revenue / summary.ordersCount).toFixed(2)}` : '—'}
-          </p>
-        </div>
-        <div className="rounded-lg bg-surface-raised p-3">
-          <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1">30-Day Total</p>
-          <p className="font-mono font-bold text-white text-base break-all">{sym}{totalRev.toFixed(2)}</p>
-        </div>
+        {totalOrdersChart === 0 && (
+          <p className="text-zinc-600 text-xs mt-3">No data yet — check back after a few days of orders</p>
+        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -854,7 +883,7 @@ export default function ReportsView() {
           <RevenueChart />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <InsightsPanel />
-            <PaymentTrendsPanel />
+            <BestDaysPanel />
           </div>
           <OrderVolumeChart />
         </div>

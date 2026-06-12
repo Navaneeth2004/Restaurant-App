@@ -15,7 +15,7 @@ const TIMEOUTS = [
 ];
 
 export default function AdminLockSettings() {
-  const { config, setConfig, lock } = useAdminLock();
+  const { config, setConfig } = useAdminLock();
   const [saved, setSaved] = useState(false);
 
   const toggle = () => {
@@ -87,21 +87,7 @@ export default function AdminLockSettings() {
               >
                 {t.label}
               </button>
-            ))}
-          </div>
-
-          <div className="mt-4 pt-4 border-t border-surface-border">
-            <button
-              onClick={lock}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 text-sm font-semibold hover:bg-amber-500/20 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-              </svg>
-              Lock Admin Now
-            </button>
-            <p className="text-zinc-600 text-xs mt-2">Use this when stepping away — PIN will be required to return.</p>
-          </div>
+            ))}\n          </div>
         </div>
       )}
     </div>

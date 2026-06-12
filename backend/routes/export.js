@@ -158,7 +158,7 @@ router.get('/revenue', (req, res) => {
     SELECT o.*, t.label AS table_label
     FROM orders o
     LEFT JOIN tables t ON o.table_id = t.id
-    WHERE o.status IN ('delivered','closed')
+    WHERE o.status = 'closed'
       AND substr(o.created_at,1,10) >= ?
       AND substr(o.created_at,1,10) <= ?
     ORDER BY o.created_at ASC

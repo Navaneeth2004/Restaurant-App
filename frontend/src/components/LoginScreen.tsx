@@ -65,10 +65,9 @@ export default function LoginScreen() {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 overflow-hidden shadow-xl shadow-brand-500/30">
-            {logoUrl
-              ? <img src={`${API_BASE}${logoUrl}`} alt="logo" className="w-full h-full object-cover" />
-              : <div className="w-full h-full gradient-brand" />
-            }
+            {logoUrl && (
+              <img src={`${API_BASE}${logoUrl}`} alt="logo" className="w-full h-full object-cover" />
+            )}
           </div>
           <h1 className="font-display font-700 text-2xl text-white tracking-tight">
             {settings.restaurant_name}

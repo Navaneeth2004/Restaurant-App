@@ -624,7 +624,7 @@ export default function AdminBackup() {
               </div>
             )}
 
-            <button className="btn btn-brand btn-sm" onClick={() => { setShowCreds(true); setShowDriveGuide(false); }}>Enter credentials</button>
+            <button className="btn btn-brand btn-sm" onClick={() => { setShowCreds(true); setShowDriveGuide(false); }}>Set up credentials</button>
           </div>
         )}
 
@@ -650,18 +650,10 @@ export default function AdminBackup() {
 
         {status?.configured && !status.connected && !showCreds && (
           <div className="p-4 border-b border-surface-border space-y-3">
-            <div>
-              <p className="text-zinc-500 text-xs mb-1">Redirect URI must match exactly in Google Console:</p>
-              <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2">
-                <code className="text-zinc-200 text-[11px] break-all flex-1 select-all">{redirectUri}</code>
-                <CopyButton text={redirectUri} />
-              </div>
-            </div>
             <div className="flex flex-wrap gap-2">
               <button className="btn btn-brand btn-sm flex items-center gap-2" onClick={guardedConnect} disabled={connecting}>
                 {connecting ? <><Spinner />Waiting for Google…</> : <><IconCloud className="w-3.5 h-3.5" />Connect Google Drive</>}
               </button>
-              <button className="btn btn-sm" onClick={() => setShowCreds(true)}>Update credentials</button>
             </div>
           </div>
         )}

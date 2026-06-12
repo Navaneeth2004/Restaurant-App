@@ -183,7 +183,6 @@ export default function AdminMenu() {
             <span className="text-xs font-semibold text-zinc-500 bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded-full">{items.length}</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-zinc-600 text-xs hidden sm:block">Drag to reorder</span>
             <button className="btn btn-brand btn-sm" onClick={() => setModal({})}>+ Add Item</button>
           </div>
         </div>

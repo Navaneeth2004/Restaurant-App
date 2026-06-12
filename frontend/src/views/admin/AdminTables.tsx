@@ -137,7 +137,6 @@ export default function AdminTables() {
           {Object.entries(counts).map(([k, v]) => v > 0 && (
             <span key={k} className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_STYLE[k]}`}>{v} {STATUS_LABEL[k]}</span>
           ))}
-          <p className="text-zinc-600 text-xs ml-1">Drag cards to reorder</p>
         </div>
       </div>
 

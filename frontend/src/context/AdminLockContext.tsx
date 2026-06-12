@@ -105,13 +105,6 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
     }
   };
 
-  // auto-submit at 4 or 6 digits
-  useEffect(() => {
-    if (pin.length === 4 || pin.length === 6) {
-      handleSubmit();
-    }
-  }, [pin]);
-
   const cells: ('digit' | 'back' | 'login')[] = [
     'digit','digit','digit',
     'digit','digit','digit',
