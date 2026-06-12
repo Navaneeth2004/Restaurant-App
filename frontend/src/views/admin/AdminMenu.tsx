@@ -98,25 +98,20 @@ export default function AdminMenu() {
   const [filterCat,  setFilterCat]  = useState<'all'|number>('all');
   const [modal,      setModal]      = useState<{item?: MenuItem}|null>(null);
   const [confirm,    setConfirm]    = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
-
-  // ── Drag state — use REFS for values read inside async handlers ──────────
-  // dragOverId as ref: onDragEnd fires synchronously after onDrop, but React
-  // state updates from onDrop are batched/async so onDragEnd would see stale null.
-  const draggingIdRef = useRef<number | null>(null);
-  const dragOverIdRef = useRef<number | null>(null);
-  // Keep state copies only for visual feedback (CSS classes)
+  // Drag state
   const [draggingId,  setDraggingId]  = useState<number | null>(null);
   const [dragOverId,  setDragOverId]  = useState<number | null>(null);
-
-  // Block socket-triggered reload while a reorder save is in flight
-  const reordering = useRef(false);
-
+  // Track reorder in-flight; also store the last reorder result to protect against stale socket events
+  const reordering      = useRef(false);
+  const lastReorderTime = useRef(0);
   const toast    = useToast();
   const settings = useSettings();
   const sym      = settings.currency_symbol || '₹';
 
   const load = useCallback(async () => {
+    // Don't reload if a reorder just completed in the last 3 seconds
     if (reordering.current) return;
+    if (Date.now() - lastReorderTime.current < 3000) return;
     try { const [m,c] = await Promise.all([getMenuItems(), getCategories()]); setItems(m); setCategories(c); } catch {}
   }, []);
   useEffect(() => { load(); }, []);
@@ -147,53 +142,22 @@ export default function AdminMenu() {
     });
   };
 
-  // ── Drag handlers ─────────────────────────────────────────────────────────
-  const handleDragStart = (id: number) => {
-    draggingIdRef.current = id;
-    dragOverIdRef.current = null;
-    setDraggingId(id);
-    setDragOverId(null);
-  };
-
-  const handleDragOver = (e: React.DragEvent, id: number) => {
-    e.preventDefault();
-    // Update ref immediately (synchronous) so onDragEnd always sees correct value
-    dragOverIdRef.current = id;
-    setDragOverId(id); // for visual feedback only
-  };
-
-  const handleDrop = (e: React.DragEvent, id: number) => {
-    e.preventDefault();
-    // Also set via ref on drop to be safe
-    dragOverIdRef.current = id;
-  };
-
-  const handleDragEnd = async () => {
-    // Read from refs — guaranteed to be current, no React batching delay
-    const fromId = draggingIdRef.current;
-    const toId   = dragOverIdRef.current;
-
-    // Reset visual state
-    setDraggingId(null);
-    setDragOverId(null);
-    draggingIdRef.current = null;
-    dragOverIdRef.current = null;
-
-    if (fromId === null || toId === null || fromId === toId) return;
-
+  // ── Drag and drop handlers ────────────────────────────────────────────
+  const handleDragStart = (id: number) => setDraggingId(id);
+  const handleDragEnd   = async () => {
+    if (draggingId === null || dragOverId === null || draggingId === dragOverId) {
+      setDraggingId(null); setDragOverId(null); return;
+    }
     const filtered = filterCat === 'all' ? [...items] : items.filter(i => i.category_id === filterCat);
-    const fromIdx  = filtered.findIndex(i => i.id === fromId);
-    const toIdx    = filtered.findIndex(i => i.id === toId);
-    if (fromIdx === -1 || toIdx === -1) return;
-
+    const fromIdx  = filtered.findIndex(i => i.id === draggingId);
+    const toIdx    = filtered.findIndex(i => i.id === dragOverId);
     const reordered = [...filtered];
     const [moved]   = reordered.splice(fromIdx, 1);
     reordered.splice(toIdx, 0, moved);
 
-    // Assign new sort_order values starting from 0 within this set
     const withOrder = reordered.map((item, idx) => ({ ...item, sort_order: idx }));
 
-    // Apply optimistically
+    // Update local state optimistically
     if (filterCat === 'all') {
       setItems(withOrder);
     } else {
@@ -201,10 +165,14 @@ export default function AdminMenu() {
       setItems([...others, ...withOrder]);
     }
 
-    // Save to DB — block socket reload while in-flight
+    setDraggingId(null); setDragOverId(null);
+
+    // Block socket reload while saving
     reordering.current = true;
     try {
       await reorderMenuItems(withOrder.map(i => ({ id: i.id, sort_order: i.sort_order ?? 0 })));
+      // Record time so load() stays suppressed for a brief window after socket event fires
+      lastReorderTime.current = Date.now();
     } catch {
       toast('Failed to save order', 'error');
       reordering.current = false;
@@ -212,8 +180,10 @@ export default function AdminMenu() {
       return;
     }
     reordering.current = false;
-    // One clean reload to confirm DB state
-    try { const [m] = await Promise.all([getMenuItems()]); setItems(m); } catch {}
+    // One final clean reload to sync with DB, but only after the suppression window
+    setTimeout(async () => {
+      try { const [m] = await Promise.all([getMenuItems()]); setItems(m); } catch {}
+    }, 3100);
   };
 
   const filtered = filterCat === 'all' ? items : items.filter(i => i.category_id === filterCat);
@@ -265,9 +235,9 @@ export default function AdminMenu() {
             key={item.id}
             draggable
             onDragStart={() => handleDragStart(item.id)}
-            onDragOver={e => handleDragOver(e, item.id)}
-            onDrop={e => handleDrop(e, item.id)}
+            onDragOver={e => { e.preventDefault(); setDragOverId(item.id); }}
             onDragEnd={handleDragEnd}
+            onDrop={() => setDragOverId(item.id)}
             className={`rounded-xl border bg-surface-card overflow-hidden transition-all cursor-grab active:cursor-grabbing select-none
               ${item.available ? '' : 'opacity-60'}
               ${draggingId === item.id ? 'opacity-30 scale-95' : ''}
@@ -327,7 +297,7 @@ export default function AdminMenu() {
   );
 }
 
-// ── Auth token helpers ────────────────────────────────────────────────────
+// ── Auth token helpers ──────────────────────────────────────────────────────
 const BASE = process.env.REACT_APP_API_URL || window.location.origin;
 let _tok: string | null = null;
 async function tok(): Promise<string | null> {
@@ -341,7 +311,7 @@ async function authedFetch(url: string, opts: RequestInit = {}): Promise<Respons
   return fetch(url, { ...opts, headers: h });
 }
 
-// ── Export / Import panel ─────────────────────────────────────────────────
+// ── Export / Import panel ────────────────────────────────────────────────────
 export function MenuExportImport() {
   const [importing,    setImporting]    = React.useState(false);
   const [importResult, setImportResult] = React.useState<string | null>(null);

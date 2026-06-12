@@ -66,6 +66,8 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   const [payMethod,        setPayMethod]        = useState('cash');
   const [received,         setReceived]         = useState('');
   const [splits,           setSplits]           = useState<SplitEntry[]>([{ method: 'cash', amount: '' }, { method: 'upi', amount: '' }]);
+  const [customerName,     setCustomerName]     = useState('');
+  const [customerPhone,    setCustomerPhone]    = useState('');
   const [activeTab,        setActiveTab]        = useState<'bill'|'payment'>('bill');
   const [paymentVisited,   setPaymentVisited]   = useState(false);
   const [paying,           setPaying]           = useState(false);
@@ -100,7 +102,13 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
         changeAmt = change;
         if (received) paymentDetails = { received: receivedNum, change: changeAmt };
       }
-      await closeOrderWithPayment(orderId, { payment_method: payMethod, payment_details: paymentDetails, change_amount: changeAmt });
+      await closeOrderWithPayment(orderId, {
+        payment_method: payMethod,
+        payment_details: paymentDetails,
+        change_amount: changeAmt,
+        customer_name: customerName.trim() || undefined,
+        customer_phone: customerPhone.trim() || undefined,
+      } as any);
       toast('Table cleared!', 'success');
       onClosed();
     } catch (err: any) {
@@ -111,7 +119,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
   };
 
   const handleMarkPaid = async () => {
-    // If payment tab was never visited, show a warning
     if (!paymentVisited) {
       setShowPaymentWarn(true);
       return;
@@ -354,6 +361,39 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
                 </div>
               </div>
 
+              {/* Customer info */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>
+                  Customer <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: '#d1d5db' }}>— optional</span>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ flex: 1, position: 'relative' }}>
+                    <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', width: 14, height: 14 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                    </svg>
+                    <input
+                      type="text"
+                      placeholder="Name"
+                      value={customerName}
+                      onChange={e => setCustomerName(e.target.value)}
+                      style={{ width: '100%', padding: '9px 9px 9px 30px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 13, color: '#374151', boxSizing: 'border-box' as any }}
+                    />
+                  </div>
+                  <div style={{ flex: 1, position: 'relative' }}>
+                    <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', width: 14, height: 14 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
+                    </svg>
+                    <input
+                      type="tel"
+                      placeholder="Phone"
+                      value={customerPhone}
+                      onChange={e => setCustomerPhone(e.target.value)}
+                      style={{ width: '100%', padding: '9px 9px 9px 30px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 13, color: '#374151', boxSizing: 'border-box' as any }}
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>Payment Method</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 18 }}>
                 {PAYMENT_METHODS.map(m => (
@@ -383,7 +423,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
                       <div style={{ flex: 1, position: 'relative' }}>
                         <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontFamily: sans, fontSize: 13, color: '#9ca3af' }}>{sym}</span>
                         <input type="number" min="0" step="0.01" placeholder="0.00" value={s.amount} onChange={e => updateSplit(i, 'amount', e.target.value)}
-                          style={{ width: '100%', padding: '9px 9px 9px 24px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 13, color: '#374151', boxSizing: 'border-box' }} />
+                          style={{ width: '100%', padding: '9px 9px 9px 24px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 13, color: '#374151', boxSizing: 'border-box' as any }} />
                       </div>
                       {splits.length > 2 && (
                         <button onClick={() => removeSplit(i)} style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid #fca5a5', background: '#fef2f2', color: '#ef4444', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
@@ -415,7 +455,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed }:
                   <div style={{ position: 'relative', marginBottom: 12 }}>
                     <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontFamily: sans, fontSize: 16, color: '#9ca3af', fontWeight: 500 }}>{sym}</span>
                     <input type="number" min="0" step="0.50" placeholder={total.toFixed(2)} value={received} onChange={e => setReceived(e.target.value)}
-                      style={{ width: '100%', padding: '12px 12px 12px 30px', borderRadius: 12, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 18, fontWeight: 700, color: '#111', boxSizing: 'border-box', outline: 'none' }} />
+                      style={{ width: '100%', padding: '12px 12px 12px 30px', borderRadius: 12, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 18, fontWeight: 700, color: '#111', boxSizing: 'border-box' as any, outline: 'none' }} />
                   </div>
                   <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
                     {[total, Math.ceil(total / 10) * 10, Math.ceil(total / 50) * 50, Math.ceil(total / 100) * 100]

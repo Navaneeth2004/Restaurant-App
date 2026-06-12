@@ -5,11 +5,13 @@ const router  = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const db      = require('../db/database');
 
-// ── Migration: add payment columns if missing ─────────────────────────────
+// ── Migration: add payment + customer columns if missing ──────────────────
 (function migrate() {
   try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
+  try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
+  try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
 })();
 
 const _pendingTables = new Set();
@@ -248,12 +250,14 @@ router.patch('/:id/deliver', (req, res) => {
 
 // ── PATCH close order with payment details ─────────────────────────────────
 router.patch('/:id/close', (req, res) => {
-  const { payment_method, payment_details, change_amount } = req.body || {};
+  const { payment_method, payment_details, change_amount, customer_name, customer_phone } = req.body || {};
 
   try {
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
 
     const close = db.transaction(() => {
       const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
@@ -262,16 +266,20 @@ router.patch('/:id/close', (req, res) => {
       const payMethod  = payment_method  || 'cash';
       const payDetails = payment_details ? JSON.stringify(payment_details) : null;
       const change     = typeof change_amount === 'number' ? change_amount : 0;
+      const custName   = customer_name  || null;
+      const custPhone  = customer_phone || null;
 
       db.prepare(`
         UPDATE orders
         SET status = 'closed',
             payment_method  = ?,
             payment_details = ?,
-            change_amount   = ?
+            change_amount   = ?,
+            customer_name   = ?,
+            customer_phone  = ?
         WHERE table_id = ?
           AND status IN ('active','delivered')
-      `).run(payMethod, payDetails, change, order.table_id);
+      `).run(payMethod, payDetails, change, custName, custPhone, order.table_id);
 
       db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
       return { table_id: order.table_id };
@@ -292,13 +300,15 @@ router.patch('/:id/close', (req, res) => {
 
 // ── PATCH update payment on already-closed orders (for history editing) ───
 router.patch('/:id/payment', (req, res) => {
-  const { payment_method, payment_details, change_amount } = req.body || {};
+  const { payment_method, payment_details, change_amount, customer_name, customer_phone } = req.body || {};
   if (!payment_method) return res.status(400).json({ error: 'payment_method required' });
 
   try {
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
 
     const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
@@ -308,9 +318,13 @@ router.patch('/:id/payment', (req, res) => {
 
     db.prepare(`
       UPDATE orders
-      SET payment_method = ?, payment_details = ?, change_amount = ?
+      SET payment_method = ?, payment_details = ?, change_amount = ?,
+          customer_name = COALESCE(?, customer_name),
+          customer_phone = COALESCE(?, customer_phone)
       WHERE id = ?
-    `).run(payment_method, payDetails, change, req.params.id);
+    `).run(payment_method, payDetails, change,
+           customer_name || null, customer_phone || null,
+           req.params.id);
 
     res.json({ success: true });
   } catch (err) {
