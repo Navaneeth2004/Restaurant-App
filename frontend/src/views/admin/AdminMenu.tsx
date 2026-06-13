@@ -127,8 +127,9 @@ export default function AdminMenu() {
     newFiltered.forEach(i => othersMap.delete(i.id));
     const others = Array.from(othersMap.values());
 
-    // Assign sort_order within this category/view
-    const withOrder = newFiltered.map((item, idx) => ({ ...item, sort_order: idx }));
+    // Assign globally unique sort_order values so items from different categories
+    // don't collide (e.g. Drinks: 5000, 5001 — Starters: 1000, 1001)
+    const withOrder = newFiltered.map((item, idx) => ({ ...item, sort_order: item.category_id * 1000 + idx }));
     const merged = [...others, ...withOrder];
     setItems(merged);
 
