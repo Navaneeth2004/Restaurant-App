@@ -7,19 +7,8 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db/database');
 
-// Migration: add sort_order to menu_items if missing.
-(function migrate() {
-  try {
-    const cols = db.prepare("PRAGMA table_info(menu_items)").all();
-    const hasSortOrder = cols.some(c => c.name === 'sort_order');
-    if (!hasSortOrder) {
-      db.exec('ALTER TABLE menu_items ADD COLUMN sort_order INTEGER DEFAULT 0');
-      db.exec('UPDATE menu_items SET sort_order = id');
-    }
-  } catch (e) {
-    // Already exists or PRAGMA failed — safe to ignore
-  }
-})();
+// Migration runs lazily on first request via hasSortOrderCol()
+// so the DB is guaranteed to be ready.
 
 const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -41,6 +30,32 @@ const upload = multer({
   }
 });
 
+// One-time seed: run after DB is confirmed ready (called from GET /)
+let _seeded = false;
+function seedSortOrder() {
+  if (_seeded) return;
+  _seeded = true;
+  try {
+    const cols = db.prepare("PRAGMA table_info(menu_items)").all();
+    if (!cols.some(c => c.name === 'sort_order')) {
+      db.exec('ALTER TABLE menu_items ADD COLUMN sort_order INTEGER DEFAULT 0');
+    }
+    const items = db.prepare('SELECT id, category_id FROM menu_items ORDER BY category_id, id').all();
+    const posMap = {};
+    const update = db.prepare('UPDATE menu_items SET sort_order = ? WHERE id = ?');
+    const seedAll = db.transaction(() => {
+      for (const row of items) {
+        const pos = posMap[row.category_id] ?? 0;
+        posMap[row.category_id] = pos + 1;
+        update.run(row.category_id * 10000 + pos, row.id);
+      }
+    });
+    seedAll();
+  } catch (e) {
+    console.warn('[menu seed]', e.message);
+  }
+}
+
 // Helper: check if sort_order column actually exists in the live schema
 function hasSortOrderCol() {
   try {
@@ -50,6 +65,7 @@ function hasSortOrderCol() {
 }
 
 router.get('/', (req, res) => {
+  seedSortOrder();
   try {
     let items;
     if (hasSortOrderCol()) {

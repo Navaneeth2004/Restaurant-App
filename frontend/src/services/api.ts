@@ -85,8 +85,8 @@ export const getRevenueChart   = (): Promise<RevenueDay[]> => api.get('/reports/
 export const reorderTables = (order: { id: string; sort_order: number }[]): Promise<void> =>
   api.patch('/tables/reorder', { order }).then(r => r.data);
 
-export const reorderMenuItems = (order: { id: number; sort_order: number }[]): Promise<void> =>
-  api.patch('/menu/reorder', { order }).then(r => r.data);
+export const reorderMenuItems = (items: { id: number; sort_order: number }[]): Promise<void> =>
+  api.patch('/menu/reorder', { items }).then(r => r.data);
 
 export const importMenu = (data: any): Promise<{ success: boolean; categories_added: number; items_added: number; items_skipped: number }> =>
   api.post('/export/menu/import', data).then(r => r.data);

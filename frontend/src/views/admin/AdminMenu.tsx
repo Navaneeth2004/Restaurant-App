@@ -5,7 +5,7 @@ import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
 import { useAdminLock } from '../../context/AdminLockContext';
 import { useSortable } from '../../hooks/useSortable';
-import { reorderLock } from '../../utils/reorderLock';
+
 import ConfirmModal from '../../components/ConfirmModal';
 import type { MenuItem, Category } from '../../types';
 
@@ -102,7 +102,7 @@ export default function AdminMenu() {
   const [modal,      setModal]      = useState<{ item?: MenuItem } | null>(null);
   const [confirm,    setConfirm]    = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
-  // FIX: Debounce timer for reorder API calls
+  const isSaving            = useRef(false);
   const reorderDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toast    = useToast();
@@ -110,8 +110,14 @@ export default function AdminMenu() {
   const sym      = settings.currency_symbol || '₹';
 
   const load = useCallback(async () => {
+    if (isSaving.current) {
+        return;
+    }
     try {
       const [m, c] = await Promise.all([getMenuItems(), getCategories()]);
+      if (isSaving.current) {
+            return;
+      }
       setItems(m);
       setCategories(c);
     } catch {}
@@ -119,46 +125,44 @@ export default function AdminMenu() {
 
   useEffect(() => { load(); }, [load]);
 
-  // FIX: The socket handlers now check reorderLock.isLocked()
-  useSocket('menu_updated', useCallback(() => {
-    if (reorderLock.isLocked()) return;
-    load();
+  useSocket('menu_updated',      useCallback(() => {
+    if (!isSaving.current) load();
   }, [load]));
   useSocket('categories_updated', useCallback(() => {
-    if (reorderLock.isLocked()) return;
-    load();
+    if (!isSaving.current) load();
   }, [load]));
 
   const filtered = filterCat === 'all' ? items : items.filter(i => i.category_id === filterCat);
 
   // ── Reorder handler ──────────────────────────────────────────────────────
   const handleReorder = (newFiltered: MenuItem[]) => {
-    // 1. Optimistically update the UI immediately — no waiting
-    setItems(newFiltered);
+    // Merge the reordered filtered items back into the full list
+    const filteredIds = new Set(newFiltered.map(i => i.id));
+    const others = items.filter(i => !filteredIds.has(i.id));
+    const merged = [...newFiltered, ...others];
 
-    // 2. Debounce the actual API call by 300ms to absorb double-fires
-    //    (useSortable can call onReorder twice on the same drag via mouse+touch)
-    if (reorderDebounceTimer.current) {
-      clearTimeout(reorderDebounceTimer.current);
-    }
+    // 1. Block socket reloads IMMEDIATELY — before any async work
+    isSaving.current = true;
+    setItems(merged);
+
+    // 2. Debounce the API call to absorb rapid re-fires from useSortable
+    if (reorderDebounceTimer.current) clearTimeout(reorderDebounceTimer.current);
 
     reorderDebounceTimer.current = setTimeout(async () => {
-      reorderLock.acquire(); // block ALL socket-triggered reloads everywhere
-
       try {
         await reorderMenuItems(
           newFiltered.map((item, idx) => ({
             id: item.id,
-            sort_order: idx, // simple 0,1,2 — no category_id multiplier
+            sort_order: item.category_id * 10000 + idx,
           }))
         );
-        // Success — lock will be released, UI already shows correct order
       } catch (err) {
         console.error('Reorder save failed:', err);
-        // Only reload from server on a genuine failure
         load();
       } finally {
-        reorderLock.release();
+        // Stay locked for 1.5 s after save — same as AdminTables —
+        // to absorb any delayed socket echo from other clients.
+        setTimeout(() => { isSaving.current = false; }, 1500);
       }
     }, 300);
   };
