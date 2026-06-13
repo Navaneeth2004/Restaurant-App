@@ -8,11 +8,8 @@ const fs = require('fs');
 const db = require('../db/database');
 
 // Migration: add sort_order to menu_items if missing.
-// We use the low-level _raw.run so it happens in-memory immediately,
-// then call save() via db.exec of a no-op to flush the schema.
 (function migrate() {
   try {
-    // Check if column exists first to avoid a pointless error
     const cols = db.prepare("PRAGMA table_info(menu_items)").all();
     const hasSortOrder = cols.some(c => c.name === 'sort_order');
     if (!hasSortOrder) {
@@ -73,7 +70,6 @@ router.get('/', (req, res) => {
     res.json(items);
   } catch (e) {
     console.error('[menu GET /]', e.message);
-    // Final fallback — no sort_order at all
     try {
       const items = db.prepare(`
         SELECT m.*, c.name as category_name
@@ -179,15 +175,22 @@ router.put('/:id', upload.single('image'), (req, res) => {
 });
 
 // PATCH reorder menu items
+// FIX: Does NOT emit 'menu_updated' — this prevents the socket event from
+// triggering a reload in AdminMenu and reverting the optimistic reorder.
+// The frontend updates state directly from the API response instead.
 router.patch('/reorder', (req, res) => {
   const { order } = req.body;
   if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
-  if (!hasSortOrderCol()) return res.json({ success: true }); // column not ready yet, skip silently
+  if (!hasSortOrderCol()) return res.json({ success: true });
   try {
     const upd = db.prepare('UPDATE menu_items SET sort_order = ? WHERE id = ?');
     const reorder = db.transaction(() => { order.forEach(({ id, sort_order }) => upd.run(sort_order, id)); });
     reorder();
-    req.io.emit('menu_updated');
+    // NOTE: intentionally NOT emitting menu_updated here.
+    // Emitting would cause AdminMenu's useSocket handler to call load(),
+    // overwriting the freshly reordered state with the pre-reorder DB state
+    // (race condition: the DB write may not have flushed to the read path yet,
+    // or the 2-second isSaving guard may have already expired).
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

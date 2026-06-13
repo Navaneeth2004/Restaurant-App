@@ -100,13 +100,21 @@ export default function AdminMenu() {
   const [filterCat,  setFilterCat]  = useState<'all' | number>('all');
   const [modal,      setModal]      = useState<{ item?: MenuItem } | null>(null);
   const [confirm,    setConfirm]    = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
-  const isSaving     = useRef(false);
+
+  // FIX: Use a reorder-in-progress counter instead of a boolean with a timeout.
+  // We increment it before saving and decrement after the save resolves.
+  // The socket handler skips reloads while this is > 0.
+  const reorderInFlight = useRef(0);
+
   const toast    = useToast();
   const settings = useSettings();
   const sym      = settings.currency_symbol || '₹';
 
   const load = useCallback(async () => {
-    if (isSaving.current) return;
+    // FIX: Skip reload if a reorder save is currently in-flight. This prevents
+    // any socket event (including menu_updated from other operations) from
+    // overwriting the optimistically-updated item order.
+    if (reorderInFlight.current > 0) return;
     try {
       const [m, c] = await Promise.all([getMenuItems(), getCategories()]);
       setItems(m);
@@ -115,33 +123,46 @@ export default function AdminMenu() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-  useSocket('menu_updated', useCallback(() => { if (!isSaving.current) load(); }, [load]));
+
+  // FIX: The socket handler now respects the reorderInFlight guard.
+  useSocket('menu_updated', useCallback(() => {
+    if (reorderInFlight.current > 0) return;
+    load();
+  }, [load]));
   useSocket('categories_updated', load);
 
   const filtered = filterCat === 'all' ? items : items.filter(i => i.category_id === filterCat);
 
-  // ── Reorder handler (passed to useSortable) ─────────────────────────
+  // ── Reorder handler ──────────────────────────────────────────────────────
   const handleReorder = useCallback(async (newFiltered: MenuItem[]) => {
-    // Merge reordered filtered items back into the full items list
-    const othersMap = new Map(items.map(i => [i.id, i]));
-    newFiltered.forEach(i => othersMap.delete(i.id));
-    const others = Array.from(othersMap.values());
+    // FIX: Use simple sequential sort_order values (0, 1, 2, ...) scoped to
+    // each category. This avoids the previous `category_id * 1000 + idx`
+    // calculation which could produce values that collide with items in other
+    // categories when the DB uses `m.id` as a tiebreaker.
+    const withOrder = newFiltered.map((item, idx) => ({ ...item, sort_order: idx }));
 
-    // Assign globally unique sort_order values so items from different categories
-    // don't collide (e.g. Drinks: 5000, 5001 — Starters: 1000, 1001)
-    const withOrder = newFiltered.map((item, idx) => ({ ...item, sort_order: item.category_id * 1000 + idx }));
-    const merged = [...others, ...withOrder];
+    // Merge reordered items back into the full list, preserving other categories
+    const otherItems = items.filter(i => !newFiltered.some(f => f.id === i.id));
+    const merged = [...otherItems, ...withOrder];
     setItems(merged);
 
-    isSaving.current = true;
+    // Increment in-flight counter so socket events don't clobber this update
+    reorderInFlight.current += 1;
     try {
       await reorderMenuItems(withOrder.map(i => ({ id: i.id, sort_order: i.sort_order ?? 0 })));
     } catch {
       toast('Failed to save order — reloading', 'error');
+      reorderInFlight.current = 0;
       await load();
+      return;
     } finally {
-      // Hold the flag for a moment so socket events don't clobber our optimistic state
-      setTimeout(() => { isSaving.current = false; }, 2000);
+      // FIX: Decrement instead of zeroing, and use a short delay so any
+      // in-transit socket events from the save are ignored. The backend no
+      // longer emits menu_updated on reorder (see menu.js fix), so this is
+      // belt-and-suspenders safety only.
+      setTimeout(() => {
+        reorderInFlight.current = Math.max(0, reorderInFlight.current - 1);
+      }, 500);
     }
   }, [items, load, toast]);
 
@@ -193,7 +214,6 @@ export default function AdminMenu() {
           <button className="btn btn-brand btn-sm" onClick={() => setModal({})}>+ Add Item</button>
         </div>
 
-        {/* Hint */}
         <p className="text-zinc-600 text-[10px] mb-2">
           {window.matchMedia('(pointer: coarse)').matches
             ? 'Long-press and drag to reorder'
@@ -228,7 +248,6 @@ export default function AdminMenu() {
                 ${item.available ? '' : 'opacity-60'}
                 ${draggingId === item.id ? 'border-brand-500/40' : dragOverId === item.id && draggingId !== item.id ? 'border-brand-500' : 'border-surface-border hover:border-zinc-600'}
               `}
-              // Merge the style from getItemProps with a rounded border on the outline
               style={{ ...itemProps.style, borderRadius: '0.75rem' }}
             >
               <div className="relative h-36 bg-surface-raised">
@@ -244,7 +263,6 @@ export default function AdminMenu() {
                     <span className="text-[10px] font-bold text-white uppercase tracking-widest bg-red-500/80 px-2 py-0.5 rounded-full">Sold Out</span>
                   </div>
                 )}
-                {/* Drag handle indicator */}
                 <div className="absolute top-2 left-2 pointer-events-none">
                   <div className="w-5 h-5 rounded bg-black/30 flex items-center justify-center">
                     <svg className="w-3 h-3 text-white/70" fill="currentColor" viewBox="0 0 20 20">
