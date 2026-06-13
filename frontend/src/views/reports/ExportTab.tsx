@@ -33,8 +33,7 @@ async function downloadFile(url: string, filename: string): Promise<void> {
   URL.revokeObjectURL(blobUrl);
 }
 
-function Status({ ok, msg }: { ok: boolean | null; msg: string }) {
-  if (ok === null) return null;
+function Status({ ok, msg }: { ok: boolean; msg: string }) {
   return (
     <div className={`mt-3 flex items-center gap-2 text-xs ${ok ? 'text-emerald-400' : 'text-red-400'}`}>
       <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -48,6 +47,27 @@ function Status({ ok, msg }: { ok: boolean | null; msg: string }) {
   );
 }
 
+function DownloadIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+    </svg>
+  );
+}
+
+function PinLockNote() {
+  return (
+    <p className="text-zinc-600 text-[10px] mt-3 flex items-center gap-1">
+      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+      </svg>
+      PIN required to download
+    </p>
+  );
+}
+
+// ── Detailed Report (CSV / JSON) ───────────────────────────────────────────
+
 function OurFormatSection() {
   const today = new Date().toISOString().split('T')[0];
   const [from,    setFrom]    = useState('');
@@ -57,9 +77,9 @@ function OurFormatSection() {
   const { requirePin, config: lockConfig } = useAdminLock();
 
   const label = () => {
-    if (from && to)   return `${from}_to_${to}`;
-    if (from)         return `from_${from}`;
-    if (to)           return `to_${to}`;
+    if (from && to) return `${from}_to_${to}`;
+    if (from)       return `from_${from}`;
+    if (to)         return `to_${to}`;
     return 'all';
   };
 
@@ -70,8 +90,7 @@ function OurFormatSection() {
       const params = new URLSearchParams({ format: fmt });
       if (from) params.set('from', from);
       if (to)   params.set('to',   to);
-      const ext      = fmt === 'csv' ? 'csv' : 'json';
-      const filename = `sales_${label()}.${ext}`;
+      const filename = `sales_${label()}.${fmt}`;
       await downloadFile(`${API_ORIGIN}/api/export/revenue?${params}`, filename);
       setStatus({ ok: true, msg: `Downloaded ${filename}` });
     } catch (e: any) {
@@ -129,13 +148,7 @@ function OurFormatSection() {
       </div>
 
       {status && <Status ok={status.ok} msg={status.msg} />}
-
-      {lockConfig.enabled && (
-        <p className="text-zinc-600 text-[10px] mt-3 flex items-center gap-1">
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
-          PIN required to download
-        </p>
-      )}
+      {lockConfig.enabled && <PinLockNote />}
 
       <div className="mt-4 pt-4 border-t border-surface-border grid grid-cols-2 sm:grid-cols-4 gap-2">
         {['Summary block', 'Tax collected', 'Avg order value', 'Items sold',
@@ -152,10 +165,9 @@ function OurFormatSection() {
   );
 }
 
-function VyaparSection() {
-  const today = new Date().toISOString().split('T')[0];
-  const [from,    setFrom]    = useState(today);
-  const [to,      setTo]      = useState(today);
+// ── Vyapar Items Export ────────────────────────────────────────────────────
+
+function VyaparItemsSection() {
   const [loading, setLoading] = useState(false);
   const [status,  setStatus]  = useState<{ ok: boolean; msg: string } | null>(null);
   const { requirePin, config: lockConfig } = useAdminLock();
@@ -164,12 +176,8 @@ function VyaparSection() {
     setLoading(true);
     setStatus(null);
     try {
-      const params   = new URLSearchParams();
-      if (from) params.set('from', from);
-      if (to)   params.set('to',   to);
-      const label    = from === to ? from : `${from}_to_${to}`;
-      const filename = `sales_vyapar_${label}.csv`;
-      await downloadFile(`${API_ORIGIN}/api/export/vyapar?${params}`, filename);
+      const filename = `vyapar_items_${new Date().toISOString().split('T')[0]}.xlsx`;
+      await downloadFile(`${API_ORIGIN}/api/export/vyapar-items`, filename);
       setStatus({ ok: true, msg: `Downloaded ${filename}` });
     } catch (e: any) {
       setStatus({ ok: false, msg: e.message || 'Export failed' });
@@ -180,96 +188,72 @@ function VyaparSection() {
 
   const run = () => {
     if (!lockConfig.enabled) { doRun(); return; }
-    requirePin(doRun, 'Download Vyapar Export', 'Enter admin PIN to export Vyapar CSV');
+    requirePin(doRun, 'Download Vyapar Items', 'Enter admin PIN to export items');
   };
 
   return (
     <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-      <h4 className="font-semibold text-white text-sm mb-1">Vyapar Format</h4>
+      <h4 className="font-semibold text-white text-sm mb-1">Vyapar — Item Import</h4>
       <p className="text-zinc-500 text-xs mb-4">
-        CSV formatted for Vyapar's sale invoice import. Each table order becomes one invoice, each item a line.
-        Import via <span className="text-zinc-300">Sale → Sale Invoices → (xls icon top-right)</span>.
+        Exports your full menu as an <span className="text-zinc-300">.xlsx</span> file ready
+        to import into Vyapar via{' '}
+        <span className="text-zinc-300">Utilities → Import Items → Import From Excel</span>.
+        Do this once to set up your item catalogue in Vyapar.
       </p>
 
-      <div className="flex items-end gap-3 flex-wrap">
-        <div>
-          <label className="label">From</label>
-          <input type="date" className="input w-44" value={from} max={today}
-            onChange={e => setFrom(e.target.value)} />
-        </div>
-        <div>
-          <label className="label">To</label>
-          <input type="date" className="input w-44" value={to} max={today}
-            onChange={e => setTo(e.target.value)} />
-        </div>
-      </div>
-
-      <button className="btn btn-brand mt-4 flex items-center gap-2"
-        onClick={run} disabled={loading}>
+      <button className="btn btn-brand flex items-center gap-2" onClick={run} disabled={loading}>
         {loading
           ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
-          : <><DownloadIcon />Download Vyapar CSV</>
+          : <><DownloadIcon />Download Items .xlsx</>
         }
       </button>
 
       {status && <Status ok={status.ok} msg={status.msg} />}
-
-      {lockConfig.enabled && (
-        <p className="text-zinc-600 text-[10px] mt-3 flex items-center gap-1">
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
-          PIN required to download
-        </p>
-      )}
+      {lockConfig.enabled && <PinLockNote />}
 
       <div className="mt-4 pt-4 border-t border-surface-border">
-        <p className="text-zinc-600 text-[10px] mb-2 uppercase tracking-wider font-semibold">CSV columns</p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-[11px]">
-            <thead>
-              <tr className="border-b border-surface-border">
-                {['Invoice No','Date','Party','Item','Qty','Rate','Tax %','Total'].map(h => (
-                  <th key={h} className="text-left text-zinc-600 font-semibold pb-1.5 pr-3 whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ['20250606-001','06/06/2025','Table T3','Crispy Wings','2','8.99','5.0','18.88'],
-                ['','','','Lemonade','1','2.99','5.0','3.14'],
-                ['20250606-002','06/06/2025','Table T1','Burger','1','11.99','5.0','12.59'],
-              ].map((row, i) => (
-                <tr key={i} className="border-b border-surface-border/30">
-                  {row.map((cell, j) => (
-                    <td key={j} className="py-1 pr-3 font-mono text-zinc-400 whitespace-nowrap">
-                      {cell || <span className="text-zinc-700">—</span>}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <p className="text-zinc-600 text-[10px] mb-2 uppercase tracking-wider font-semibold">Columns included / excluded</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {[
+            { label: 'Item name',           ok: true  },
+            { label: 'Item code (MI-{id})', ok: true  },
+            { label: 'Category',            ok: true  },
+            { label: 'Sale price',          ok: true  },
+            { label: 'Tax Rate',            ok: true  },
+            { label: 'Inclusive Of Tax',    ok: true  },
+            { label: 'HSN',                 ok: false },
+            { label: 'Purchase price',      ok: false },
+            { label: 'Discount',            ok: false },
+            { label: 'Stock quantities',    ok: false },
+            { label: 'Item Location',       ok: false },
+            { label: 'Units / Conversion',  ok: false },
+          ].map(({ label, ok }) => (
+            <div key={label} className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+              {ok ? (
+                <svg className="w-3 h-3 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+              ) : (
+                <svg className="w-3 h-3 text-zinc-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              )}
+              {label}
+            </div>
+          ))}
         </div>
-        <p className="text-zinc-700 text-[10px] mt-2">
-          Invoice No only on first row per invoice. Party Name = table label. Tax rate matches your Admin → Restaurant settings.
-        </p>
       </div>
     </div>
   );
 }
 
-function DownloadIcon() {
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-    </svg>
-  );
-}
+// ── Main Export Tab ────────────────────────────────────────────────────────
 
 export default function ExportTab() {
   return (
     <div className="space-y-5">
       <OurFormatSection />
-      <VyaparSection />
+      <VyaparItemsSection />
     </div>
   );
 }

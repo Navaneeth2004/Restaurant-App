@@ -23,18 +23,18 @@ const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
-app.use('/api/auth',          auth.tokenRouter());
-app.use('/api/settings',      require('./routes/settings'));
-app.use('/api/categories',    require('./routes/categories'));
-app.use('/api/menu',          require('./routes/menu'));
-app.use('/api/tables',        require('./routes/tables'));
-app.use('/api/orders',        require('./routes/orders'));
-app.use('/api/staff',         require('./routes/staff'));
-app.use('/api/reports',       require('./routes/reports'));
-app.use('/api/export',        require('./routes/export'));
-app.use('/api/export/vyapar', require('./routes/vyapar'));
-app.use('/api/backup',        require('./routes/backup'));
-app.use('/api/reset',         require('./routes/reset'));
+app.use('/api/auth',                require('./middleware/auth').tokenRouter());
+app.use('/api/settings',            require('./routes/settings'));
+app.use('/api/categories',          require('./routes/categories'));
+app.use('/api/menu',                require('./routes/menu'));
+app.use('/api/tables',              require('./routes/tables'));
+app.use('/api/orders',              require('./routes/orders'));
+app.use('/api/staff',               require('./routes/staff'));
+app.use('/api/reports',             require('./routes/reports'));
+app.use('/api/export',              require('./routes/export'));
+app.use('/api/export/vyapar-items', require('./routes/vyapar-items'));
+app.use('/api/backup',              require('./routes/backup'));
+app.use('/api/reset',               require('./routes/reset'));
 
 const buildDir = path.join(__dirname, '..', 'frontend', 'build');
 if (fs.existsSync(buildDir)) {

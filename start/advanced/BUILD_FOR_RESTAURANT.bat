@@ -28,18 +28,12 @@ echo  [OK] Node.js %NODE_VER%
 :: ── Check / install Windows build tools (needed for better-sqlite3) ───────
 echo  [CHECK] Looking for Windows C++ build tools...
 
-:: Check if node-gyp can find Visual Studio
-node -e "const g=require('child_process');g.exec('node-gyp configure 2>&1',{cwd:require('os').tmpdir()})" >nul 2>&1
-
 :: Simpler check: try to find cl.exe (MSVC compiler)
 where cl.exe >nul 2>&1
 if %errorlevel% equ 0 (
     echo  [OK] C++ build tools found
     goto :build_tools_ok
 )
-
-:: Check if windows-build-tools already installed something useful
-node -e "require('child_process').execSync('node-gyp --version')" >nul 2>&1
 
 :: Check for VS Build Tools via registry
 reg query "HKLM\SOFTWARE\Microsoft\VisualStudio" >nul 2>&1
