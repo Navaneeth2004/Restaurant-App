@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext';
 import { useSettings } from '../context/SettingsContext';
 import { useTick } from '../hooks/useTick';
 import { playChime, playDeliveryChime } from '../utils/sound';
+import { reorderLock } from '../utils/reorderLock';
 import BillModal from '../components/BillModal';
 import TableTimer from '../components/TableTimer';
 import ConfirmModal from '../components/ConfirmModal';
@@ -379,7 +380,10 @@ export default function WaiterView() {
   useEffect(() => { loadTables(); loadMenu(); }, []);
 
   useSocket('tables_updated', loadTables);
-  useSocket('menu_updated', loadMenu);
+  useSocket('menu_updated', () => {
+    if (reorderLock.isLocked()) return;
+    loadMenu();
+  });
   useSocket('categories_updated', loadMenu);
 
   useSocket('order_updated', ({ order }: { order: Order }) => {

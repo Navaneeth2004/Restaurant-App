@@ -179,21 +179,27 @@ router.put('/:id', upload.single('image'), (req, res) => {
 // triggering a reload in AdminMenu and reverting the optimistic reorder.
 // The frontend updates state directly from the API response instead.
 router.patch('/reorder', (req, res) => {
-  const { order } = req.body;
-  if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
-  if (!hasSortOrderCol()) return res.json({ success: true });
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'items array required' });
+  }
+  if (!hasSortOrderCol()) return res.json({ ok: true });
   try {
-    const upd = db.prepare('UPDATE menu_items SET sort_order = ? WHERE id = ?');
-    const reorder = db.transaction(() => { order.forEach(({ id, sort_order }) => upd.run(sort_order, id)); });
-    reorder();
+    const update = db.prepare('UPDATE menu_items SET sort_order = ? WHERE id = ?');
+    const updateAll = db.transaction((rows) => {
+      for (const { id, sort_order } of rows) {
+        update.run(sort_order, id);
+      }
+    });
+    updateAll(items);
     // NOTE: intentionally NOT emitting menu_updated here.
     // Emitting would cause AdminMenu's useSocket handler to call load(),
     // overwriting the freshly reordered state with the pre-reorder DB state
-    // (race condition: the DB write may not have flushed to the read path yet,
-    // or the 2-second isSaving guard may have already expired).
-    res.json({ success: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    // (race condition: the DB write may not have flushed to the read path yet).
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Reorder failed:', err);
+    res.status(500).json({ error: 'Reorder failed' });
   }
 });
 

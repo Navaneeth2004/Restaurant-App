@@ -5,6 +5,7 @@ import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
 import { useAdminLock } from '../../context/AdminLockContext';
 import { useSortable } from '../../hooks/useSortable';
+import { reorderLock } from '../../utils/reorderLock';
 import ConfirmModal from '../../components/ConfirmModal';
 import type { MenuItem, Category } from '../../types';
 
@@ -101,20 +102,14 @@ export default function AdminMenu() {
   const [modal,      setModal]      = useState<{ item?: MenuItem } | null>(null);
   const [confirm,    setConfirm]    = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
-  // FIX: Use a reorder-in-progress counter instead of a boolean with a timeout.
-  // We increment it before saving and decrement after the save resolves.
-  // The socket handler skips reloads while this is > 0.
-  const reorderInFlight = useRef(0);
+  // FIX: Debounce timer for reorder API calls
+  const reorderDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toast    = useToast();
   const settings = useSettings();
   const sym      = settings.currency_symbol || '₹';
 
   const load = useCallback(async () => {
-    // FIX: Skip reload if a reorder save is currently in-flight. This prevents
-    // any socket event (including menu_updated from other operations) from
-    // overwriting the optimistically-updated item order.
-    if (reorderInFlight.current > 0) return;
     try {
       const [m, c] = await Promise.all([getMenuItems(), getCategories()]);
       setItems(m);
@@ -124,47 +119,49 @@ export default function AdminMenu() {
 
   useEffect(() => { load(); }, [load]);
 
-  // FIX: The socket handler now respects the reorderInFlight guard.
+  // FIX: The socket handlers now check reorderLock.isLocked()
   useSocket('menu_updated', useCallback(() => {
-    if (reorderInFlight.current > 0) return;
+    if (reorderLock.isLocked()) return;
     load();
   }, [load]));
-  useSocket('categories_updated', load);
+  useSocket('categories_updated', useCallback(() => {
+    if (reorderLock.isLocked()) return;
+    load();
+  }, [load]));
 
   const filtered = filterCat === 'all' ? items : items.filter(i => i.category_id === filterCat);
 
   // ── Reorder handler ──────────────────────────────────────────────────────
-  const handleReorder = useCallback(async (newFiltered: MenuItem[]) => {
-    // FIX: Use simple sequential sort_order values (0, 1, 2, ...) scoped to
-    // each category. This avoids the previous `category_id * 1000 + idx`
-    // calculation which could produce values that collide with items in other
-    // categories when the DB uses `m.id` as a tiebreaker.
-    const withOrder = newFiltered.map((item, idx) => ({ ...item, sort_order: idx }));
+  const handleReorder = (newFiltered: MenuItem[]) => {
+    // 1. Optimistically update the UI immediately — no waiting
+    setItems(newFiltered);
 
-    // Merge reordered items back into the full list, preserving other categories
-    const otherItems = items.filter(i => !newFiltered.some(f => f.id === i.id));
-    const merged = [...otherItems, ...withOrder];
-    setItems(merged);
-
-    // Increment in-flight counter so socket events don't clobber this update
-    reorderInFlight.current += 1;
-    try {
-      await reorderMenuItems(withOrder.map(i => ({ id: i.id, sort_order: i.sort_order ?? 0 })));
-    } catch {
-      toast('Failed to save order — reloading', 'error');
-      reorderInFlight.current = 0;
-      await load();
-      return;
-    } finally {
-      // FIX: Decrement instead of zeroing, and use a short delay so any
-      // in-transit socket events from the save are ignored. The backend no
-      // longer emits menu_updated on reorder (see menu.js fix), so this is
-      // belt-and-suspenders safety only.
-      setTimeout(() => {
-        reorderInFlight.current = Math.max(0, reorderInFlight.current - 1);
-      }, 500);
+    // 2. Debounce the actual API call by 300ms to absorb double-fires
+    //    (useSortable can call onReorder twice on the same drag via mouse+touch)
+    if (reorderDebounceTimer.current) {
+      clearTimeout(reorderDebounceTimer.current);
     }
-  }, [items, load, toast]);
+
+    reorderDebounceTimer.current = setTimeout(async () => {
+      reorderLock.acquire(); // block ALL socket-triggered reloads everywhere
+
+      try {
+        await reorderMenuItems(
+          newFiltered.map((item, idx) => ({
+            id: item.id,
+            sort_order: idx, // simple 0,1,2 — no category_id multiplier
+          }))
+        );
+        // Success — lock will be released, UI already shows correct order
+      } catch (err) {
+        console.error('Reorder save failed:', err);
+        // Only reload from server on a genuine failure
+        load();
+      } finally {
+        reorderLock.release();
+      }
+    }, 300);
+  };
 
   const { getItemProps, draggingId, dragOverId } = useSortable({
     items: filtered,
