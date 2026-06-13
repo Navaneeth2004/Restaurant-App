@@ -39,49 +39,38 @@ function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
   );
 
   const sessions: TableSession[] = [];
-  const tableOpenSession: Record<string, number> = {};
+  const sessionMap: Record<string, number> = {}; // session_id -> sessions index
 
   for (const order of sorted) {
-    const key = order.table_id;
-    const existingIdx = tableOpenSession[key];
+    // Use session_id as the grouping key (one session_id = one customer sitting)
+    const sessionId = (order as any).session_id;
+    const key = sessionId || `legacy-${order.table_id}`; // fallback for old orders without session_id
+    const existingIdx = sessionMap[key];
 
     if (existingIdx !== undefined) {
+      // Merge into existing session
       const existing = sessions[existingIdx];
-
-      // Only start a new session if:
-      // 1. The existing session has a closed (billed) order AND
-      // 2. This order was created more than 5 minutes after the last order
-      //    in the session (meaning it's genuinely a new dining, not just
-      //    another round being closed in the same transaction)
-      const sessionHasClosed = existing.orders.some(o => o.status === 'closed');
-      const lastOrderTime = new Date(existing.endedAt).getTime();
-      const thisOrderTime = new Date(order.created_at).getTime();
-      const isNewDining = sessionHasClosed && (thisOrderTime - lastOrderTime) > 5 * 60 * 1000;
-
-      if (!isNewDining) {
-        // Same dining — merge this round in
-        existing.orders.push(order);
-        existing.endedAt = order.created_at;
-        existing.totalAmount += order.items.reduce((s, i) => s + i.price * i.quantity, 0);
-        if ((order as any).payment_method) {
-          existing.paymentMethod = (order as any).payment_method;
-          existing.paymentDetails = (order as any).payment_details;
-        }
-        if ((order as any).customer_name) existing.customerName = (order as any).customer_name;
-        if ((order as any).customer_phone) existing.customerPhone = (order as any).customer_phone;
-        for (const item of order.items) {
-          const itemKey = `${item.name}||${item.note || ''}||${item.price}`;
-          const existingItem = existing.allItems.find(
-            x => `${x.name}||${x.note || ''}||${x.price}` === itemKey
-          );
-          if (existingItem) {
-            existingItem.quantity += item.quantity;
-          } else {
-            existing.allItems.push({ name: item.name, price: item.price, quantity: item.quantity, note: item.note || '' });
-          }
-        }
-        continue;
+      existing.orders.push(order);
+      existing.endedAt = order.created_at;
+      existing.totalAmount += order.items.reduce((s, i) => s + i.price * i.quantity, 0);
+      if ((order as any).payment_method) {
+        existing.paymentMethod = (order as any).payment_method;
+        existing.paymentDetails = (order as any).payment_details;
       }
+      if ((order as any).customer_name) existing.customerName = (order as any).customer_name;
+      if ((order as any).customer_phone) existing.customerPhone = (order as any).customer_phone;
+      for (const item of order.items) {
+        const itemKey = `${item.name}||${item.note || ''}||${item.price}`;
+        const existingItem = existing.allItems.find(
+          x => `${x.name}||${x.note || ''}||${x.price}` === itemKey
+        );
+        if (existingItem) {
+          existingItem.quantity += item.quantity;
+        } else {
+          existing.allItems.push({ name: item.name, price: item.price, quantity: item.quantity, note: item.note || '' });
+        }
+      }
+      continue;
     }
 
     // Start a new session
@@ -97,7 +86,7 @@ function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       }
     } catch {}
     const session: TableSession = {
-      sessionKey: `${order.table_id}-${order.created_at}-${sessions.length}`,
+      sessionKey: sessionId || `legacy-${order.table_id}`,
       tableId: order.table_id,
       orders: [order],
       totalAmount: order.items.reduce((s, i) => s + i.price * i.quantity, 0),
@@ -109,7 +98,7 @@ function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       customerName: (order as any).customer_name || null,
       customerPhone: (order as any).customer_phone || null,
     };
-    tableOpenSession[key] = sessions.length;
+    sessionMap[key] = sessions.length;
     sessions.push(session);
   }
 
@@ -427,20 +416,6 @@ function SessionRow({ session, sym, taxPct, brand }: {
               <span className="text-zinc-500 text-xs">
                 {session.allItems.reduce((s, i) => s + i.quantity, 0)} items
               </span>
-              {paymentMethod === 'split' && splitEntries.length > 0 && (
-                <>
-                  <span className="text-zinc-700 text-xs">·</span>
-                  <div className="flex items-center gap-1 flex-wrap">
-                    {splitEntries.map((e, i) => (
-                      <span key={i} className="inline-flex items-center gap-1 text-[10px] text-zinc-400">
-                        <PaymentBadge method={e.method} />
-                        <span className="font-mono text-zinc-500">{sym}{e.amount.toFixed(2)}</span>
-                        {i < splitEntries.length - 1 && <span className="text-zinc-700">+</span>}
-                      </span>
-                    ))}
-                  </div>
-                </>
-              )}
             </div>
           </div>
 

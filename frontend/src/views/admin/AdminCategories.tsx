@@ -1,9 +1,32 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getCategories, createCategory, updateCategory, deleteCategory, getMenuItems } from '../../services/api';
 import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
+import { useSortable } from '../../hooks/useSortable';
 import ConfirmModal from '../../components/ConfirmModal';
 import type { Category } from '../../types';
+
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
+
+async function getAuthToken(): Promise<string | null> {
+  try {
+    const res  = await fetch(`${API_BASE}/api/auth/token`);
+    const data = await res.json();
+    return data.token ?? null;
+  } catch { return null; }
+}
+
+async function reorderCategories(order: { id: number; sort_order: number }[]): Promise<void> {
+  const token = await getAuthToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}/api/categories/reorder`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ order }),
+  });
+  if (!res.ok) throw new Error('Reorder failed');
+}
 
 export default function AdminCategories() {
   const [cats,    setCats]    = useState<Category[]>([]);
@@ -12,11 +35,14 @@ export default function AdminCategories() {
   const [editId,  setEditId]  = useState<number|null>(null);
   const [editVal, setEditVal] = useState('');
   const [confirm, setConfirm] = useState<{ id: number; name: string } | null>(null);
+  const isSaving = useRef(false);
   const toast = useToast();
 
   const load = useCallback(async () => {
+    if (isSaving.current) return;
     try {
       const [c, m] = await Promise.all([getCategories(), getMenuItems()]);
+      if (isSaving.current) return;
       setCats(c);
       const cnt: Record<number,number> = {};
       m.forEach(item => { cnt[item.category_id] = (cnt[item.category_id]||0)+1; });
@@ -25,8 +51,28 @@ export default function AdminCategories() {
   }, []);
 
   useEffect(() => { load(); }, []);
-  useSocket('categories_updated', load);
-  useSocket('menu_updated', load);
+  useSocket('categories_updated', useCallback(() => { if (!isSaving.current) load(); }, [load]));
+  useSocket('menu_updated', useCallback(() => { if (!isSaving.current) load(); }, [load]));
+
+  // ── Reorder ──────────────────────────────────────────────────────────────
+  const handleReorder = useCallback(async (newCats: Category[]) => {
+    isSaving.current = true;
+    setCats(newCats);
+    try {
+      await reorderCategories(newCats.map((c, i) => ({ id: c.id, sort_order: i })));
+    } catch {
+      toast('Failed to save order', 'error');
+      load();
+    } finally {
+      setTimeout(() => { isSaving.current = false; }, 1500);
+    }
+  }, [load, toast]);
+
+  const { getItemProps, draggingId, dragOverId } = useSortable({
+    items: cats,
+    getId: c => c.id,
+    onReorder: handleReorder,
+  });
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,39 +120,61 @@ export default function AdminCategories() {
               <button type="submit" className="btn btn-brand flex-shrink-0">Add</button>
             </form>
           </div>
-          <p className="text-zinc-600 text-xs mb-2">Tip: categories cannot be deleted while they contain items</p>
+          <p className="text-zinc-600 text-xs mb-1">Tip: categories cannot be deleted while they contain items</p>
+          <p className="text-zinc-600 text-[10px]">
+            {window.matchMedia('(pointer: coarse)').matches ? 'Long-press and drag to reorder' : 'Drag to reorder'}
+          </p>
         </div>
 
         {/* Right: Category list */}
         <div>
           <h3 className="font-bold text-white text-sm mb-4 lg:block hidden">&nbsp;</h3>
           <div className="space-y-2">
-            {cats.map(cat => (
-              <div key={cat.id} className="rounded-xl border border-surface-border bg-surface-card px-4 py-3 flex items-center gap-3">
-                <svg className="w-4 h-4 text-zinc-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5" /></svg>
-                {editId === cat.id ? (
-                  <>
-                    <input className="input flex-1 py-1.5 text-sm" value={editVal} onChange={e => setEditVal(e.target.value)}
-                      onKeyDown={e => { if(e.key==='Enter') handleEdit(cat.id); if(e.key==='Escape') setEditId(null); }} autoFocus />
-                    <button className="btn btn-brand btn-sm" onClick={() => handleEdit(cat.id)}>Save</button>
-                    <button className="btn btn-sm" onClick={() => setEditId(null)}>Cancel</button>
-                  </>
-                ) : (
-                  <>
-                    <span className="flex-1 text-white text-sm font-medium">{cat.name}</span>
-                    <span className="text-zinc-600 text-xs font-mono">{counts[cat.id]||0} items</span>
-                    <button className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-raised transition-colors"
-                      onClick={() => { setEditId(cat.id); setEditVal(cat.name); }}>
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
-                    </button>
-                    <button className="w-7 h-7 rounded-lg flex items-center justify-center text-red-500/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                      onClick={() => setConfirm({ id: cat.id, name: cat.name })}>
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-                    </button>
-                  </>
-                )}
-              </div>
-            ))}
+            {cats.map(cat => {
+              const itemProps  = getItemProps(cat.id);
+              const isDragging = draggingId === cat.id;
+              const isOver     = dragOverId === cat.id && draggingId !== cat.id;
+              return (
+                <div
+                  key={cat.id}
+                  {...itemProps}
+                  className={`rounded-xl border bg-surface-card px-4 py-3 flex items-center gap-3 transition-colors select-none
+                    ${isDragging ? 'opacity-30' : ''}
+                    ${isOver ? 'border-brand-500/60 bg-brand-500/5' : 'border-surface-border hover:border-zinc-600'}
+                  `}
+                  style={{ ...itemProps.style, borderRadius: '0.75rem' }}
+                >
+                  {/* Drag handle */}
+                  <div className="flex-shrink-0 text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing">
+                    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
+                    </svg>
+                  </div>
+
+                  {editId === cat.id ? (
+                    <>
+                      <input className="input flex-1 py-1.5 text-sm" value={editVal} onChange={e => setEditVal(e.target.value)}
+                        onKeyDown={e => { if(e.key==='Enter') handleEdit(cat.id); if(e.key==='Escape') setEditId(null); }} autoFocus />
+                      <button className="btn btn-brand btn-sm" onClick={() => handleEdit(cat.id)}>Save</button>
+                      <button className="btn btn-sm" onClick={() => setEditId(null)}>Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex-1 text-white text-sm font-medium">{cat.name}</span>
+                      <span className="text-zinc-600 text-xs font-mono">{counts[cat.id]||0} items</span>
+                      <button className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-raised transition-colors"
+                        onClick={e => { e.stopPropagation(); setEditId(cat.id); setEditVal(cat.name); }}>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+                      </button>
+                      <button className="w-7 h-7 rounded-lg flex items-center justify-center text-red-500/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                        onClick={e => { e.stopPropagation(); setConfirm({ id: cat.id, name: cat.name }); }}>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
             {cats.length === 0 && <p className="text-zinc-600 text-sm text-center py-8">No categories yet</p>}
           </div>
         </div>

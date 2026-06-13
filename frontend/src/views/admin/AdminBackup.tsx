@@ -131,9 +131,9 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-interface ResetModalProps { onClose: () => void; onDone: () => void; }
+interface ResetModalProps { onClose: () => void; onDone: () => void; onError: (msg: string) => void; }
 
-function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
+function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
   const PHRASE = 'RESET EVERYTHING';
   const [step,    setStep]    = useState<1 | 2 | 3>(1);
   const [typed,   setTyped]   = useState('');
@@ -147,13 +147,13 @@ function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
       await authedJson(`${API}/api/reset`, { method: 'POST', body: JSON.stringify({ confirm: PHRASE }) });
       onDone();
     } catch (e: any) {
-      setErr(e.message || 'Reset failed');
+      onError(e.message || 'Reset failed');
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4" onClick={onClose}>
       <div className="rounded-xl border border-red-500/40 bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl" onClick={e => e.stopPropagation()}>
         {step === 1 && (
           <>
@@ -216,7 +216,6 @@ function FactoryResetModal({ onClose, onDone }: ResetModalProps) {
               </div>
             </div>
             <input className="input w-full mb-3 font-mono text-red-300 border-red-500/30 focus:border-red-500/60" placeholder={PHRASE} value={typed} onChange={e => { setTyped(e.target.value); setErr(''); }} autoFocus spellCheck={false} autoComplete="off" />
-            {err && <p className="text-red-400 text-xs mb-3">{err}</p>}
             <div className="flex gap-2">
               <button className="btn flex-1" onClick={onClose} disabled={loading}>Cancel</button>
               <button className="btn flex-1 bg-red-600 border-red-700 text-white hover:bg-red-700 disabled:opacity-40" onClick={doReset} disabled={loading || typed !== PHRASE}>
@@ -723,6 +722,7 @@ export default function AdminBackup() {
       {showResetModal && (
         <FactoryResetModal
           onClose={() => setShowResetModal(false)}
+          onError={(msg) => flash(false, msg)}
           onDone={() => {
             setShowResetModal(false);
             setShowResetPanel(false);

@@ -12,6 +12,8 @@ const db      = require('../db/database');
   try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
+  try { db.exec(`ALTER TABLE orders ADD COLUMN session_id TEXT DEFAULT NULL`); } catch (_) {}
+  try { db.exec(`ALTER TABLE tables ADD COLUMN session_id TEXT DEFAULT NULL`); } catch (_) {}
 })();
 
 // ── In-memory guards ──────────────────────────────────────────────────────
@@ -103,7 +105,16 @@ router.post('/', (req, res) => {
       } else {
         const orderId = uuidv4();
         const now = new Date().toISOString();
-        db.prepare('INSERT INTO orders (id, table_id, status, created_at) VALUES (?, ?, ?, ?)').run(orderId, table_id, 'active', now);
+        // Insert without session_id first (safe for old schema)
+        db.prepare('INSERT INTO orders (id, table_id, status, created_at) VALUES (?, ?, ?, ?)')
+          .run(orderId, table_id, 'active', now);
+        // Then set session_id separately (column guaranteed to exist from migration)
+        try {
+          const tableRow = db.prepare('SELECT session_id FROM tables WHERE id = ?').get(table_id);
+          const sessionId = tableRow?.session_id || uuidv4();
+          db.prepare('UPDATE orders SET session_id = ? WHERE id = ?').run(sessionId, orderId);
+          db.prepare("UPDATE tables SET session_id = COALESCE(session_id, ?) WHERE id = ?").run(sessionId, table_id);
+        } catch (_) {}
         db.prepare("UPDATE tables SET status = 'occupied' WHERE id = ?").run(table_id);
         const ins = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
         for (const it of items) ins.run(orderId, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
@@ -310,7 +321,7 @@ router.patch('/:id/close', (req, res) => {
           AND status IN ('active','delivered')
       `).run(payMethod, payDetails, change, custName, custPhone, order.table_id);
 
-      db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
+      db.prepare("UPDATE tables SET status = 'empty', session_id = NULL WHERE id = ?").run(order.table_id);
       return { table_id: order.table_id };
     });
 

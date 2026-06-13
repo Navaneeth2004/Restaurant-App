@@ -58,9 +58,9 @@ function MenuItemModal({ item, categories, onSave, onClose }: ModalProps) {
               </div>
             </div>
             <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <div className={`relative w-9 h-5 rounded-full border transition-colors ${available ? 'bg-brand-500 border-brand-600' : 'bg-zinc-700 border-zinc-600'}`}
+              <div className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border-2 transition-colors ${available ? 'bg-brand-500 border-brand-600' : 'bg-zinc-700 border-zinc-600'}`}
                 onClick={() => setAvailable(v => !v)}>
-                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${available ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                <div className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${available ? 'translate-x-5' : 'translate-x-0.5'}`} />
               </div>
               <span className="text-sm text-zinc-300">Available to order</span>
             </label>
@@ -264,17 +264,10 @@ export default function AdminMenu() {
                     <span className="text-[10px] font-bold text-white uppercase tracking-widest bg-red-500/80 px-2 py-0.5 rounded-full">Sold Out</span>
                   </div>
                 )}
-                <div className="absolute top-2 left-2 pointer-events-none">
-                  <div className="w-5 h-5 rounded bg-black/30 flex items-center justify-center">
-                    <svg className="w-3 h-3 text-white/70" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
-                    </svg>
-                  </div>
-                </div>
                 <div className="absolute top-2 right-2">
-                  <div className={`relative w-9 h-5 rounded-full border cursor-pointer transition-colors shadow-md ${item.available ? 'bg-brand-500 border-brand-600' : 'bg-zinc-700 border-zinc-600'}`}
+                  <div className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border-2 cursor-pointer transition-colors shadow-md ${item.available ? 'bg-brand-500 border-brand-600' : 'bg-zinc-700 border-zinc-600'}`}
                     onClick={e => { e.stopPropagation(); toggleAvail(item); }}>
-                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${item.available ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                    <div className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${item.available ? 'translate-x-5' : 'translate-x-0.5'}`} />
                   </div>
                 </div>
               </div>

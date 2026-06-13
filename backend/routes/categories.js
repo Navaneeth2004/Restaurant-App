@@ -1,3 +1,17 @@
+// PATCH for backend/routes/categories.js
+// Add this route BEFORE module.exports:
+//
+// router.patch('/reorder', (req, res) => {
+//   const { order } = req.body;
+//   if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
+//   const upd = db.prepare('UPDATE categories SET sort_order = ? WHERE id = ?');
+//   const reorder = db.transaction(() => { order.forEach(({ id, sort_order }) => upd.run(sort_order, id)); });
+//   reorder();
+//   req.io.emit('categories_updated');
+//   res.json({ success: true });
+// });
+
+// Full updated categories.js below:
 const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
@@ -25,11 +39,21 @@ router.put('/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// PATCH reorder categories
+router.patch('/reorder', (req, res) => {
+  const { order } = req.body;
+  if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
+  const upd = db.prepare('UPDATE categories SET sort_order = ? WHERE id = ?');
+  const reorder = db.transaction(() => { order.forEach(({ id, sort_order }) => upd.run(sort_order, id)); });
+  reorder();
+  // Don't emit categories_updated here to avoid race condition with optimistic UI
+  res.json({ success: true });
+});
+
 router.delete('/:id', (req, res) => {
   // Check for menu items in this category
   const count = db.prepare('SELECT COUNT(*) as c FROM menu_items WHERE category_id = ?').get(req.params.id).c;
   if (count > 0) {
-    // Check if any of those items are in active/delivered orders
     const inActiveOrder = db.prepare(`
       SELECT COUNT(*) as c FROM order_items oi
       JOIN orders o ON oi.order_id = o.id

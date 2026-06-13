@@ -31,6 +31,7 @@ export interface Table {
   seats: number;
   status: 'empty' | 'occupied' | 'waiting_bill';
   occupied_since: string | null; // ISO timestamp of active order start
+  session_id?: string | null;
 }
 
 export interface OrderItem {
@@ -46,6 +47,7 @@ export interface OrderItem {
 export interface Order {
   id: string;
   table_id: string;
+  session_id?: string;
   status: 'active' | 'delivered' | 'closed';
   created_at: string;
   delivered_at: string | null;

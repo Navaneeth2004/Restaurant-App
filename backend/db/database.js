@@ -218,19 +218,26 @@ function _initSchema() {
       seats      INTEGER DEFAULT 4,
       status     TEXT    DEFAULT 'empty'
                          CHECK(status IN ('empty','occupied','waiting_bill')),
-      sort_order INTEGER DEFAULT 0
+      sort_order INTEGER DEFAULT 0,
+      session_id TEXT    DEFAULT NULL
     )
   `);
 
   _raw.run(`
     CREATE TABLE IF NOT EXISTS orders (
-      id           TEXT    PRIMARY KEY,
-      table_id     TEXT    NOT NULL,
-      status       TEXT    DEFAULT 'active'
-                           CHECK(status IN ('active','delivered','closed')),
-      created_at   TEXT    DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-      delivered_at TEXT    DEFAULT NULL,
-      total        REAL    DEFAULT 0,
+      id               TEXT    PRIMARY KEY,
+      table_id         TEXT    NOT NULL,
+      status           TEXT    DEFAULT 'active'
+                               CHECK(status IN ('active','delivered','closed')),
+      created_at       TEXT    DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+      delivered_at     TEXT    DEFAULT NULL,
+      total            REAL    DEFAULT 0,
+      payment_method   TEXT    DEFAULT NULL,
+      payment_details  TEXT    DEFAULT NULL,
+      change_amount    REAL    DEFAULT 0,
+      customer_name    TEXT    DEFAULT NULL,
+      customer_phone   TEXT    DEFAULT NULL,
+      session_id       TEXT    DEFAULT NULL,
       FOREIGN KEY (table_id) REFERENCES tables(id)
     )
   `);
