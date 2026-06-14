@@ -225,7 +225,7 @@ function OrderContent({ pastRounds, activeRound, allOrders, cart, selectedTable,
             <div className="px-3 pt-2.5 pb-1 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-500" />
               <span className="text-[9px] font-bold uppercase tracking-widest text-brand-400">
-                {allOrders.length > 0 ? `New Items — Round ${pastRounds.length + (activeRound ? 2 : 1)}` : 'Order'}
+                {activeRound ? 'Adding to Current Round' : allOrders.length > 0 ? `Round ${pastRounds.length + 1} — New Order` : 'New Order'}
               </span>
             </div>
           )}
@@ -266,20 +266,40 @@ interface TotalsBarProps {
 function TotalsBar({ allOrders, cart, sym, cartTotal, grandTotal }: TotalsBarProps) {
   const hasContent = cart.length > 0 || allOrders.length > 0;
   if (!hasContent) return null;
+
+  // Split so we never render the same round in both OrderContent AND TotalsBar
+  const deliveredOrders = allOrders.filter(o => o.status === 'delivered');
+  const activeOrder     = allOrders.find(o => o.status === 'active') ?? null;
+  const totalRounds     = allOrders.length;
+
   return (
     <div className="border-t border-surface-border px-3 py-2 space-y-1 flex-shrink-0">
-      {allOrders.map((o, i) => {
+      {/* One line per delivered round */}
+      {deliveredOrders.map((o, i) => {
         const roundTotal = o.items.reduce((s, it) => s + it.price * it.quantity, 0);
+        const label = totalRounds > 1 ? `Round ${i + 1} (delivered)` : 'Delivered';
         return (
           <div key={o.id} className="flex justify-between text-xs text-zinc-600">
-            <span>{allOrders.length > 1 ? `Round ${i + 1}` : o.status === 'delivered' ? 'Delivered' : 'Previous'}</span>
+            <span>{label}</span>
             <span className="font-mono">{sym}{roundTotal.toFixed(2)}</span>
           </div>
         );
       })}
+      {/* Active round — just show total; full details are shown in OrderContent above */}
+      {activeOrder && (
+        <div className="flex justify-between text-xs text-zinc-500">
+          <span>
+            {totalRounds > 1 ? `Round ${deliveredOrders.length + 1} (in kitchen)` : 'In kitchen'}
+          </span>
+          <span className="font-mono">
+            {sym}{activeOrder.items.reduce((s, it) => s + it.price * it.quantity, 0).toFixed(2)}
+          </span>
+        </div>
+      )}
+      {/* Cart items not yet sent */}
       {cart.length > 0 && (
         <div className="flex justify-between text-xs text-zinc-400">
-          <span>New items</span>
+          <span>{activeOrder ? 'Pending (unsent)' : 'New order (unsent)'}</span>
           <span className="font-mono">{sym}{cartTotal.toFixed(2)}</span>
         </div>
       )}
@@ -440,9 +460,24 @@ export default function WaiterView() {
     if (!selectedTable || !cart.length) { toast('Add items first', 'error'); return; }
     setLoading(true);
     try {
-      const activeItems = activeOrder?.status === 'active'
-        ? activeOrder.items.map(i => ({ menu_item_id: i.menu_item_id, name: i.name, price: i.price, quantity: i.quantity, note: i.note }))
-        : [];
+      // If there's already an active round in the kitchen, fetch its CURRENT items
+      // fresh from the server to avoid using stale local state (e.g. after cancellations).
+      // Then merge: existing items + new cart items. The backend will diff and emit
+      // order_additions only for the truly new items.
+      let activeItems: { menu_item_id: number; name: string; price: number; quantity: number; note: string }[] = [];
+      if (activeRound) {
+        const freshOrders = await import('../services/api').then(m => m.getTableOrders(selectedTable.id));
+        const freshActive = freshOrders.find((o: any) => o.status === 'active');
+        if (freshActive) {
+          activeItems = freshActive.items.map((i: any) => ({
+            menu_item_id: i.menu_item_id,
+            name: i.name,
+            price: i.price,
+            quantity: i.quantity,
+            note: i.note || '',
+          }));
+        }
+      }
       await submitOrder({ table_id: selectedTable.id, items: [...activeItems, ...cart] });
       setCart([]);
       toast(`Order sent for ${selectedTable.label}`, 'success');
@@ -499,9 +534,9 @@ export default function WaiterView() {
   const billOrderId      = allOrders.length > 0 ? allOrders[allOrders.length - 1].id : null;
 
   const filtered    = menuItems.filter(m => m.category_id === activeCatId);
-  const isDelivered = activeOrder?.status === 'delivered';
   const pastRounds  = allOrders.filter(o => o.status === 'delivered');
   const activeRound = allOrders.find(o => o.status === 'active') || null;
+  const isDelivered = !activeRound && pastRounds.length > 0;  // true when all rounds are delivered
 
   const handleBill = () => {
     if (!hasBillableOrder) { toast('No order for this table', 'error'); return; }

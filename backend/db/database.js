@@ -223,6 +223,12 @@ function _initSchema() {
     )
   `);
 
+  // Migration: add session_id to tables if it doesn't exist yet
+  try {
+    _raw.run(`ALTER TABLE tables ADD COLUMN session_id TEXT DEFAULT NULL`);
+    console.log('[DB] Migrated tables: added session_id column');
+  } catch (_) { /* column already exists — safe to ignore */ }
+
   _raw.run(`
     CREATE TABLE IF NOT EXISTS orders (
       id               TEXT    PRIMARY KEY,
@@ -241,6 +247,32 @@ function _initSchema() {
       FOREIGN KEY (table_id) REFERENCES tables(id)
     )
   `);
+
+  // Migration: add payment and session columns to orders if they don't exist yet
+  try {
+    _raw.run(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`);
+    console.log('[DB] Migrated orders: added payment_method column');
+  } catch (_) {}
+  try {
+    _raw.run(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`);
+    console.log('[DB] Migrated orders: added payment_details column');
+  } catch (_) {}
+  try {
+    _raw.run(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`);
+    console.log('[DB] Migrated orders: added change_amount column');
+  } catch (_) {}
+  try {
+    _raw.run(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`);
+    console.log('[DB] Migrated orders: added customer_name column');
+  } catch (_) {}
+  try {
+    _raw.run(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`);
+    console.log('[DB] Migrated orders: added customer_phone column');
+  } catch (_) {}
+  try {
+    _raw.run(`ALTER TABLE orders ADD COLUMN session_id TEXT DEFAULT NULL`);
+    console.log('[DB] Migrated orders: added session_id column');
+  } catch (_) { /* column already exists — safe to ignore */ }
 
   _raw.run(`
     CREATE TABLE IF NOT EXISTS order_items (
