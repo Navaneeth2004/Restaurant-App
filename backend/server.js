@@ -36,6 +36,8 @@ app.use('/api/export',              require('./routes/export'));
 
 app.use('/api/backup',              require('./routes/backup'));
 app.use('/api/reset',               require('./routes/reset'));
+app.use('/api/bug-report', require('./routes/bug-report'));
+
 
 const buildDir = path.join(__dirname, '..', 'frontend', 'build');
 if (fs.existsSync(buildDir)) {

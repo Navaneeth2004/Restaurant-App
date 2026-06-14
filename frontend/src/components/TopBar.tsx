@@ -10,6 +10,7 @@ const NAV: NavItem[] = [
   { key: 'kitchen', label: 'Kitchen', roles: ['admin','kitchen'] },
   { key: 'admin',   label: 'Admin',   roles: ['admin'] },
   { key: 'reports', label: 'Reports', roles: ['admin'] },
+  { key: 'bugreport', label: 'Ticket', roles: ['admin','waiter','kitchen'] }
 ];
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;

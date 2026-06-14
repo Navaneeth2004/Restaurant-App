@@ -84,4 +84,4 @@ export interface AuthUser {
   role: UserRole;
 }
 
-export type ViewType = 'waiter' | 'kitchen' | 'admin' | 'reports';
+export type ViewType = 'waiter' | 'kitchen' | 'admin' | 'reports' | 'bugreport';

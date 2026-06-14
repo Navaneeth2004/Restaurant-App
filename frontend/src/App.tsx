@@ -9,6 +9,7 @@ import WaiterView   from './views/WaiterView';
 import KitchenView  from './views/KitchenView';
 import AdminView    from './views/AdminView';
 import ReportsView  from './views/ReportsView';
+import BugReportView from './views/BugReportView';
 import { verifyPin as apiVerifyPin } from './services/api';
 import type { ViewType, UserRole } from './types';
 import './index.css';
@@ -61,6 +62,7 @@ function Shell() {
     kitchen: <KitchenView />,
     admin:   <AdminView />,
     reports: <ReportsView />,
+    bugreport: <BugReportView currentView={view} />,
   };
 
   return (
