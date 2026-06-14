@@ -228,25 +228,6 @@ function ReprintBill({ session, onClose }: ReprintBillProps) {
         </div>
 
         <div className="bill-scroll flex-1 overflow-y-auto" style={{ padding: '14px 18px', background: '#fff' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <div>
-              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 14, color: '#111' }}>
-                Table {session.tableId}
-              </span>
-              {session.customerName && (
-                <div style={{ fontSize: 11, color: '#666', marginTop: 2, fontFamily: sans }}>
-                  {session.customerName}{session.customerPhone ? ` · ${session.customerPhone}` : ''}
-                </div>
-              )}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontFamily: sans, fontSize: 11, color: '#999' }}>
-                {session.allItems.reduce((s, i) => s + i.quantity, 0)} items
-              </span>
-              {session.paymentMethod && <PaymentBadge method={session.paymentMethod} />}
-            </div>
-          </div>
-
           <div style={{ borderTop: '1px dashed #e5e5e5', margin: '6px 0' }} />
 
           <div style={{ margin: '10px 0' }}>
@@ -287,13 +268,6 @@ function ReprintBill({ session, onClose }: ReprintBillProps) {
             <span style={{ fontSize: 15, fontWeight: 800, color: '#111' }}>TOTAL</span>
             <span style={{ fontSize: 15, fontWeight: 800, color: brand }}>{sym}{total.toFixed(2)}</span>
           </div>
-
-          {session.paymentMethod && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#999', fontFamily: sans, marginTop: 4 }}>
-              <span>Payment</span>
-              <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{session.paymentMethod}</span>
-            </div>
-          )}
 
           <div style={{ borderTop: '1px dashed #e5e5e5', margin: '6px 0' }} />
 

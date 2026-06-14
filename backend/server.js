@@ -31,8 +31,9 @@ app.use('/api/tables',              require('./routes/tables'));
 app.use('/api/orders',              require('./routes/orders'));
 app.use('/api/staff',               require('./routes/staff'));
 app.use('/api/reports',             require('./routes/reports'));
+app.use('/api/export/vyapar-sales', require('./routes/vyapar-sales'));
 app.use('/api/export',              require('./routes/export'));
-app.use('/api/export/vyapar-items', require('./routes/vyapar-items'));
+
 app.use('/api/backup',              require('./routes/backup'));
 app.use('/api/reset',               require('./routes/reset'));
 

@@ -5,19 +5,19 @@ const router  = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const db      = require('../db/database');
 
-// ── Migration: add payment + customer columns if missing ──────────────────
+// ── Migration: add payment + customer + session columns if missing ─────────
 (function migrate() {
   try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
+  // session_id groups all rounds from the same customer visit at a table.
+  try { db.exec(`ALTER TABLE orders ADD COLUMN session_id TEXT DEFAULT NULL`); } catch (_) {}
 })();
 
 // ── In-memory guards ──────────────────────────────────────────────────────
-// Prevents two concurrent POST /orders for the same table racing each other
 const _pendingTables = new Set();
-// Prevents two concurrent PATCH /close for the same order
 const _closingOrders = new Set();
 
 function getOrderWithItems(orderId) {
@@ -40,25 +40,39 @@ router.get('/active', (req, res) => {
   res.json(orders);
 });
 
+// Returns only the rounds belonging to the current customer session at this table.
 router.get('/table/:tableId/all', (req, res) => {
+  const latest = db.prepare(
+    "SELECT session_id FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at DESC LIMIT 1"
+  ).get(req.params.tableId);
+
+  if (!latest || !latest.session_id) return res.json([]);
+
   const orders = db.prepare(
-    "SELECT * FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at ASC"
-  ).all(req.params.tableId);
+    "SELECT * FROM orders WHERE table_id = ? AND session_id = ? ORDER BY created_at ASC"
+  ).all(req.params.tableId, latest.session_id);
+
   orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
   res.json(orders);
 });
 
+// Returns the most relevant current order for a table.
+// Prefers an active order (new round being built) over a delivered one.
 router.get('/table/:tableId', (req, res) => {
+  // First check if there's an active round (takes priority — customer is adding more)
   let order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(req.params.tableId);
+  // Fall back to most recently delivered (waiting for bill)
   if (!order) order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY delivered_at DESC LIMIT 1").get(req.params.tableId);
   if (!order) return res.json(null);
   order.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
   res.json(order);
 });
 
+// BUG FIX: History must only show 'closed' orders (fully billed).
+// Previously it included 'delivered' which caused unbilled orders to appear in history.
 router.get('/history', (req, res) => {
   const limit = parseInt(req.query.limit) || 100;
-  const orders = db.prepare("SELECT * FROM orders WHERE status IN ('delivered','closed') ORDER BY created_at DESC LIMIT ?").all(limit);
+  const orders = db.prepare("SELECT * FROM orders WHERE status = 'closed' ORDER BY created_at DESC LIMIT ?").all(limit);
   orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
   res.json(orders);
 });
@@ -80,9 +94,21 @@ router.post('/', (req, res) => {
     let order, isNew, newItems = [];
 
     const saveOrder = db.transaction(() => {
-      const existing = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
+      // BUG FIX: Also check for 'delivered' orders when looking for an existing session.
+      // Previously only 'active' was checked, so adding items after Round 1 was delivered
+      // would create a new order row (Round 2) with a NEW session_id — breaking the rounds
+      // grouping and causing the kitchen view to miss it.
+      // Now: if an active order exists, update it as before.
+      //      If only a delivered order exists (same session), create a new round linked to
+      //      that session_id so all rounds stay grouped under the same bill.
+      const existingActive = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
+      const existingDelivered = !existingActive
+        ? db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY created_at DESC LIMIT 1").get(table_id)
+        : null;
+      const existing = existingActive || null;
 
       if (existing) {
+        // Update the existing active round
         const prevItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(existing.id);
         const prevMap = {};
         for (const pi of prevItems) {
@@ -101,9 +127,15 @@ router.post('/', (req, res) => {
         isNew = false;
         return getOrderWithItems(existing.id);
       } else {
-        const orderId = uuidv4();
+        // Create a new order row.
+        // If a delivered order exists for this table, inherit its session_id so this new
+        // round is grouped with the previous rounds on the same bill.
+        // If no previous order exists at all, generate a fresh session_id (new customer).
+        const orderId   = uuidv4();
+        const sessionId = existingDelivered ? existingDelivered.session_id : uuidv4();
         const now = new Date().toISOString();
-        db.prepare('INSERT INTO orders (id, table_id, status, created_at) VALUES (?, ?, ?, ?)').run(orderId, table_id, 'active', now);
+        db.prepare('INSERT INTO orders (id, table_id, session_id, status, created_at) VALUES (?, ?, ?, ?, ?)')
+          .run(orderId, table_id, sessionId, 'active', now);
         db.prepare("UPDATE tables SET status = 'occupied' WHERE id = ?").run(table_id);
         const ins = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
         for (const it of items) ins.run(orderId, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
@@ -154,9 +186,10 @@ router.patch('/:id/cancel-item', (req, res) => {
       const remaining = db.prepare('SELECT COUNT(*) as c FROM order_items WHERE order_id = ?').get(req.params.id).c;
       if (remaining === 0) {
         db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
+        // Check within the same session only
         const other = db.prepare(
-          "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ('active','delivered') AND id != ?"
-        ).get(order.table_id, req.params.id).c;
+          "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered') AND id != ?"
+        ).get(order.table_id, order.session_id, req.params.id).c;
         if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
         return { cancelled: true, order_cancelled: true, table_id: order.table_id, cancelledItem, orderStatus: order.status };
       }
@@ -205,9 +238,11 @@ router.patch('/:id/cancel', (req, res) => {
 
       const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(req.params.id);
       db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
+
+      // Only free the table if no other orders in this session remain active/delivered
       const other = db.prepare(
-        "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ('active','delivered') AND id != ?"
-      ).get(order.table_id, req.params.id).c;
+        "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered') AND id != ?"
+      ).get(order.table_id, order.session_id, req.params.id).c;
       if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
       return { success: true, table_id: order.table_id, tableId: order.table_id, items, orderStatus: order.status };
     });
@@ -253,14 +288,9 @@ router.patch('/:id/deliver', (req, res) => {
 });
 
 // ── PATCH close order with payment details ─────────────────────────────────
-// Protected against concurrent double-close by locking on table_id, not orderId.
-// This prevents two devices from both closing multiple rounds of the same table.
 router.patch('/:id/close', (req, res) => {
   const orderId = req.params.id;
 
-  // Resolve the table_id early so we can lock on the table, not the order.
-  // Multiple rounds for the same table have different order IDs, so locking
-  // on orderId alone lets two concurrent requests slip through.
   const orderRow = db.prepare('SELECT table_id FROM orders WHERE id = ?').get(orderId);
   if (!orderRow) return res.status(404).json({ error: 'Order not found' });
 
@@ -274,19 +304,17 @@ router.patch('/:id/close', (req, res) => {
   const { payment_method, payment_details, change_amount, customer_name, customer_phone } = req.body || {};
 
   try {
-    // Ensure columns exist (idempotent)
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN session_id TEXT DEFAULT NULL`); } catch (_) {}
 
     const close = db.transaction(() => {
       const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
       if (!order) return { notFound: true };
 
-      // ── Idempotency: already closed → return success without erroring ──
-      // This handles the "two waiters both clicked pay" scenario gracefully.
       if (order.status === 'closed') {
         return { alreadyClosed: true, table_id: order.table_id };
       }
@@ -297,7 +325,8 @@ router.patch('/:id/close', (req, res) => {
       const custName   = customer_name  || null;
       const custPhone  = customer_phone || null;
 
-      // Close all active/delivered orders for this table atomically
+      // Close only the orders belonging to this customer's session_id.
+      // This prevents accidentally closing a new customer's order at the same table.
       db.prepare(`
         UPDATE orders
         SET status = 'closed',
@@ -307,8 +336,9 @@ router.patch('/:id/close', (req, res) => {
             customer_name   = ?,
             customer_phone  = ?
         WHERE table_id = ?
+          AND session_id = ?
           AND status IN ('active','delivered')
-      `).run(payMethod, payDetails, change, custName, custPhone, order.table_id);
+      `).run(payMethod, payDetails, change, custName, custPhone, order.table_id, order.session_id);
 
       db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
       return { table_id: order.table_id };
@@ -320,13 +350,11 @@ router.patch('/:id/close', (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    // Emit even if already closed so the second waiter's UI also clears
     const finalOrder = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
     req.io.emit('order_closed', { orderId, tableId: finalOrder?.table_id });
     req.io.emit('tables_updated');
 
     if (result.alreadyClosed) {
-      // Second waiter: table was already paid — return success so their UI clears normally
       return res.json({ success: true, note: 'Order was already closed by another device.' });
     }
 

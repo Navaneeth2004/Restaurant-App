@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ConfirmModal from '../../components/ConfirmModal';
 import { useAdminLock, PinModal } from '../../context/AdminLockContext';
 import { verifyPin as apiVerifyPin } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
 
 const API = process.env.REACT_APP_API_URL || window.location.origin;
 
@@ -106,14 +107,6 @@ function Spinner() {
   return <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block flex-shrink-0" />;
 }
 
-function Flash({ ok, text }: { ok: boolean; text: string }) {
-  return (
-    <div className={`flex items-start gap-2.5 px-4 py-3 rounded-xl border text-xs leading-relaxed ${ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
-      {ok ? <IconCheck className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /> : <IconWarn className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />}
-      <span>{text}</span>
-    </div>
-  );
-}
 
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return <div className={`rounded-xl border border-surface-border bg-surface-card ${className}`}>{children}</div>;
@@ -231,6 +224,7 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
 
 export default function AdminBackup() {
   const { config: lockConfig, requirePin } = useAdminLock();
+  const toast = useToast();
   const [status,        setStatus]        = useState<DriveStatus | null>(null);
   const [localStatus,   setLocalStatus]   = useState<LocalStatus | null>(null);
   const [downloading,   setDownloading]   = useState(false);
@@ -248,7 +242,6 @@ export default function AdminBackup() {
   const [selectedSched, setSelectedSched] = useState('off');
   const [selectedLocalSched, setSelectedLocalSched] = useState('off');
   const [localFolder,   setLocalFolder]   = useState('');
-  const [msg,           setMsg]           = useState<{ ok: boolean; text: string } | null>(null);
   const [showResetPanel, setShowResetPanel] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
   const [secretClicks,   setSecretClicks]  = useState(0);
@@ -258,7 +251,7 @@ export default function AdminBackup() {
   const popupRef = useRef<Window | null>(null);
   const popupCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const flash = (ok: boolean, text: string) => { setMsg({ ok, text }); setTimeout(() => setMsg(null), 7000); };
+  const flash = (ok: boolean, text: string) => { toast(text, ok ? 'success' : 'error'); };
 
   const loadStatus = useCallback(async () => {
     try {
@@ -469,8 +462,6 @@ export default function AdminBackup() {
         <h3 className="font-bold text-white text-base mb-1">Backup &amp; Restore</h3>
         <p className="text-zinc-500 text-xs leading-relaxed">Protects your menu, orders, staff and settings. Back up regularly.</p>
       </div>
-
-      {msg && <Flash ok={msg.ok} text={msg.text} />}
 
       {/* ── Download + Restore ── */}
       <Card className="divide-y divide-surface-border overflow-hidden">

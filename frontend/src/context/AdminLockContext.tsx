@@ -27,14 +27,14 @@ const STORAGE_KEY = 'pos_admin_lock_cfg';
 
 function loadConfig(): AdminLockConfig {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
   return { enabled: false, timeout_mins: 5 };
 }
 
 function saveConfig(c: AdminLockConfig) {
-  try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(c)); } catch {}
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(c)); } catch {}
 }
 
 const Ctx = createContext<AdminLockCtx>({

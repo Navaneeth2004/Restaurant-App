@@ -40,13 +40,21 @@ function seedSortOrder() {
     if (!cols.some(c => c.name === 'sort_order')) {
       db.exec('ALTER TABLE menu_items ADD COLUMN sort_order INTEGER DEFAULT 0');
     }
-    const items = db.prepare('SELECT id, category_id FROM menu_items ORDER BY category_id, id').all();
+    // BUG FIX: Only seed items whose sort_order is still 0 (never been manually set).
+    // Previously ALL items were reseeded on every server start, wiping any custom
+    // drag order the user had saved via PATCH /reorder.
+    const items = db.prepare('SELECT id, category_id FROM menu_items WHERE sort_order = 0 ORDER BY category_id, id').all();
+    if (items.length === 0) return; // nothing to seed — all items already have an order
+    // Find the current max sort_order per category so new seeds don't collide
+    // with already-ordered items in the same category.
+    const maxRows = db.prepare('SELECT category_id, MAX(sort_order) as m FROM menu_items GROUP BY category_id').all();
     const posMap = {};
+    for (const r of maxRows) posMap[r.category_id] = r.m ?? 0;
     const update = db.prepare('UPDATE menu_items SET sort_order = ? WHERE id = ?');
     const seedAll = db.transaction(() => {
       for (const row of items) {
-        const pos = posMap[row.category_id] ?? 0;
-        posMap[row.category_id] = pos + 1;
+        const pos = (posMap[row.category_id] ?? 0) + 1;
+        posMap[row.category_id] = pos;
         update.run(row.category_id * 10000 + pos, row.id);
       }
     });

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { getStaff, createStaff, deleteStaff } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
+import ConfirmModal from '../../components/ConfirmModal';
 import type { Staff } from '../../types';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
@@ -117,6 +118,7 @@ export default function AdminStaff() {
   const [staff,        setStaff]        = useState<Staff[]>([]);
   const [modal,        setModal]        = useState(false);
   const [changePinFor, setChangePinFor] = useState<Staff | null>(null);
+  const [confirm,      setConfirm]      = useState<{ staff: Staff } | null>(null);
   const toast = useToast();
   const { user } = useAuth();
 
@@ -128,12 +130,16 @@ export default function AdminStaff() {
     catch (e: any) { toast(e.response?.data?.error||'Failed','error'); }
   };
 
-  const handleDelete = async (id: number) => {
-    if (id === user?.id) { toast("You can't delete your own account",'error'); return; }
-    if (!window.confirm('Remove this staff member?')) return;
+  const handleDelete = (s: Staff) => {
+    if (s.id === user?.id) { toast("You can't delete your own account", 'error'); return; }
+    setConfirm({ staff: s });
+  };
+
+  const doDelete = async (id: number) => {
+    setConfirm(null);
     try {
       await deleteStaff(id);
-      toast('Removed','success');
+      toast('Removed', 'success');
       load();
     } catch (e: any) {
       toast(e.response?.data?.error || 'Failed to remove staff', 'error');
@@ -209,7 +215,7 @@ export default function AdminStaff() {
                   </button>
                   <button
                     className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${canDelete(s) ? 'text-red-500/40 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-700 cursor-not-allowed'}`}
-                    onClick={() => canDelete(s) && handleDelete(s.id)}
+                    onClick={() => canDelete(s) && handleDelete(s)}
                     title={deleteTooltip(s)}
                     disabled={!canDelete(s)}
                   >
@@ -224,16 +230,6 @@ export default function AdminStaff() {
       </div>
 
       <div className="mt-5 space-y-3">
-        {adminCount <= 1 && (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 flex items-start gap-3">
-            <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-            <div>
-              <p className="text-red-400 text-xs font-semibold mb-0.5">Only one admin account</p>
-              <p className="text-zinc-500 text-xs leading-relaxed">Add another admin before you can delete this one. You can't be locked out of your own system.</p>
-            </div>
-          </div>
-        )}
-
         <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
           <div className="flex items-start gap-3">
             <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
@@ -251,6 +247,16 @@ export default function AdminStaff() {
         </div>
       </div>
 
+      {confirm && (
+        <ConfirmModal
+          title="Remove Staff Member"
+          message={`Remove ${confirm.staff.name} from staff? This cannot be undone.`}
+          confirmLabel="Remove"
+          danger
+          onConfirm={() => doDelete(confirm.staff.id)}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
       {modal && <StaffModal onSave={handleAdd} onClose={() => setModal(false)} />}
       {changePinFor && <ChangePinModal staff={changePinFor} onSave={handleChangePin} onClose={() => setChangePinFor(null)} />}
     </div>
