@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import ConfirmModal from '../../components/ConfirmModal';
 import { useAdminLock, PinModal } from '../../context/AdminLockContext';
 import { verifyPin as apiVerifyPin } from '../../services/api';
@@ -145,7 +146,7 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
     }
   };
 
-  return (
+  return ReactDOM.createPortal(
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[99999] flex items-center justify-center p-4" onClick={onClose}>
       <div className="rounded-xl border border-red-500/40 bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl" onClick={e => e.stopPropagation()}>
         {step === 1 && (
@@ -218,7 +219,8 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -314,12 +316,7 @@ export default function AdminBackup() {
     finally { setDownloading(false); }
   };
 
-  const handleRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!window.confirm('This will overwrite your current database and images. Continue?')) {
-      if (restoreRef.current) restoreRef.current.value = ''; return;
-    }
+  const doRestore = async (file: File) => {
     setRestoring(true);
     try {
       const token = await getToken();
@@ -332,6 +329,18 @@ export default function AdminBackup() {
       flash(true, d.message || 'Restored. Please restart the POS.');
     } catch (e: any) { flash(false, e.message || 'Restore failed'); }
     finally { setRestoring(false); if (restoreRef.current) restoreRef.current.value = ''; }
+  };
+
+  const handleRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Always require admin PIN before overwriting data
+    requirePin(
+      () => doRestore(file),
+      'Confirm Restore',
+      'Enter admin PIN to overwrite all current data with this backup'
+    );
+    if (restoreRef.current) restoreRef.current.value = '';
   };
 
   const handleSaveCreds = async () => {
@@ -457,11 +466,16 @@ export default function AdminBackup() {
   const redirectUri  = status?.redirect_uri || `${window.location.origin}/api/backup/gdrive/callback`;
 
   return (
-    <div className="space-y-4 max-w-xl">
+    <div className="space-y-4">
       <div>
         <h3 className="font-bold text-white text-base mb-1">Backup &amp; Restore</h3>
         <p className="text-zinc-500 text-xs leading-relaxed">Protects your menu, orders, staff and settings. Back up regularly.</p>
       </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+
+      {/* ── LEFT: Download + Restore + tip + danger ── */}
+      <div className="space-y-4">
 
       {/* ── Download + Restore ── */}
       <Card className="divide-y divide-surface-border overflow-hidden">
@@ -504,6 +518,39 @@ export default function AdminBackup() {
           <input ref={restoreRef} type="file" accept=".zip" className="hidden" onChange={handleRestoreFile} />
         </div>
       </Card>
+
+      {/* ── Manual restore tip ── */}
+      <div className="rounded-xl border border-surface-border bg-surface-raised px-4 py-3">
+        <p className="text-zinc-500 text-xs leading-relaxed">
+          <span className="text-zinc-300 font-semibold">To restore manually:</span>{' '}
+          stop the POS, replace <span className="font-mono text-zinc-400">backend/data/restaurant.db</span> and <span className="font-mono text-zinc-400">uploads/</span> with files from the zip, then restart.
+        </p>
+      </div>
+
+      <div className="text-center pt-2">
+        <span className="text-zinc-800 text-[10px] cursor-default select-none" onClick={handleSecretClick} title="">v1.0.0</span>
+      </div>
+
+      {showResetPanel && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 animate-slide-up">
+          <div className="flex items-start gap-3">
+            <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+            <div className="flex-1">
+              <p className="text-red-400 text-xs font-semibold">Danger Zone</p>
+              <p className="text-zinc-600 text-xs mt-0.5 leading-relaxed">Factory reset wipes all order history and images. Staff and menu are kept. Take a backup before proceeding.</p>
+            </div>
+            <button className="btn btn-sm bg-transparent border-transparent text-zinc-600 hover:text-zinc-400 flex-shrink-0 text-xs" onClick={() => setShowResetPanel(false)}>Hide</button>
+          </div>
+          <button className="mt-3 w-full py-2 rounded-lg border border-red-500/30 bg-red-500/8 text-red-400 text-xs font-semibold hover:bg-red-500/15 transition-colors" onClick={guardedShowResetModal}>
+            Factory Reset…
+          </button>
+        </div>
+      )}
+
+      </div>{/* end left col */}
+
+      {/* ── RIGHT: Local Auto-Backup + Google Drive ── */}
+      <div className="space-y-4">
 
       {/* ── Local Auto-Backup ── */}
       <Card className="overflow-hidden">
@@ -683,33 +730,6 @@ export default function AdminBackup() {
         )}
       </Card>
 
-      <div className="rounded-xl border border-surface-border bg-surface-raised px-4 py-3">
-        <p className="text-zinc-500 text-xs leading-relaxed">
-          <span className="text-zinc-300 font-semibold">To restore manually:</span>{' '}
-          stop the POS, replace <span className="font-mono text-zinc-400">backend/data/restaurant.db</span> and <span className="font-mono text-zinc-400">uploads/</span> with files from the zip, then restart.
-        </p>
-      </div>
-
-      <div className="text-center pt-2">
-        <span className="text-zinc-800 text-[10px] cursor-default select-none" onClick={handleSecretClick} title="">v1.0.0</span>
-      </div>
-
-      {showResetPanel && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 animate-slide-up">
-          <div className="flex items-start gap-3">
-            <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-            <div className="flex-1">
-              <p className="text-red-400 text-xs font-semibold">Danger Zone</p>
-              <p className="text-zinc-600 text-xs mt-0.5 leading-relaxed">Factory reset wipes all order history and images. Staff and menu are kept. Take a backup before proceeding.</p>
-            </div>
-            <button className="btn btn-sm bg-transparent border-transparent text-zinc-600 hover:text-zinc-400 flex-shrink-0 text-xs" onClick={() => setShowResetPanel(false)}>Hide</button>
-          </div>
-          <button className="mt-3 w-full py-2 rounded-lg border border-red-500/30 bg-red-500/8 text-red-400 text-xs font-semibold hover:bg-red-500/15 transition-colors" onClick={guardedShowResetModal}>
-            Factory Reset…
-          </button>
-        </div>
-      )}
-
       {showResetModal && (
         <FactoryResetModal
           onClose={() => setShowResetModal(false)}
@@ -721,6 +741,9 @@ export default function AdminBackup() {
           }}
         />
       )}
+
+      </div>{/* end right col */}
+      </div>{/* end grid */}
     </div>
   );
 }

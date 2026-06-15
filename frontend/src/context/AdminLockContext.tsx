@@ -2,7 +2,6 @@ import React, {
   createContext,
   useContext,
   useState,
-  useEffect,
   useCallback,
   useRef,
 } from 'react';
@@ -23,7 +22,8 @@ interface AdminLockCtx {
   requirePin: (onSuccess: () => void, title?: string, subtitle?: string) => void;
 }
 
-const STORAGE_KEY = 'pos_admin_lock_cfg';
+const STORAGE_KEY  = 'pos_admin_lock_cfg';
+const LOCKED_KEY   = 'pos_admin_locked';   // sessionStorage — survives refresh, clears on tab close
 
 function loadConfig(): AdminLockConfig {
   try {
@@ -117,8 +117,10 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
         </div>
 
         {/* PIN dots */}
-        <div className={`flex justify-center gap-3 mb-5 ${shake ? 'animate-[wiggle_0.3s_ease-in-out]' : ''}`}
-          style={shake ? { animation: 'shake 0.3s ease-in-out' } : {}}>
+        <div
+          className="flex justify-center gap-3 mb-5"
+          style={shake ? { animation: 'shake 0.3s ease-in-out' } : {}}
+        >
           {[0,1,2,3,4,5].map(i => (
             <div key={i} className={`w-3 h-3 rounded-full border-2 transition-all duration-200 ${
               i < pin.length
@@ -192,7 +194,18 @@ export function AdminLockProvider({ children, verifyPin }: {
   verifyPin: (pin: string) => Promise<boolean>;
 }) {
   const [config, setConfigState] = useState<AdminLockConfig>(loadConfig);
-  const [isLocked, setIsLocked] = useState(false);
+
+  // ── isLocked persisted to sessionStorage ─────────────────────────────
+  // sessionStorage survives page refreshes but clears when the tab is closed,
+  // which is the right security scope for a UI lock.
+  const [isLocked, setIsLocked] = useState<boolean>(() => {
+    try {
+      const cfg = loadConfig();
+      if (!cfg.enabled) return false;
+      return sessionStorage.getItem(LOCKED_KEY) === 'true';
+    } catch { return false; }
+  });
+
   const [showModal, setShowModal] = useState(false);
   const [modalProps, setModalProps] = useState<{ title?: string; subtitle?: string }>({});
   const resolveRef = useRef<((ok: boolean) => void) | null>(null);
@@ -203,10 +216,23 @@ export function AdminLockProvider({ children, verifyPin }: {
   const setConfig = useCallback((c: AdminLockConfig) => {
     setConfigState(c);
     saveConfig(c);
+    // If lock is being disabled, also clear the persisted locked state
+    if (!c.enabled) {
+      try { sessionStorage.removeItem(LOCKED_KEY); } catch {}
+      setIsLocked(false);
+    }
   }, []);
 
-  const lock = useCallback(() => { setIsLocked(true); }, []);
-  const unlock = useCallback(() => { setIsLocked(false); lastUnlockRef.current = Date.now(); }, []);
+  const lock = useCallback(() => {
+    setIsLocked(true);
+    try { sessionStorage.setItem(LOCKED_KEY, 'true'); } catch {}
+  }, []);
+
+  const unlock = useCallback(() => {
+    setIsLocked(false);
+    lastUnlockRef.current = Date.now();
+    try { sessionStorage.removeItem(LOCKED_KEY); } catch {}
+  }, []);
 
   const isExpired = useCallback(() => {
     if (config.timeout_mins <= 0) return true;
@@ -256,7 +282,7 @@ export function AdminLockProvider({ children, verifyPin }: {
       lock,
       unlock,
       requestPin,
-      requirePin: (onSuccess: () => void, title?: string, subtitle?: string) => requirePin(onSuccess, title, subtitle),
+      requirePin,
     }}>
       {children}
 

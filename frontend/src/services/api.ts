@@ -90,3 +90,8 @@ export const reorderMenuItems = (items: { id: number; sort_order: number }[]): P
 
 export const importMenu = (data: any): Promise<{ success: boolean; categories_added: number; items_added: number; items_skipped: number }> =>
   api.post('/export/menu/import', data).then(r => r.data);
+export const logoutStaff = (staffId: number, sessionToken: string): Promise<void> =>
+  api.post('/staff/logout', { staffId, sessionToken }).then(r => r.data);
+
+export const validateSession = (staffId: number, sessionToken: string): Promise<{ valid: boolean }> =>
+  api.get('/staff/session/validate', { params: { staffId, sessionToken } }).then(r => r.data);

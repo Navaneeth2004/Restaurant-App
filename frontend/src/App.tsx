@@ -3,14 +3,13 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider }          from './context/ToastContext';
 import { SettingsProvider }        from './context/SettingsContext';
 import { AdminLockProvider, useAdminLock } from './context/AdminLockContext';
-import LoginScreen  from './components/LoginScreen';
-import TopBar       from './components/TopBar';
-import WaiterView   from './views/WaiterView';
-import KitchenView  from './views/KitchenView';
-import AdminView    from './views/AdminView';
-import ReportsView  from './views/ReportsView';
+import LoginScreen   from './components/LoginScreen';
+import TopBar        from './components/TopBar';
+import WaiterView    from './views/WaiterView';
+import KitchenView   from './views/KitchenView';
+import AdminView     from './views/AdminView';
+import ReportsView   from './views/ReportsView';
 import BugReportView from './views/BugReportView';
-import { verifyPin as apiVerifyPin } from './services/api';
 import type { ViewType, UserRole } from './types';
 import './index.css';
 
@@ -34,8 +33,7 @@ function Shell() {
 
   const handleSetView = async (v: ViewType) => {
     if (v === 'admin' && config.enabled && user.role === 'admin') {
-      // Check if we need to ask for PIN
-      const now = Date.now();
+      const now     = Date.now();
       const elapsed = (now - lastAdminVisit.current) / 60000;
       const needPin = isLocked || (config.timeout_mins === 0 ? lastAdminVisit.current > 0 : elapsed > config.timeout_mins);
 
@@ -49,7 +47,6 @@ function Shell() {
     setView(v);
   };
 
-  // When navigating away from admin, start tracking
   const handleViewChange = async (v: ViewType) => {
     if (view === 'admin' && v !== 'admin') {
       lastAdminVisit.current = Date.now();
@@ -58,10 +55,10 @@ function Shell() {
   };
 
   const content: Record<ViewType, React.ReactNode> = {
-    waiter:  <WaiterView />,
-    kitchen: <KitchenView />,
-    admin:   <AdminView />,
-    reports: <ReportsView />,
+    waiter:    <WaiterView />,
+    kitchen:   <KitchenView />,
+    admin:     <AdminView />,
+    reports:   <ReportsView />,
     bugreport: <BugReportView currentView={view} />,
   };
 
@@ -75,10 +72,22 @@ function Shell() {
   );
 }
 
+// Called by AdminLockProvider to verify the admin PIN.
+// Uses /staff/check-pin — does NOT create or touch login sessions.
+const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
+
 async function verifyPinFn(pin: string): Promise<boolean> {
   try {
-    const user = await apiVerifyPin(pin);
-    return user.role === 'admin';
+    const tokenRes = await fetch(`${API_BASE}/api/auth/token`);
+    const tokenData = await tokenRes.json();
+    const token = tokenData.token;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE}/api/staff/check-pin`, {
+      method: 'POST', headers, body: JSON.stringify({ pin }),
+    });
+    const data = await res.json();
+    return data.valid === true;
   } catch {
     return false;
   }

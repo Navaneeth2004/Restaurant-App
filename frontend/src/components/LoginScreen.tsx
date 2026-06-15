@@ -1,27 +1,57 @@
 import React, { useState } from 'react';
-import { verifyPin } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useToast } from '../context/ToastContext';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
+async function getApiToken(): Promise<string | null> {
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/token`);
+    const d = await r.json();
+    return d.token ?? null;
+  } catch { return null; }
+}
+
+async function doVerifyPin(pin: string): Promise<any> {
+  const token = await getApiToken();
+  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}/api/staff/verify`, {
+    method: 'POST', headers: h, body: JSON.stringify({ pin }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const err: any = new Error(data.error || 'Login failed');
+    err.status = res.status;
+    err.data   = data;
+    throw err;
+  }
+  return data; // { id, name, role, sessionToken }
+}
+
 export default function LoginScreen() {
   const [pin,     setPin]     = useState('');
   const [loading, setLoading] = useState(false);
-  const { login }  = useAuth();
-  const settings   = useSettings();
-  const toast      = useToast();
-  const logoUrl    = (settings as any).logo_url as string | undefined;
+  const { login, kickedOut, clearKicked } = useAuth();
+  const settings = useSettings();
+  const toast    = useToast();
+  const logoUrl  = (settings as any).logo_url as string | undefined;
 
   const tryLogin = async (p: string) => {
     if (loading || p.length < 4) return;
     setLoading(true);
     try {
-      const user = await verifyPin(p);
-      login(user);
-    } catch {
-      toast('Incorrect PIN — try again', 'error');
+      const result = await doVerifyPin(p);
+      const { sessionToken, ...user } = result;
+      login(user, sessionToken);
+    } catch (err: any) {
+      if (err.status === 409) {
+        // Already logged in on another device — show as toast
+        toast(err.data?.error || 'Already logged in on another device', 'error');
+      } else {
+        toast('Incorrect PIN — try again', 'error');
+      }
       setTimeout(() => setPin(''), 400);
     } finally {
       setLoading(false);
@@ -72,6 +102,24 @@ export default function LoginScreen() {
           <p className="text-zinc-500 text-sm mt-1">Enter your PIN to continue</p>
         </div>
 
+        {/* Kicked-out banner — shown when the heartbeat detected another device took this session */}
+        {kickedOut && (
+          <div className="mb-4 flex items-start gap-2.5 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 animate-slide-up">
+            <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>
+            </svg>
+            <div className="flex-1 min-w-0">
+              <p className="text-amber-400 text-xs font-semibold">Logged out automatically</p>
+              <p className="text-amber-400/70 text-xs mt-0.5">Your account signed in on another device.</p>
+            </div>
+            <button onClick={clearKicked} className="text-amber-400/50 hover:text-amber-400 transition-colors flex-shrink-0">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        )}
+
         <div className="card p-6">
           {/* PIN dots */}
           <div className="flex justify-center gap-3 mb-6">
@@ -90,39 +138,25 @@ export default function LoginScreen() {
               if (type === 'digit') {
                 const val = digitValues[digitIdx++];
                 return (
-                  <button
-                    key={i}
-                    onClick={() => handleDigit(String(val))}
-                    disabled={loading}
-                    className="h-14 rounded-xl font-mono font-medium text-lg border bg-surface-raised border-surface-border text-white hover:bg-zinc-600 hover:border-zinc-500 active:scale-95 active:bg-brand-500/20 transition-all duration-100 select-none disabled:opacity-50"
-                  >
+                  <button key={i} onClick={() => handleDigit(String(val))} disabled={loading}
+                    className="h-14 rounded-xl font-mono font-medium text-lg border bg-surface-raised border-surface-border text-white hover:bg-zinc-600 hover:border-zinc-500 active:scale-95 active:bg-brand-500/20 transition-all duration-100 select-none disabled:opacity-50">
                     {val}
                   </button>
                 );
               }
-
               if (type === 'back') {
                 return (
-                  <button
-                    key={i}
-                    onClick={handleBack}
-                    disabled={loading || pin.length === 0}
-                    className="h-14 rounded-xl border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 active:scale-95 transition-all duration-100 select-none disabled:opacity-30 flex items-center justify-center"
-                  >
+                  <button key={i} onClick={handleBack} disabled={loading || pin.length === 0}
+                    className="h-14 rounded-xl border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 active:scale-95 transition-all duration-100 select-none disabled:opacity-30 flex items-center justify-center">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9.75L14.25 12m0 0l2.25 2.25M14.25 12l2.25-2.25M14.25 12L12 14.25m-2.58 4.92l-6.374-6.375a1.125 1.125 0 010-1.59L9.42 4.83c.211-.211.498-.33.796-.33H19.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25h-9.284c-.298 0-.585-.119-.796-.33z" />
                     </svg>
                   </button>
                 );
               }
-
               return (
-                <button
-                  key={i}
-                  onClick={handleSubmit}
-                  disabled={loading || pin.length < 4}
-                  className="h-14 rounded-xl border bg-brand-500 border-brand-600 text-white hover:bg-brand-600 active:scale-95 transition-all duration-100 select-none disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
-                >
+                <button key={i} onClick={handleSubmit} disabled={loading || pin.length < 4}
+                  className="h-14 rounded-xl border bg-brand-500 border-brand-600 text-white hover:bg-brand-600 active:scale-95 transition-all duration-100 select-none disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center">
                   {loading
                     ? <span className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
                     : <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
