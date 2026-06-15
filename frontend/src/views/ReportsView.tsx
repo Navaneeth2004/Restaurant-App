@@ -181,31 +181,51 @@ function ReprintBill({ session, onClose }: ReprintBillProps) {
 
   return (
     <div
-      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3"
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col h-full md:items-center md:justify-center md:p-3"
       onClick={onClose}
     >
       <style>{`
         @media print {
-          @page { size: 80mm auto; margin: 4mm; }
+          @page { size: 80mm auto; margin: 0; }
+          * {
+            -webkit-print-color-adjust: economy !important;
+            print-color-adjust: economy !important;
+            color-adjust: economy !important;
+          }
           body * { visibility: hidden !important; }
           .bill-print-area, .bill-print-area * { visibility: visible !important; }
           .bill-print-area {
             position: fixed !important;
             top: 0 !important; left: 0 !important;
-            width: 72mm !important; max-width: 72mm !important;
+            width: 100% !important; max-width: 100% !important;
             border-radius: 0 !important; box-shadow: none !important;
             max-height: none !important; overflow: visible !important;
+            background: #ffffff !important;
+            padding: 4mm 4mm 6mm !important;
           }
           .bill-scroll { overflow: visible !important; max-height: none !important; }
           .no-print { display: none !important; }
-          .bill-header { background: #fff !important; color: #111 !important; }
-          .bill-header * { color: #111 !important; background: transparent !important; }
+          .bill-header {
+            background: #ffffff !important;
+            background-color: #ffffff !important;
+            background-image: none !important;
+            padding: 8px 0 10px !important;
+          }
+          .bill-header * {
+            color: #111111 !important;
+            background: transparent !important;
+            background-color: transparent !important;
+            background-image: none !important;
+          }
+          .bill-print-area div,
+          .bill-print-area span,
+          .bill-print-area p { color: #111111 !important; }
+          body { background: white !important; }
         }
       `}</style>
 
       <div
-        className="bill-print-area flex flex-col bg-white w-full max-w-[320px] rounded-2xl overflow-hidden shadow-2xl"
-        style={{ maxHeight: '90vh' }}
+        className="bill-print-area flex flex-col bg-white w-full flex-1 min-h-0 md:flex-none md:h-auto md:max-w-[320px] md:rounded-2xl md:max-h-[90vh] overflow-hidden shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         <div className="bill-header flex-shrink-0" style={{ background: brand, padding: '16px 20px 14px', textAlign: 'center' }}>
@@ -367,14 +387,9 @@ function SessionRow({ session, sym, taxPct, brand }: {
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
+            {/* Row 1: table name + badges */}
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-white text-sm font-semibold">Table {session.tableId}</span>
-              {session.customerName && (
-                <span className="text-zinc-400 text-xs font-medium truncate max-w-[120px]" title={session.customerName}>
-                  {session.customerName}
-                  {session.customerPhone && <span className="text-zinc-600"> · {session.customerPhone}</span>}
-                </span>
-              )}
               {isMultiRound && (
                 <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-400 border border-brand-500/25">
                   {session.orders.length} rounds
@@ -382,9 +397,19 @@ function SessionRow({ session, sym, taxPct, brand }: {
               )}
               {paymentMethod && <PaymentBadge method={paymentMethod} />}
             </div>
-            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            {/* Row 2: customer name if present */}
+            {session.customerName && (
+              <div className="text-zinc-400 text-xs truncate mt-0.5">
+                {session.customerName}
+                {session.customerPhone && <span className="text-zinc-600"> · {session.customerPhone}</span>}
+              </div>
+            )}
+            {/* Row 3: date · items */}
+            <div className="flex items-center gap-1.5 mt-0.5">
               <span className="text-zinc-500 text-xs">
-                {date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                {date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                {', '}
+                {date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
               </span>
               <span className="text-zinc-700 text-xs">·</span>
               <span className="text-zinc-500 text-xs">
@@ -659,7 +684,7 @@ export default function ReportsView() {
     <div className="rounded-xl border border-surface-border bg-surface-card p-4 sm:p-5">
       <h3 className="font-bold text-white text-sm mb-1">30-Day Insights</h3>
       <p className="text-zinc-600 text-xs mb-4">Trends and patterns from the last month</p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <div className="rounded-lg bg-surface-raised border border-surface-border p-3">
           <p className="text-zinc-600 text-[10px] uppercase tracking-wide mb-1 font-semibold">Best Day</p>
           {bestDay ? (
@@ -840,17 +865,25 @@ export default function ReportsView() {
 
       {section === 'history' && (
         <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-          <div className="flex items-center gap-2 mb-4 flex-wrap">
-            <div className="flex items-center gap-2 bg-surface-card border border-surface-border rounded-xl px-3 py-2 flex-wrap">
-              <svg className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 9v7.5" /></svg>
-              <input type="date" className="bg-transparent text-sm text-white outline-none w-32" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-              <span className="text-zinc-600 text-xs">—</span>
-              <input type="date" className="bg-transparent text-sm text-white outline-none w-32" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          <div className="mb-4 space-y-3">
+            <div className="flex items-end gap-3 flex-wrap">
+              <div>
+                <label className="label">From</label>
+                <input type="date" className="input w-44" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">To</label>
+                <input type="date" className="input w-44" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+              </div>
+              <div className="flex items-center gap-2 pb-0.5">
+                <button className="btn btn-brand" onClick={loadHistory}>Search</button>
+                {(dateFrom || dateTo) && (
+                  <button className="btn btn-sm" onClick={() => { setDateFrom(''); setDateTo(''); }}>Clear</button>
+                )}
+              </div>
             </div>
-            <button className="btn btn-brand btn-sm" onClick={loadHistory}>Search</button>
-            {(dateFrom || dateTo) && <button className="btn btn-sm" onClick={() => { setDateFrom(''); setDateTo(''); }}>Clear</button>}
             {sessions.length > 0 && (
-              <div className="ml-auto flex items-center gap-3">
+              <div className="flex items-center gap-3">
                 <span className="text-zinc-500 text-sm">{sessions.length} visits</span>
                 <span className="font-mono font-bold text-white text-sm">{sym}{histTotal.toFixed(2)}</span>
               </div>

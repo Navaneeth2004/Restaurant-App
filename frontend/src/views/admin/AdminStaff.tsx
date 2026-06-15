@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { getStaff, createStaff, deleteStaff } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
+import { useAdminLock } from '../../context/AdminLockContext';
 import ConfirmModal from '../../components/ConfirmModal';
 import type { Staff } from '../../types';
 
@@ -121,6 +122,7 @@ export default function AdminStaff() {
   const [confirm,      setConfirm]      = useState<{ staff: Staff } | null>(null);
   const toast = useToast();
   const { user } = useAuth();
+  const { requirePin, config: lockConfig } = useAdminLock();
 
   const load = useCallback(async () => { try { setStaff(await getStaff()); } catch {} }, []);
   useEffect(() => { load(); }, []);
@@ -132,7 +134,8 @@ export default function AdminStaff() {
 
   const handleDelete = (s: Staff) => {
     if (s.id === user?.id) { toast("You can't delete your own account", 'error'); return; }
-    setConfirm({ staff: s });
+    if (!lockConfig.enabled) { setConfirm({ staff: s }); return; }
+    requirePin(() => setConfirm({ staff: s }), 'Remove Staff Member', 'Enter admin PIN to remove staff');
   };
 
   const doDelete = async (id: number) => {

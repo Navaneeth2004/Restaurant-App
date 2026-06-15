@@ -90,6 +90,13 @@
     margin: 0;
   }
 
+  /* Suppress ALL backgrounds globally — no brand colors, no dark UI */
+  * {
+    -webkit-print-color-adjust: economy !important;
+    print-color-adjust: economy !important;
+    color-adjust: economy !important;
+  }
+
   body * { visibility: hidden !important; }
 
   .bill-print-area,
@@ -114,9 +121,20 @@
     background: white !important;
     font-size: 13px !important;
     line-height: 1.5 !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-    color-adjust: exact !important;
+  }
+
+  /* Strip brand-color header — white background, black text */
+  .bill-header {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    background-image: none !important;
+    padding: 8px 0 10px !important;
+  }
+  .bill-header * {
+    color: #111111 !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    background-image: none !important;
   }
 
   /* Force all bill text to pure black */
@@ -126,8 +144,6 @@
   .bill-print-area td,
   .bill-print-area th {
     color: #000000 !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
   }
 
   .bill-print-area .border-dashed,
@@ -135,11 +151,6 @@
     border-style: dashed !important;
     border-color: #555555 !important;
     border-width: 1px !important;
-  }
-
-  .bill-print-area .bill-header {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
   }
 
   /* Muted greys → readable dark grey */

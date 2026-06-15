@@ -113,7 +113,7 @@ function collectDiagnostics(user: any, currentView: string, sessionStart: Date) 
       os,
       type: deviceType,
       userAgent: ua,
-      screen: `${screen.width}×${screen.height} (${screen.colorDepth}bit)`,
+      screen: `${window.screen.width}×${window.screen.height} (${window.screen.colorDepth}bit)`,
       viewport: `${window.innerWidth}×${window.innerHeight}`,
       devicePixelRatio: window.devicePixelRatio,
       touch: 'ontouchstart' in window || navigator.maxTouchPoints > 0,

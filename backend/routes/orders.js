@@ -185,7 +185,9 @@ router.patch('/:id/cancel-item', (req, res) => {
 
       const remaining = db.prepare('SELECT COUNT(*) as c FROM order_items WHERE order_id = ?').get(req.params.id).c;
       if (remaining === 0) {
-        db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
+        // Delete the order entirely — it was never billed so it must not appear in reports history.
+        // Setting status='closed' with total=0 would create ghost ₹0.00 entries in the reports view.
+        db.prepare('DELETE FROM orders WHERE id = ?').run(req.params.id);
         // Check within the same session only
         const other = db.prepare(
           "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered') AND id != ?"

@@ -187,23 +187,29 @@ export default function AdminRestaurant() {
           <div className="rounded-xl border border-surface-border bg-surface-card p-5">
             <h3 className="font-bold text-white text-sm mb-3">Live Preview</h3>
             <div className="rounded-xl overflow-hidden border border-surface-border">
-              <div className="h-11 flex items-center px-3 gap-2" style={{ background: brandColor }}>
+              {/* Nav bar — scrollable so it never wraps on small screens */}
+              <div
+                className="flex items-center px-2.5 gap-2 overflow-x-auto"
+                style={{ background: brandColor, height: 44, scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}
+              >
                 {logoPreview
                   ? <img src={logoPreview} alt="logo" className="w-6 h-6 rounded object-cover flex-shrink-0" />
                   : <div className="w-6 h-6 rounded bg-white/20 flex-shrink-0" />
                 }
-                <span className="text-white text-sm font-bold">{(form.restaurant_name as string) || 'Restaurant'}</span>
-                <div className="ml-2 flex gap-1.5">
+                <span className="text-white text-sm font-bold flex-shrink-0 max-w-[90px] truncate">
+                  {(form.restaurant_name as string) || 'Restaurant'}
+                </span>
+                <div className="flex gap-1 flex-shrink-0 ml-1">
                   {['Waiter','Kitchen','Admin'].map(l => (
-                    <span key={l} className="px-2 py-0.5 rounded-md text-xs font-medium"
+                    <span key={l} className="px-2 py-0.5 rounded-md text-[11px] font-medium whitespace-nowrap"
                       style={{ background: brandColor+'33', color: '#fff', border: `1px solid ${brandColor}55` }}>{l}</span>
                   ))}
                 </div>
               </div>
               <div className="p-3 bg-surface text-zinc-500 text-xs space-y-1.5">
-                <div className="flex gap-2 items-center">
-                  <div className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: brandColor }}>Send to Kitchen</div>
-                  <div className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-500/30 text-emerald-400 bg-emerald-500/10">Generate Bill</div>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <div className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white whitespace-nowrap" style={{ background: brandColor }}>Send to Kitchen</div>
+                  <div className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-500/30 text-emerald-400 bg-emerald-500/10 whitespace-nowrap">Generate Bill</div>
                 </div>
               </div>
             </div>

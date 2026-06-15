@@ -218,45 +218,85 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
       >
         <style>{`
           @media print {
-            @page { size: 80mm auto; margin: 4mm; }
+            @page { size: 80mm auto; margin: 0; }
+
+            /* Kill ALL backgrounds/colors site-wide, then reveal only the bill */
+            * {
+              -webkit-print-color-adjust: economy !important;
+              print-color-adjust: economy !important;
+              color-adjust: economy !important;
+            }
+
             body * { visibility: hidden !important; }
             .bill-print-area, .bill-print-area * { visibility: visible !important; }
+
             .bill-print-area {
               position: fixed !important; top: 0 !important; left: 0 !important;
-              width: 72mm !important; max-width: 72mm !important;
+              width: 100% !important; max-width: 100% !important;
               border-radius: 0 !important; box-shadow: none !important;
               max-height: none !important; overflow: visible !important;
+              background: #ffffff !important;
+              padding: 4mm 4mm 6mm !important;
             }
             .bill-scroll { overflow: visible !important; max-height: none !important; }
             .no-print { display: none !important; }
-            .bill-header * { color: #111 !important; background: transparent !important; }
+
+            /* Strip brand-color header completely */
+            .bill-header {
+              background: #ffffff !important;
+              background-color: #ffffff !important;
+              background-image: none !important;
+              padding: 8px 0 10px !important;
+            }
+            .bill-header * {
+              color: #111111 !important;
+              background: transparent !important;
+              background-color: transparent !important;
+              background-image: none !important;
+            }
+
+            /* Table/date pill */
+            .bill-header-pill {
+              background: transparent !important;
+              border: 1px solid #aaaaaa !important;
+              color: #444444 !important;
+            }
+            .bill-header-pill svg { display: none !important; }
+
+            /* All bill text → black */
+            .bill-print-area div,
+            .bill-print-area span,
+            .bill-print-area p { color: #111111 !important; }
+
+            body {
+              background: white !important;
+            }
           }
         `}</style>
 
         <div
-          className="bill-print-area flex flex-col bg-white w-full md:max-w-sm md:rounded-2xl overflow-hidden shadow-2xl flex-1 md:flex-none md:max-h-[92vh]"
+          className="bill-print-area flex flex-col bg-white w-full h-full md:h-auto md:max-w-sm md:rounded-2xl overflow-hidden shadow-2xl flex-1 md:flex-none md:max-h-[92vh]"
           onClick={e => e.stopPropagation()}
         >
           {/* ── HEADER ── */}
-          <div className="bill-header flex-shrink-0" style={{ background: brand, padding: '14px 18px', textAlign: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 6 }}>
-              {logoUrl && (
-                <img src={`${API_BASE}${logoUrl}`} alt="logo"
-                  style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
-              )}
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', fontFamily: sans, letterSpacing: '-0.3px' }}>
-                  {settings.restaurant_name || 'Restaurant'}
-                </div>
-                {settings.address && (
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.8)', fontFamily: sans }}>{settings.address}</div>
-                )}
-              </div>
+          <div className="bill-header flex-shrink-0" style={{ background: brand, padding: '16px 20px 14px', textAlign: 'center' }}>
+            {logoUrl && (
+              <img src={`${API_BASE}${logoUrl}`} alt="logo"
+                style={{ width: 52, height: 52, borderRadius: 10, objectFit: 'cover', marginBottom: 8, display: 'inline-block' }} />
+            )}
+            <div style={{ fontSize: 17, fontWeight: 700, color: '#fff', fontFamily: sans }}>
+              {settings.restaurant_name || 'Restaurant'}
             </div>
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-              background: 'rgba(0,0,0,0.2)', borderRadius: 20, padding: '3px 12px',
-              fontSize: 11, color: '#fff', fontFamily: sans,
+            {settings.address && (
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 2, fontFamily: sans }}>{settings.address}</div>
+            )}
+            {(settings as any).phone && (
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', fontFamily: sans }}>{(settings as any).phone}</div>
+            )}
+            <div className="bill-header-pill" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              background: 'rgba(0,0,0,0.18)', borderRadius: 20, padding: '2px 10px',
+              fontSize: 11, color: '#fff', fontFamily: sans, marginTop: 7,
             }}>
               <svg width="10" height="10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
