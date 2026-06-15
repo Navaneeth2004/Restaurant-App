@@ -275,7 +275,7 @@ export default function AdminMenu() {
                   <button
                     type="button"
                     role="switch"
-                    aria-checked={item.available}
+                    aria-checked={Boolean(item.available)}
                     onClick={e => { e.stopPropagation(); toggleAvail(item); }}
                     className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border-2 transition-colors shadow-md focus:outline-none
                       ${item.available ? 'bg-brand-500 border-brand-600' : 'bg-zinc-700 border-zinc-600'}`}

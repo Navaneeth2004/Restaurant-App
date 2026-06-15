@@ -12,7 +12,6 @@ const db      = require('../db/database');
   try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
-  // session_id groups all rounds from the same customer visit at a table.
   try { db.exec(`ALTER TABLE orders ADD COLUMN session_id TEXT DEFAULT NULL`); } catch (_) {}
 })();
 
@@ -57,19 +56,14 @@ router.get('/table/:tableId/all', (req, res) => {
 });
 
 // Returns the most relevant current order for a table.
-// Prefers an active order (new round being built) over a delivered one.
 router.get('/table/:tableId', (req, res) => {
-  // First check if there's an active round (takes priority — customer is adding more)
   let order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(req.params.tableId);
-  // Fall back to most recently delivered (waiting for bill)
   if (!order) order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY delivered_at DESC LIMIT 1").get(req.params.tableId);
   if (!order) return res.json(null);
   order.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
   res.json(order);
 });
 
-// BUG FIX: History must only show 'closed' orders (fully billed).
-// Previously it included 'delivered' which caused unbilled orders to appear in history.
 router.get('/history', (req, res) => {
   const limit = parseInt(req.query.limit) || 100;
   const orders = db.prepare("SELECT * FROM orders WHERE status = 'closed' ORDER BY created_at DESC LIMIT ?").all(limit);
@@ -94,13 +88,6 @@ router.post('/', (req, res) => {
     let order, isNew, newItems = [];
 
     const saveOrder = db.transaction(() => {
-      // BUG FIX: Also check for 'delivered' orders when looking for an existing session.
-      // Previously only 'active' was checked, so adding items after Round 1 was delivered
-      // would create a new order row (Round 2) with a NEW session_id — breaking the rounds
-      // grouping and causing the kitchen view to miss it.
-      // Now: if an active order exists, update it as before.
-      //      If only a delivered order exists (same session), create a new round linked to
-      //      that session_id so all rounds stay grouped under the same bill.
       const existingActive = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
       const existingDelivered = !existingActive
         ? db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY created_at DESC LIMIT 1").get(table_id)
@@ -108,7 +95,6 @@ router.post('/', (req, res) => {
       const existing = existingActive || null;
 
       if (existing) {
-        // Update the existing active round
         const prevItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(existing.id);
         const prevMap = {};
         for (const pi of prevItems) {
@@ -127,10 +113,6 @@ router.post('/', (req, res) => {
         isNew = false;
         return getOrderWithItems(existing.id);
       } else {
-        // Create a new order row.
-        // If a delivered order exists for this table, inherit its session_id so this new
-        // round is grouped with the previous rounds on the same bill.
-        // If no previous order exists at all, generate a fresh session_id (new customer).
         const orderId   = uuidv4();
         const sessionId = existingDelivered ? existingDelivered.session_id : uuidv4();
         const now = new Date().toISOString();
@@ -185,10 +167,8 @@ router.patch('/:id/cancel-item', (req, res) => {
 
       const remaining = db.prepare('SELECT COUNT(*) as c FROM order_items WHERE order_id = ?').get(req.params.id).c;
       if (remaining === 0) {
-        // Delete the order entirely — it was never billed so it must not appear in reports history.
-        // Setting status='closed' with total=0 would create ghost ₹0.00 entries in the reports view.
+        // Delete the order entirely — never billed so must not appear in reports
         db.prepare('DELETE FROM orders WHERE id = ?').run(req.params.id);
-        // Check within the same session only
         const other = db.prepare(
           "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered') AND id != ?"
         ).get(order.table_id, order.session_id, req.params.id).c;
@@ -239,14 +219,26 @@ router.patch('/:id/cancel', (req, res) => {
       if (order.status === 'closed') return { error: 'Order already closed' };
 
       const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(req.params.id);
-      db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(req.params.id);
+
+      // DELETE entirely — cancelled orders were never billed and must not
+      // appear in reports history. Setting status='closed' was wrong because
+      // the history query treats ALL closed orders as completed/paid.
+      db.prepare('DELETE FROM order_items WHERE order_id = ?').run(req.params.id);
+      db.prepare('DELETE FROM orders WHERE id = ?').run(req.params.id);
 
       // Only free the table if no other orders in this session remain active/delivered
       const other = db.prepare(
-        "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered') AND id != ?"
-      ).get(order.table_id, order.session_id, req.params.id).c;
+        "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered')"
+      ).get(order.table_id, order.session_id).c;
       if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
-      return { success: true, table_id: order.table_id, tableId: order.table_id, items, orderStatus: order.status };
+
+      return {
+        success: true,
+        table_id: order.table_id,
+        tableId: order.table_id,
+        items,
+        orderStatus: order.status,
+      };
     });
 
     const result = cancel();
@@ -327,8 +319,6 @@ router.patch('/:id/close', (req, res) => {
       const custName   = customer_name  || null;
       const custPhone  = customer_phone || null;
 
-      // Close only the orders belonging to this customer's session_id.
-      // This prevents accidentally closing a new customer's order at the same table.
       db.prepare(`
         UPDATE orders
         SET status = 'closed',

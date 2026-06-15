@@ -122,16 +122,15 @@ router.post('/verify', async (req, res) => {
     if (match) {
       const existing = getSession(s.id);
       if (existing) {
-        // Allow re-login if it's the same device (token matches) — e.g. page refresh
-        // or socket reconnect cleared the client state but DB still has the session.
         const isSameDevice = currentSessionToken && existing.token === currentSessionToken;
-        if (!isSameDevice) {
+        const clientHasNoToken = !currentSessionToken;
+        if (!isSameDevice && !clientHasNoToken) {
           return res.status(409).json({
             error: `"${s.name}" is already logged in on another device. Log out there first.`,
             staffName: s.name,
           });
         }
-        // Same device — fall through and issue a fresh token below
+        // Same device OR client lost its token (browser restart/cleared storage) — allow re-login
       }
       const sessionToken = crypto.randomBytes(24).toString('hex');
       setSession(s.id, sessionToken);

@@ -246,6 +246,7 @@ export default function AdminBackup() {
   const [localFolder,   setLocalFolder]   = useState('');
   const [showResetPanel, setShowResetPanel] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
+  const [inlineRestoreFile, setInlineRestoreFile] = useState<File | null>(null);
   const [secretClicks,   setSecretClicks]  = useState(0);
   const secretTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
@@ -334,13 +335,11 @@ export default function AdminBackup() {
   const handleRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Always require admin PIN before overwriting data
-    requirePin(
-      () => doRestore(file),
-      'Confirm Restore',
-      'Enter admin PIN to overwrite all current data with this backup'
-    );
     if (restoreRef.current) restoreRef.current.value = '';
+
+    // Always require PIN for restore — destructive action, no exception
+    // even if admin lock is globally disabled.
+    setInlineRestoreFile(file);
   };
 
   const handleSaveCreds = async () => {
@@ -739,6 +738,29 @@ export default function AdminBackup() {
             setShowResetPanel(false);
             flash(true, 'Factory reset complete. All orders and images have been wiped.');
           }}
+        />
+      )}
+
+      {inlineRestoreFile && (
+        <PinModal
+          title="Confirm Restore"
+          subtitle="Enter admin PIN to overwrite all current data with this backup"
+          verifyFn={async (pin) => {
+            const token = await getToken();
+            const h: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (token) h['Authorization'] = `Bearer ${token}`;
+            const res = await fetch(`${API}/api/staff/check-pin`, {
+              method: 'POST', headers: h, body: JSON.stringify({ pin }),
+            });
+            const data = await res.json();
+            return data.valid === true;
+          }}
+          onSuccess={() => {
+            const file = inlineRestoreFile;
+            setInlineRestoreFile(null);
+            doRestore(file);
+          }}
+          onCancel={() => setInlineRestoreFile(null)}
         />
       )}
 
