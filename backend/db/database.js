@@ -355,6 +355,14 @@ function _initSchema() {
     });
   }
 
+  _raw.run(`
+    CREATE TABLE IF NOT EXISTS staff_sessions (
+      staff_id   INTEGER PRIMARY KEY,
+      token      TEXT NOT NULL,
+      created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    )
+  `);
+
   // Seed staff
   if (!execToRows(_raw.exec('SELECT COUNT(*) as c FROM staff'))[0]?.c) {
     _raw.run("INSERT INTO staff (name, pin, role) VALUES ('Admin',    '0000', 'admin')");

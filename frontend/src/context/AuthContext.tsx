@@ -54,9 +54,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => sessionStorage.getItem('pos_session_token')
   );
   const [kickedOut, setKickedOut] = useState(false);
+  // Track whether initial validation has completed (to avoid rendering children
+  // with stale auth state that gets immediately invalidated)
+  const [validating, setValidating] = useState<boolean>(() => {
+    // Only need to validate if we have a stored session
+    return !!(
+      sessionStorage.getItem('pos_user') &&
+      sessionStorage.getItem('pos_session_token')
+    );
+  });
 
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Ref so the interval callback always sees the latest values without re-creating
   const stateRef = useRef({ user, sessionToken });
   stateRef.current = { user, sessionToken };
 
@@ -92,6 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(u);
     setSessionToken(token);
     setKickedOut(false);
+    setValidating(false);
     sessionStorage.setItem('pos_user', JSON.stringify(u));
     sessionStorage.setItem('pos_session_token', token);
     startHeartbeat(u.id, token);
@@ -112,13 +121,72 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearKicked = useCallback(() => setKickedOut(false), []);
 
-  // Re-attach heartbeat on page reload if session is already in sessionStorage
+  // ── Validate session IMMEDIATELY on page load ────────────────────────────
+  // This catches server restarts: the server loses all in-memory sessions
+  // (now DB-backed, but still good to validate on load) and the stored
+  // sessionStorage token from a kept-away tab would be silently accepted
+  // without this check.
   useEffect(() => {
-    if (user && sessionToken) {
-      startHeartbeat(user.id, sessionToken);
+    const storedUser  = sessionStorage.getItem('pos_user');
+    const storedToken = sessionStorage.getItem('pos_session_token');
+
+    if (!storedUser || !storedToken) {
+      setValidating(false);
+      return;
     }
-    return stopHeartbeat;
+
+    let cancelled = false;
+    let parsedUser: AuthUser | null = null;
+    try { parsedUser = JSON.parse(storedUser); } catch {}
+
+    if (!parsedUser) {
+      sessionStorage.removeItem('pos_user');
+      sessionStorage.removeItem('pos_session_token');
+      setUser(null);
+      setSessionToken(null);
+      setValidating(false);
+      return;
+    }
+
+    authedGet(
+      `/api/staff/session/validate?staffId=${parsedUser.id}&sessionToken=${encodeURIComponent(storedToken)}`
+    ).then((data: any) => {
+      if (cancelled) return;
+      if (data.valid === false) {
+        // Session gone (e.g. server restarted, or another device grabbed the slot)
+        sessionStorage.removeItem('pos_user');
+        sessionStorage.removeItem('pos_session_token');
+        setUser(null);
+        setSessionToken(null);
+        // Show kicked-out banner only if we actually had a user loaded
+        setKickedOut(true);
+      } else {
+        // Session still valid — attach heartbeat
+        startHeartbeat(parsedUser!.id, storedToken);
+      }
+      setValidating(false);
+    }).catch(() => {
+      // Network error — trust the stored session optimistically
+      if (!cancelled) {
+        startHeartbeat(parsedUser!.id, storedToken);
+        setValidating(false);
+      }
+    });
+
+    return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Don't render children until initial validation completes — prevents a
+  // flash where the app loads as logged-in and then immediately kicks to login.
+  if (validating) {
+    return (
+      <AuthContext.Provider value={{ user: null, sessionToken: null, login, logout, kickedOut: false, clearKicked }}>
+        <div className="min-h-screen bg-surface flex items-center justify-center">
+          <div className="w-8 h-8 border-2 border-zinc-700 border-t-brand-500 rounded-full animate-spin" />
+        </div>
+      </AuthContext.Provider>
+    );
+  }
 
   return (
     <AuthContext.Provider value={{ user, sessionToken, login, logout, kickedOut, clearKicked }}>

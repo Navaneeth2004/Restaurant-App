@@ -232,22 +232,27 @@ export default function AdminStaff() {
         ))}
       </div>
 
-      <div className="mt-5 space-y-3">
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-          <div className="flex items-start gap-3">
-            <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
-            <div>
-              <p className="text-amber-400 text-xs font-semibold mb-1">Forgot your admin PIN?</p>
-              <p className="text-zinc-500 text-xs leading-relaxed">
-                If you're locked out, run this command on the server to reset the admin PIN to <span className="font-mono text-zinc-300">0000</span>:
-              </p>
-              <code className="block mt-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-green-400 text-[11px] font-mono select-all">
-                cd backend && node -e "const db=require('./db/database'); db.prepare(\"UPDATE staff SET pin='0000' WHERE role='admin'\").run(); console.log('Done');"
-              </code>
-              <p className="text-zinc-600 text-[10px] mt-1.5">Then log in with PIN 0000 and change it from this page.</p>
+      <div className="mt-5">
+        <details className="group">
+          <summary className="text-zinc-600 text-xs cursor-pointer hover:text-zinc-400 transition-colors select-none list-none flex items-center gap-1">
+            <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+            Forgot your admin PIN?
+          </summary>
+          <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+            <div className="flex items-start gap-3">
+              <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
+              <div>
+                <p className="text-zinc-500 text-xs leading-relaxed">
+                  Run this command on the server to reset the admin PIN to <span className="font-mono text-zinc-300">0000</span>:
+                </p>
+                <code className="block mt-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-green-400 text-[11px] font-mono select-all">
+                  cd backend && node -e "const db=require('./db/database'); db.prepare(\"UPDATE staff SET pin='0000' WHERE role='admin'\").run(); console.log('Done');"
+                </code>
+                <p className="text-zinc-600 text-[10px] mt-1.5">Then log in with PIN 0000 and change it from this page.</p>
+              </div>
             </div>
           </div>
-        </div>
+        </details>
       </div>
 
       {confirm && (

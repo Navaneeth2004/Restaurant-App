@@ -1,3 +1,5 @@
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
@@ -13,10 +15,29 @@ try {
 
 const SALT_ROUNDS = 10;
 
-// ── In-memory session store ───────────────────────────────────────────────
-// Maps staffId (number) → session token string.
-// Only one active session per staff member is allowed at a time.
-const activeSessions = new Map();
+// ── DB-backed session store ───────────────────────────────────────────────
+// Sessions are stored in the DB so server restarts don't leave ghost sessions.
+// Table is created in db/_initSchema (database.js) — already ready by the time
+// any route handler runs.
+
+function getSession(staffId) {
+  try {
+    return db.prepare('SELECT token FROM staff_sessions WHERE staff_id = ?').get(staffId);
+  } catch { return null; }
+}
+
+function setSession(staffId, token) {
+  try {
+    db.prepare('INSERT OR REPLACE INTO staff_sessions (staff_id, token, created_at) VALUES (?, ?, ?)')
+      .run(staffId, token, new Date().toISOString());
+  } catch {}
+}
+
+function deleteSession(staffId) {
+  try {
+    db.prepare('DELETE FROM staff_sessions WHERE staff_id = ?').run(staffId);
+  } catch {}
+}
 
 async function hashPin(pin) {
   if (!bcrypt) return pin;
@@ -85,30 +106,35 @@ router.delete('/:id', (req, res) => {
     }
   }
 
-  // Clear any active session before deleting
-  activeSessions.delete(member.id);
+  deleteSession(member.id);
   db.prepare('DELETE FROM staff WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
 // POST /api/staff/verify — login: checks PIN, enforces single-session, returns sessionToken
 router.post('/verify', async (req, res) => {
-  const { pin } = req.body;
+  const { pin, currentSessionToken } = req.body;
   if (!pin) return res.status(400).json({ error: 'PIN required' });
 
   const allStaff = db.prepare('SELECT id, name, role, pin FROM staff WHERE active = 1').all();
   for (const s of allStaff) {
     const match = await verifyPin(pin, s.pin);
     if (match) {
-      // Block if this account already has an active session on another device
-      if (activeSessions.has(s.id)) {
-        return res.status(409).json({
-          error: `"${s.name}" is already logged in on another device. Log out there first.`,
-          staffName: s.name,
-        });
+      const existing = getSession(s.id);
+      if (existing) {
+        // Allow re-login if it's the same device (token matches) — e.g. page refresh
+        // or socket reconnect cleared the client state but DB still has the session.
+        const isSameDevice = currentSessionToken && existing.token === currentSessionToken;
+        if (!isSameDevice) {
+          return res.status(409).json({
+            error: `"${s.name}" is already logged in on another device. Log out there first.`,
+            staffName: s.name,
+          });
+        }
+        // Same device — fall through and issue a fresh token below
       }
       const sessionToken = crypto.randomBytes(24).toString('hex');
-      activeSessions.set(s.id, sessionToken);
+      setSession(s.id, sessionToken);
       return res.json({ id: s.id, name: s.name, role: s.role, sessionToken });
     }
   }
@@ -120,10 +146,10 @@ router.post('/logout', (req, res) => {
   const { staffId, sessionToken } = req.body;
   if (!staffId) return res.status(400).json({ error: 'staffId required' });
   const id = Number(staffId);
-  const stored = activeSessions.get(id);
+  const stored = getSession(id);
   // Only clear if token matches — prevents a different device clearing someone else's slot
-  if (stored && stored === sessionToken) {
-    activeSessions.delete(id);
+  if (stored && stored.token === sessionToken) {
+    deleteSession(id);
   }
   res.json({ success: true });
 });
@@ -133,12 +159,11 @@ router.get('/session/validate', (req, res) => {
   const staffId = Number(req.query.staffId);
   const token   = req.query.sessionToken;
   if (!staffId || !token) return res.json({ valid: false });
-  const stored = activeSessions.get(staffId);
-  res.json({ valid: stored === token });
+  const stored = getSession(staffId);
+  res.json({ valid: !!(stored && stored.token === token) });
 });
 
 // POST /api/staff/check-pin — verify an admin PIN WITHOUT touching sessions.
-// Used by the admin lock modal so it never conflicts with the active login session.
 router.post('/check-pin', async (req, res) => {
   const { pin } = req.body;
   if (!pin) return res.status(400).json({ error: 'PIN required' });

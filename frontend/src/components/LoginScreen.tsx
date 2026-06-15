@@ -13,12 +13,12 @@ async function getApiToken(): Promise<string | null> {
   } catch { return null; }
 }
 
-async function doVerifyPin(pin: string): Promise<any> {
+async function doVerifyPin(pin: string, currentSessionToken?: string | null): Promise<any> {
   const token = await getApiToken();
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) h['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${API_BASE}/api/staff/verify`, {
-    method: 'POST', headers: h, body: JSON.stringify({ pin }),
+    method: 'POST', headers: h, body: JSON.stringify({ pin, currentSessionToken }),
   });
   const data = await res.json();
   if (!res.ok) {
@@ -42,7 +42,8 @@ export default function LoginScreen() {
     if (loading || p.length < 4) return;
     setLoading(true);
     try {
-      const result = await doVerifyPin(p);
+      const currentSessionToken = sessionStorage.getItem('pos_session_token');
+      const result = await doVerifyPin(p, currentSessionToken);
       const { sessionToken, ...user } = result;
       login(user, sessionToken);
     } catch (err: any) {

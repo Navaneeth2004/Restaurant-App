@@ -29,15 +29,27 @@ function Shell() {
     if (user) setView(DEFAULT_VIEW[user.role]);
   }, [user]);
 
+  // On refresh, if the lock is enabled and we were on admin, force back to waiter.
+  // This ensures a refreshed page cannot silently stay on admin without re-auth.
+  useEffect(() => {
+    if (config.enabled && view === 'admin') {
+      setView('waiter');
+      // Mark as locked so the next admin visit requires a PIN
+      lock();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!user) return <LoginScreen />;
 
   const handleSetView = async (v: ViewType) => {
     if (v === 'admin' && config.enabled && user.role === 'admin') {
       const now     = Date.now();
       const elapsed = (now - lastAdminVisit.current) / 60000;
-      const needPin = isLocked || (config.timeout_mins === 0 ? lastAdminVisit.current > 0 : elapsed > config.timeout_mins);
+      // Require PIN if: currently locked, OR timeout has expired since last unlock
+      const needPin = isLocked || lastAdminVisit.current === 0 ||
+        (config.timeout_mins === 0 ? true : elapsed > config.timeout_mins);
 
-      if (needPin && lastAdminVisit.current > 0) {
+      if (needPin) {
         const ok = await requestPin();
         if (!ok) return;
       }
