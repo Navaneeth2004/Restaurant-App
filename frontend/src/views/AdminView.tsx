@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import AdminRestaurant  from './admin/AdminRestaurant';
 import AdminTables      from './admin/AdminTables';
-import AdminMenu, { MenuExportImport } from './admin/AdminMenu';
+import AdminMenu        from './admin/AdminMenu';
+import MenuExportImport from './admin/MenuExportImport';
 import AdminCategories  from './admin/AdminCategories';
 import AdminStaff       from './admin/AdminStaff';
 import AdminFloor       from './admin/AdminFloor';
