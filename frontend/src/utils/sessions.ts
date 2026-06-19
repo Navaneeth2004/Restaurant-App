@@ -24,16 +24,17 @@ export interface TableSession {
   customerPhone: string | null;
 }
 
+// Orders without a session_id are "legacy" (created before the session_id column
+// was added). We group them by table with a 4-hour gap heuristic: if more than
+// 4 hours pass between consecutive orders at the same table, they are treated as
+// separate dining sessions. This avoids merging a January visit with a June visit.
+const LEGACY_SESSION_GAP_MS = 4 * 60 * 60 * 1000;
+
 /**
  * Groups orders into dining sessions using the `session_id` field.
  *
- * Key rule: once a table's orders are all 'closed', any subsequent order
- * for that table is ALWAYS a new session — regardless of time gap.
- *
- * NOTE: the legacy fallback `legacy-${order.table_id}` is intentionally
- * kept for backward-compat with old orders that pre-date the session_id
- * column. Those old orders will all be grouped together per table, which
- * is the least-bad option without a time-based heuristic.
+ * Modern orders (with session_id): grouped by their session_id — exact.
+ * Legacy orders (no session_id): grouped per table using a 4-hour gap heuristic.
  */
 export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
   const sorted = [...orders].sort(
@@ -45,7 +46,25 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
 
   for (const order of sorted) {
     const sessionId = (order as any).session_id as string | undefined;
-    const key       = sessionId ?? `legacy-${order.table_id}`;
+
+    // For legacy orders, find an existing session at the same table within the gap window.
+    let key: string;
+    if (sessionId) {
+      key = sessionId;
+    } else {
+      const legacyPrefix = `legacy-${order.table_id}-`;
+      const orderTime    = new Date(order.created_at).getTime();
+      let found: string | null = null;
+
+      for (const k of Object.keys(sessionMap)) {
+        if (!k.startsWith(legacyPrefix)) continue;
+        const sess     = sessions[sessionMap[k]];
+        const lastTime = new Date(sess.endedAt).getTime();
+        if (orderTime - lastTime < LEGACY_SESSION_GAP_MS) { found = k; break; }
+      }
+
+      key = found ?? `${legacyPrefix}${order.created_at}`;
+    }
 
     const existingIdx = sessionMap[key];
 

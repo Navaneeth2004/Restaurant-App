@@ -40,10 +40,20 @@ router.get('/active', (req, res) => {
 });
 
 // Returns only the rounds belonging to the current customer session at this table.
+// Falls back to the most-recently-closed session so the bill panel stays populated
+// immediately after payment, before the next loadTables refresh clears the table.
 router.get('/table/:tableId/all', (req, res) => {
-  const latest = db.prepare(
+  // Prefer an active/delivered session (table is still occupied)
+  let latest = db.prepare(
     "SELECT session_id FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at DESC LIMIT 1"
   ).get(req.params.tableId);
+
+  // Fall back to the most recent closed session (table was just billed)
+  if (!latest || !latest.session_id) {
+    latest = db.prepare(
+      "SELECT session_id FROM orders WHERE table_id = ? AND status = 'closed' ORDER BY created_at DESC LIMIT 1"
+    ).get(req.params.tableId);
+  }
 
   if (!latest || !latest.session_id) return res.json([]);
 
