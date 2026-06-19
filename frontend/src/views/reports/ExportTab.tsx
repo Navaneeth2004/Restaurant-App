@@ -4,6 +4,18 @@ import { useToast } from '../../context/ToastContext';
 
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 
+function todayStr(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+/** Returns an error string if the range is invalid, else ''. */
+function validateRange(from: string, to: string): string {
+  if (from && to && from > to) {
+    return `"From" date (${from}) is after "To" date (${to}). Please fix the range.`;
+  }
+  return '';
+}
+
 async function getToken(): Promise<string | null> {
   try {
     const res  = await fetch(`${API_ORIGIN}/api/auth/token`);
@@ -54,15 +66,32 @@ function PinLockNote() {
   );
 }
 
+function DateRangeError({ message }: { message: string }) {
+  if (!message) return null;
+  return (
+    <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/25 text-red-400 text-xs mt-3">
+      <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+      </svg>
+      {message}
+    </div>
+  );
+}
+
 // ── Detailed Report (CSV / JSON) ───────────────────────────────────────────
 
 function OurFormatSection() {
-  const today = new Date().toISOString().split('T')[0];
-  const [from,    setFrom]    = useState('');
-  const [to,      setTo]      = useState('');
+  const today = todayStr();
+  // FIX: preselect today's date in both From/To instead of leaving blank,
+  // so the export defaults to "today" rather than "everything ever" /
+  // requiring the user to pick dates first.
+  const [from,    setFrom]    = useState(today);
+  const [to,      setTo]      = useState(today);
   const [loading, setLoading] = useState<'csv' | 'json' | null>(null);
   const { requirePin, config: lockConfig } = useAdminLock();
   const toast = useToast();
+
+  const dateError = validateRange(from, to);
 
   const label = () => {
     if (from && to) return `${from}_to_${to}`;
@@ -88,6 +117,7 @@ function OurFormatSection() {
   };
 
   const run = (fmt: 'csv' | 'json') => {
+    if (dateError) { toast(dateError, 'error'); return; }
     if (!lockConfig.enabled) { doRun(fmt); return; }
     requirePin(() => doRun(fmt), 'Download Report', 'Enter admin PIN to export report');
   };
@@ -96,37 +126,44 @@ function OurFormatSection() {
     <div className="rounded-xl border border-surface-border bg-surface-card p-5">
       <h4 className="font-semibold text-white text-sm mb-1">Detailed Report</h4>
       <p className="text-zinc-500 text-xs mb-4">
-        Full breakdown — daily totals, top items, tax, and every order. Leave dates blank to export everything.
+        Full breakdown — daily totals, top items, tax, and every order. Defaults to today — change the dates or clear them to export everything.
       </p>
 
       <div className="flex items-end gap-3 flex-wrap">
         <div>
           <label className="label">From</label>
-          <input type="date" className="input w-44" value={from} max={today}
+          <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
+            value={from} max={today}
             onChange={e => setFrom(e.target.value)} />
         </div>
         <div>
           <label className="label">To</label>
-          <input type="date" className="input w-44" value={to} max={today}
+          <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
+            value={to} max={today}
             onChange={e => setTo(e.target.value)} />
         </div>
+        <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(today); setTo(today); }}>
+          Today
+        </button>
         {(from || to) && (
           <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(''); setTo(''); }}>
-            Clear
+            Clear (all time)
           </button>
         )}
       </div>
 
+      <DateRangeError message={dateError} />
+
       <div className="flex gap-2 mt-4 flex-wrap">
         <button className="btn btn-brand flex items-center gap-2"
-          onClick={() => run('csv')} disabled={loading !== null}>
+          onClick={() => run('csv')} disabled={loading !== null || !!dateError}>
           {loading === 'csv'
             ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
             : <><DownloadIcon />Export CSV</>
           }
         </button>
         <button className="btn flex items-center gap-2 text-xs"
-          onClick={() => run('json')} disabled={loading !== null}>
+          onClick={() => run('json')} disabled={loading !== null || !!dateError}>
           {loading === 'json'
             ? <><span className="w-3.5 h-3.5 border-2 border-zinc-400/40 border-t-zinc-400 rounded-full animate-spin" />Generating…</>
             : <><DownloadIcon />Export JSON</>
@@ -154,12 +191,15 @@ function OurFormatSection() {
 // ── Vyapar TaxOne Sales Export ────────────────────────────────────────────
 
 function VyaparSalesSection() {
-  const today = new Date().toISOString().split('T')[0];
-  const [from,    setFrom]    = useState('');
-  const [to,      setTo]      = useState('');
+  const today = todayStr();
+  // FIX: preselect today's date instead of leaving blank.
+  const [from,    setFrom]    = useState(today);
+  const [to,      setTo]      = useState(today);
   const [loading, setLoading] = useState<'without' | 'with' | null>(null);
   const { requirePin, config: lockConfig } = useAdminLock();
   const toast = useToast();
+
+  const dateError = validateRange(from, to);
 
   const label = () => {
     if (from && to) return `${from}_to_${to}`;
@@ -187,6 +227,7 @@ function VyaparSalesSection() {
   };
 
   const run = (type: 'without' | 'with') => {
+    if (dateError) { toast(dateError, 'error'); return; }
     if (!lockConfig.enabled) { doRun(type); return; }
     requirePin(() => doRun(type), 'Download Vyapar Sales', 'Enter admin PIN to export sales');
   };
@@ -199,31 +240,39 @@ function VyaparSalesSection() {
         for <span className="text-zinc-300">Bulk Upload → Sales</span> in Vyapar TaxOne.
         Choose <span className="text-zinc-300">Without Item</span> for a simple one-row-per-order
         accounting invoice, or <span className="text-zinc-300">With Item</span> for full line-item detail.
+        Defaults to today.
       </p>
 
       <div className="flex items-end gap-3 flex-wrap mb-4">
         <div>
           <label className="label">From</label>
-          <input type="date" className="input w-44" value={from} max={today}
+          <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
+            value={from} max={today}
             onChange={e => setFrom(e.target.value)} />
         </div>
         <div>
           <label className="label">To</label>
-          <input type="date" className="input w-44" value={to} max={today}
+          <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
+            value={to} max={today}
             onChange={e => setTo(e.target.value)} />
         </div>
+        <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(today); setTo(today); }}>
+          Today
+        </button>
         {(from || to) && (
           <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(''); setTo(''); }}>
-            Clear
+            Clear (all time)
           </button>
         )}
       </div>
 
-      <div className="flex gap-2 flex-wrap">
+      <DateRangeError message={dateError} />
+
+      <div className="flex gap-2 flex-wrap mt-4">
         <button
           className="btn btn-brand flex items-center gap-2"
           onClick={() => run('without')}
-          disabled={loading !== null}
+          disabled={loading !== null || !!dateError}
         >
           {loading === 'without'
             ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
@@ -233,7 +282,7 @@ function VyaparSalesSection() {
         <button
           className="btn flex items-center gap-2 text-xs"
           onClick={() => run('with')}
-          disabled={loading !== null}
+          disabled={loading !== null || !!dateError}
         >
           {loading === 'with'
             ? <><span className="w-3.5 h-3.5 border-2 border-zinc-400/40 border-t-zinc-400 rounded-full animate-spin" />Generating…</>

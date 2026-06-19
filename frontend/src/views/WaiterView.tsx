@@ -102,6 +102,11 @@ export default function WaiterView() {
   });
 
   const selectTable = async (table: Table) => {
+    if (selectedTable?.id === table.id) {
+      setMobileTab('menu');
+      return;
+    }
+  
     setSelectedTable(table);
     setCart([]);
     setActiveOrder(null);
