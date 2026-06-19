@@ -1,52 +1,29 @@
 /**
  * views/admin/AdminBackup.tsx
  *
- * Backup & Restore shell — download/restore buttons, the factory reset
- * danger zone, and two extracted sub-sections for local and Drive backups.
+ * Backup & Restore shell — download/restore, factory reset danger zone,
+ * and sub-sections for local and Drive backups.
  */
 
 'use client';
 import React, { useState, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useAdminLock, PinModal } from '../../context/AdminLockContext';
-import { useToast } from '../../context/ToastContext';
+import { useToast }               from '../../context/ToastContext';
+import { authedFetch, authedJson, getToken } from '../../utils/authedFetch';
 import LocalBackupSection  from './LocalBackupSection';
 import GoogleDriveSection  from './GoogleDriveSection';
 
 const API = process.env.REACT_APP_API_URL || window.location.origin;
 
-// ── Auth helpers ──────────────────────────────────────────────────────────
-let _token: string | null = null;
-async function getToken(): Promise<string | null> {
-  if (_token !== null) return _token;
-  try {
-    const r = await fetch(`${API}/api/auth/token`);
-    const d = await r.json();
-    _token = d.token ?? null;
-    return _token;
-  } catch { return null; }
-}
-async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {
-  const token = await getToken();
-  const h: Record<string, string> = { ...(opts.headers as any || {}) };
-  if (token) h['Authorization'] = `Bearer ${token}`;
-  return fetch(url, { ...opts, headers: h });
-}
-async function authedJson(url: string, opts: RequestInit = {}): Promise<any> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as any || {}) };
-  const token = await getToken();
-  if (token) h['Authorization'] = `Bearer ${token}`;
-  const r = await fetch(url, { ...opts, headers: h });
-  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error((d as any).error || `Error ${r.status}`); }
-  return r.json();
-}
-
-// ── Spinner ───────────────────────────────────────────────────────────────
 function Spinner() {
-  return <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block flex-shrink-0" />;
+  return (
+    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block flex-shrink-0" />
+  );
 }
 
 // ── Factory Reset Modal ───────────────────────────────────────────────────
+
 interface ResetModalProps { onClose: () => void; onDone: () => void; onError: (msg: string) => void; }
 
 function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
@@ -60,7 +37,10 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
     if (typed !== PHRASE) { setErr(`Type exactly: ${PHRASE}`); return; }
     setLoading(true); setErr('');
     try {
-      await authedJson(`${API}/api/reset`, { method: 'POST', body: JSON.stringify({ confirm: PHRASE }) });
+      await authedJson(`${API}/api/reset`, {
+        method: 'POST',
+        body: JSON.stringify({ confirm: PHRASE }),
+      });
       onDone();
     } catch (e: any) {
       onError(e.message || 'Reset failed');
@@ -69,9 +49,14 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
   };
 
   return ReactDOM.createPortal(
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[99999] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="rounded-xl border border-red-500/40 bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl" onClick={e => e.stopPropagation()}>
-
+    <div
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[99999] flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="rounded-xl border border-red-500/40 bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
         {step === 1 && (
           <>
             <div className="flex items-start gap-3 mb-4">
@@ -100,7 +85,10 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
             <p className="text-zinc-600 text-xs mb-4">Take a backup first if you need to keep any history.</p>
             <div className="flex gap-2">
               <button className="btn flex-1" onClick={onClose}>Cancel</button>
-              <button className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25" onClick={() => setStep(2)}>
+              <button
+                className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25"
+                onClick={() => setStep(2)}
+              >
                 I understand, continue
               </button>
             </div>
@@ -117,7 +105,9 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
               </div>
               <div>
                 <h3 className="font-bold text-red-400 text-sm">Are you absolutely sure?</h3>
-                <p className="text-zinc-400 text-xs leading-relaxed mt-1">This action cannot be undone. There is no undo, no recovery, no second chance.</p>
+                <p className="text-zinc-400 text-xs leading-relaxed mt-1">
+                  This action cannot be undone. There is no undo, no recovery, no second chance.
+                </p>
               </div>
             </div>
             <div className="rounded-lg bg-zinc-800/60 border border-zinc-700 p-3 mb-4">
@@ -126,7 +116,10 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
             </div>
             <div className="flex gap-2">
               <button className="btn flex-1" onClick={onClose}>No, cancel</button>
-              <button className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25" onClick={() => setStep(3)}>
+              <button
+                className="btn flex-1 bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25"
+                onClick={() => setStep(3)}
+              >
                 Yes, I have a backup
               </button>
             </div>
@@ -175,21 +168,21 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────
+
 export default function AdminBackup() {
   const { config: lockConfig, requirePin } = useAdminLock();
   const toast = useToast();
 
-  const [downloading,      setDownloading]      = useState(false);
-  const [restoring,        setRestoring]        = useState(false);
-  const [showResetPanel,   setShowResetPanel]   = useState(false);
-  const [showResetModal,   setShowResetModal]   = useState(false);
+  const [downloading,       setDownloading]       = useState(false);
+  const [restoring,         setRestoring]         = useState(false);
+  const [showResetPanel,    setShowResetPanel]    = useState(false);
+  const [showResetModal,    setShowResetModal]    = useState(false);
   const [inlineRestoreFile, setInlineRestoreFile] = useState<File | null>(null);
-  const [secretClicks,     setSecretClicks]     = useState(0);
+  const [secretClicks,      setSecretClicks]      = useState(0);
 
   const restoreRef  = useRef<HTMLInputElement>(null);
   const secretTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Secret tap to reveal danger zone ─────────────────────────────────
   const handleSecretClick = () => {
     setSecretClicks(n => {
       const next = n + 1;
@@ -200,7 +193,6 @@ export default function AdminBackup() {
     });
   };
 
-  // ── Download backup ───────────────────────────────────────────────────
   const handleDownload = async () => {
     setDownloading(true);
     try {
@@ -226,7 +218,6 @@ export default function AdminBackup() {
     requirePin(handleDownload, 'Confirm Download', 'Enter admin PIN to download backup');
   };
 
-  // ── Restore ───────────────────────────────────────────────────────────
   const doRestore = async (file: File) => {
     setRestoring(true);
     try {
@@ -250,11 +241,9 @@ export default function AdminBackup() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (restoreRef.current) restoreRef.current.value = '';
-    // Always require PIN for restore — destructive action
     setInlineRestoreFile(file);
   };
 
-  // ── Factory reset guard ───────────────────────────────────────────────
   const guardedShowResetModal = () => {
     if (!lockConfig.enabled) { setShowResetModal(true); return; }
     requirePin(() => setShowResetModal(true), 'Confirm Factory Reset', 'Enter admin PIN to access reset');
@@ -264,7 +253,9 @@ export default function AdminBackup() {
     <div className="space-y-4">
       <div>
         <h3 className="font-bold text-white text-base mb-1">Backup &amp; Restore</h3>
-        <p className="text-zinc-500 text-xs leading-relaxed">Protects your menu, orders, staff and settings. Back up regularly.</p>
+        <p className="text-zinc-500 text-xs leading-relaxed">
+          Protects your menu, orders, staff and settings. Back up regularly.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
@@ -297,15 +288,16 @@ export default function AdminBackup() {
                 ))}
               </div>
               <button onClick={guardedDownload} disabled={downloading} className="btn btn-brand btn-sm flex items-center gap-2">
-                {downloading
-                  ? <><Spinner />Preparing…</>
-                  : <>
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                      </svg>
-                      Download Backup
-                    </>
-                }
+                {downloading ? (
+                  <><Spinner />Preparing…</>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    Download Backup
+                  </>
+                )}
               </button>
             </div>
 
@@ -326,15 +318,16 @@ export default function AdminBackup() {
                 <p className="text-amber-400 text-xs">Replaces all current data. Restart the POS after restoring.</p>
               </div>
               <button onClick={() => restoreRef.current?.click()} disabled={restoring} className="btn btn-sm flex items-center gap-2">
-                {restoring
-                  ? <><Spinner />Restoring…</>
-                  : <>
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5m0 0L7.5 12m4.5-4.5V21" />
-                      </svg>
-                      Choose Backup File
-                    </>
-                }
+                {restoring ? (
+                  <><Spinner />Restoring…</>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5m0 0L7.5 12m4.5-4.5V21" />
+                    </svg>
+                    Choose Backup File
+                  </>
+                )}
               </button>
               <input ref={restoreRef} type="file" accept=".zip" className="hidden" onChange={handleRestoreFile} />
             </div>
@@ -366,7 +359,10 @@ export default function AdminBackup() {
                     Factory reset wipes all order history and images. Staff and menu are kept. Take a backup before proceeding.
                   </p>
                 </div>
-                <button className="btn btn-sm bg-transparent border-transparent text-zinc-600 hover:text-zinc-400 flex-shrink-0 text-xs" onClick={() => setShowResetPanel(false)}>
+                <button
+                  className="btn btn-sm bg-transparent border-transparent text-zinc-600 hover:text-zinc-400 flex-shrink-0 text-xs"
+                  onClick={() => setShowResetPanel(false)}
+                >
                   Hide
                 </button>
               </div>
@@ -405,12 +401,13 @@ export default function AdminBackup() {
           title="Confirm Restore"
           subtitle="Enter admin PIN to overwrite all current data with this backup"
           verifyFn={async (pin) => {
-            const token = await getToken();
-            const h: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (token) h['Authorization'] = `Bearer ${token}`;
-            const res  = await fetch(`${API}/api/staff/check-pin`, { method: 'POST', headers: h, body: JSON.stringify({ pin }) });
-            const data = await res.json();
-            return data.valid === true;
+            try {
+              const data = await authedJson(`${API}/api/staff/check-pin`, {
+                method: 'POST',
+                body: JSON.stringify({ pin }),
+              });
+              return data.valid === true;
+            } catch { return false; }
           }}
           onSuccess={() => {
             const file = inlineRestoreFile;

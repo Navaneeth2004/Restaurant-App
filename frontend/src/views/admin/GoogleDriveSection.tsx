@@ -6,31 +6,11 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { useToast } from '../../context/ToastContext';
+import { useToast }   from '../../context/ToastContext';
+import { authedJson } from '../../utils/authedFetch';
 
 const API = process.env.REACT_APP_API_URL || window.location.origin;
 
-// ── Auth helpers ──────────────────────────────────────────────────────────
-let _token: string | null = null;
-async function getToken(): Promise<string | null> {
-  if (_token !== null) return _token;
-  try {
-    const r = await fetch(`${API}/api/auth/token`);
-    const d = await r.json();
-    _token = d.token ?? null;
-    return _token;
-  } catch { return null; }
-}
-async function authedJson(url: string, opts: RequestInit = {}): Promise<any> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as any || {}) };
-  const token = await getToken();
-  if (token) h['Authorization'] = `Bearer ${token}`;
-  const r = await fetch(url, { ...opts, headers: h });
-  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error((d as any).error || `Error ${r.status}`); }
-  return r.json();
-}
-
-// ── Constants ─────────────────────────────────────────────────────────────
 const SCHEDULES = [
   { key: 'off',   label: 'Off'         },
   { key: '1h',    label: 'Every hour'  },
@@ -50,7 +30,9 @@ function timeAgo(iso: string): string {
 }
 
 function Spinner() {
-  return <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block flex-shrink-0" />;
+  return (
+    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block flex-shrink-0" />
+  );
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -66,16 +48,21 @@ function CopyButton({ text }: { text: string }) {
       onClick={copy}
       className="flex items-center gap-1 text-[10px] font-medium text-zinc-400 hover:text-white px-2 py-1 rounded border border-surface-border hover:border-zinc-600 transition-colors flex-shrink-0"
     >
-      {copied
-        ? <>
-            <svg className="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-            <span className="text-emerald-400">Copied</span>
-          </>
-        : <>
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" /></svg>
-            Copy
-          </>
-      }
+      {copied ? (
+        <>
+          <svg className="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+          <span className="text-emerald-400">Copied</span>
+        </>
+      ) : (
+        <>
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+          </svg>
+          Copy
+        </>
+      )}
     </button>
   );
 }
@@ -94,7 +81,6 @@ function GoogleDriveBadge() {
   );
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────
 interface DriveStatus {
   configured:    boolean;
   connected:     boolean;
@@ -105,19 +91,18 @@ interface DriveStatus {
   redirect_uri:  string;
 }
 
-// ── Component ─────────────────────────────────────────────────────────────
 export default function GoogleDriveSection() {
   const toast = useToast();
-  const [status,        setStatus]        = useState<DriveStatus | null>(null);
-  const [uploading,     setUploading]     = useState(false);
-  const [connecting,    setConnecting]    = useState(false);
-  const [savingCreds,   setSavingCreds]   = useState(false);
-  const [savingSched,   setSavingSched]   = useState(false);
-  const [showCreds,     setShowCreds]     = useState(false);
-  const [showDriveGuide, setShowDriveGuide] = useState(false);
-  const [clientId,      setClientId]      = useState('');
-  const [clientSecret,  setClientSecret]  = useState('');
-  const [selectedSched, setSelectedSched] = useState('off');
+  const [status,          setStatus]          = useState<DriveStatus | null>(null);
+  const [uploading,       setUploading]       = useState(false);
+  const [connecting,      setConnecting]      = useState(false);
+  const [savingCreds,     setSavingCreds]     = useState(false);
+  const [savingSched,     setSavingSched]     = useState(false);
+  const [showCreds,       setShowCreds]       = useState(false);
+  const [showDriveGuide,  setShowDriveGuide]  = useState(false);
+  const [clientId,        setClientId]        = useState('');
+  const [clientSecret,    setClientSecret]    = useState('');
+  const [selectedSched,   setSelectedSched]   = useState('off');
 
   const popupRef      = useRef<Window | null>(null);
   const popupCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -132,7 +117,6 @@ export default function GoogleDriveSection() {
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
 
-  // Listen for gdrive_connected message from OAuth popup
   useEffect(() => {
     const h = (e: MessageEvent) => {
       if (e.data === 'gdrive_connected') {
@@ -234,8 +218,8 @@ export default function GoogleDriveSection() {
     }
   };
 
-  const schedLabel   = SCHEDULES.find(s => s.key === (status?.schedule || 'off'))?.label || 'Off';
-  const redirectUri  = status?.redirect_uri || `${window.location.origin}/api/backup/gdrive/callback`;
+  const schedLabel  = SCHEDULES.find(s => s.key === (status?.schedule || 'off'))?.label || 'Off';
+  const redirectUri = status?.redirect_uri || `${window.location.origin}/api/backup/gdrive/callback`;
 
   return (
     <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
@@ -246,16 +230,15 @@ export default function GoogleDriveSection() {
           <GoogleDriveBadge />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {status?.connected
-            ? <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />Connected
-              </span>
-            : status !== null
-              ? <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-500">
-                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />Not connected
-                </span>
-              : null
-          }
+          {status?.connected ? (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />Connected
+            </span>
+          ) : status !== null ? (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />Not connected
+            </span>
+          ) : null}
           {status?.last_backup && (
             <span className="text-zinc-600 text-xs">
               Last: <span className="text-zinc-400">{timeAgo(status.last_backup)}</span>
@@ -269,7 +252,7 @@ export default function GoogleDriveSection() {
         </div>
       </div>
 
-      {/* Setup guide (shown when not connected and creds not entered) */}
+      {/* Setup guide */}
       {status !== null && !status.connected && !showCreds && (
         <div className="p-4 border-b border-surface-border">
           <div className="flex items-center justify-between mb-3">
@@ -291,12 +274,12 @@ export default function GoogleDriveSection() {
           {showDriveGuide && (
             <div className="space-y-3 mb-4">
               {[
-                { n: 1, title: 'Open Google Cloud Console',     body: <>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="text-brand-400 underline underline-offset-2">console.cloud.google.com</a>. Sign in with your Google account.</> },
-                { n: 2, title: 'Create a new project',          body: <>Click the project dropdown → <span className="text-zinc-300 font-medium">New Project</span>. Name it anything.</> },
-                { n: 3, title: 'Enable the Google Drive API',   body: <>Go to <span className="text-zinc-300 font-medium">APIs &amp; Services → Library</span>. Search <span className="font-mono text-zinc-300">Google Drive API</span> and enable it.</> },
+                { n: 1, title: 'Open Google Cloud Console',      body: <>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="text-brand-400 underline underline-offset-2">console.cloud.google.com</a>. Sign in with your Google account.</> },
+                { n: 2, title: 'Create a new project',           body: <>Click the project dropdown → <span className="text-zinc-300 font-medium">New Project</span>. Name it anything.</> },
+                { n: 3, title: 'Enable the Google Drive API',    body: <>Go to <span className="text-zinc-300 font-medium">APIs &amp; Services → Library</span>. Search <span className="font-mono text-zinc-300">Google Drive API</span> and enable it.</> },
                 { n: 4, title: 'Configure OAuth consent screen', body: <>Go to <span className="text-zinc-300 font-medium">OAuth consent screen</span>. Choose External, fill app name, add your email as test user.</> },
-                { n: 5, title: 'Create OAuth credentials',      body: <>Go to <span className="text-zinc-300 font-medium">Credentials → + Create → OAuth 2.0 Client ID</span>. Set type to Web application. Add the redirect URI below.</> },
-                { n: 6, title: 'Copy Client ID and Secret',     body: <>After saving, copy the <span className="text-zinc-300 font-medium">Client ID</span> and <span className="text-zinc-300 font-medium">Client Secret</span> into the form below.</> },
+                { n: 5, title: 'Create OAuth credentials',       body: <>Go to <span className="text-zinc-300 font-medium">Credentials → + Create → OAuth 2.0 Client ID</span>. Set type to Web application. Add the redirect URI below.</> },
+                { n: 6, title: 'Copy Client ID and Secret',      body: <>After saving, copy the <span className="text-zinc-300 font-medium">Client ID</span> and <span className="text-zinc-300 font-medium">Client Secret</span> into the form below.</> },
               ].map(step => (
                 <div key={step.n} className="flex gap-3">
                   <div className="w-5 h-5 rounded-full bg-brand-500/20 border border-brand-500/30 text-brand-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -360,46 +343,48 @@ export default function GoogleDriveSection() {
         </div>
       )}
 
-      {/* Connect button (configured but not yet connected) */}
+      {/* Connect button */}
       {status?.configured && !status.connected && !showCreds && (
         <div className="p-4 border-b border-surface-border">
           <div className="flex flex-wrap gap-2">
             <button className="btn btn-brand btn-sm flex items-center gap-2" onClick={handleConnect} disabled={connecting}>
-              {connecting
-                ? <><Spinner />Waiting for Google…</>
-                : <>
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.338-2.32 5.75 5.75 0 011.572 11.095H6.75z" />
-                    </svg>
-                    Connect Google Drive
-                  </>
-              }
+              {connecting ? (
+                <><Spinner />Waiting for Google…</>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.338-2.32 5.75 5.75 0 011.572 11.095H6.75z" />
+                  </svg>
+                  Connect Google Drive
+                </>
+              )}
             </button>
           </div>
         </div>
       )}
 
-      {/* Back up now (connected) */}
+      {/* Back up now */}
       {status?.connected && (
         <div className="p-4 border-b border-surface-border">
           <p className="text-zinc-500 text-xs mb-3">
             Saves to <span className="text-zinc-300">Restaurant POS Backups / restaurant_pos_backup.zip</span> — overwrites each time.
           </p>
           <button className="btn btn-brand btn-sm flex items-center gap-2" onClick={handleUpload} disabled={uploading}>
-            {uploading
-              ? <><Spinner />Uploading…</>
-              : <>
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.338-2.32 5.75 5.75 0 011.572 11.095H6.75z" />
-                  </svg>
-                  Back Up to Drive Now
-                </>
-            }
+            {uploading ? (
+              <><Spinner />Uploading…</>
+            ) : (
+              <>
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.338-2.32 5.75 5.75 0 011.572 11.095H6.75z" />
+                </svg>
+                Back Up to Drive Now
+              </>
+            )}
           </button>
         </div>
       )}
 
-      {/* Schedule (only shown when configured) */}
+      {/* Schedule */}
       {status?.configured && (
         <div className="p-4 border-b border-surface-border">
           <div className="flex items-center gap-2 mb-2">
@@ -437,7 +422,7 @@ export default function GoogleDriveSection() {
         </div>
       )}
 
-      {/* Footer actions (connected) */}
+      {/* Footer */}
       {status?.connected && (
         <div className="p-4 flex flex-wrap gap-2">
           <button className="btn btn-sm" onClick={() => setShowCreds(true)}>Update credentials</button>

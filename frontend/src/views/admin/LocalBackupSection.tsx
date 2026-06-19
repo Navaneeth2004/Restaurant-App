@@ -6,31 +6,11 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { useToast } from '../../context/ToastContext';
+import { useToast }    from '../../context/ToastContext';
+import { authedJson }  from '../../utils/authedFetch';
 
 const API = process.env.REACT_APP_API_URL || window.location.origin;
 
-// ── Auth helpers ──────────────────────────────────────────────────────────
-let _token: string | null = null;
-async function getToken(): Promise<string | null> {
-  if (_token !== null) return _token;
-  try {
-    const r = await fetch(`${API}/api/auth/token`);
-    const d = await r.json();
-    _token = d.token ?? null;
-    return _token;
-  } catch { return null; }
-}
-async function authedJson(url: string, opts: RequestInit = {}): Promise<any> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as any || {}) };
-  const token = await getToken();
-  if (token) h['Authorization'] = `Bearer ${token}`;
-  const r = await fetch(url, { ...opts, headers: h });
-  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error((d as any).error || `Error ${r.status}`); }
-  return r.json();
-}
-
-// ── Constants ─────────────────────────────────────────────────────────────
 const SCHEDULES = [
   { key: 'off',   label: 'Off'         },
   { key: '1h',    label: 'Every hour'  },
@@ -50,10 +30,11 @@ function timeAgo(iso: string): string {
 }
 
 function Spinner() {
-  return <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block flex-shrink-0" />;
+  return (
+    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block flex-shrink-0" />
+  );
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────
 interface LocalStatus {
   folder:        string | null;
   schedule:      string;
@@ -61,7 +42,6 @@ interface LocalStatus {
   last_filename: string | null;
 }
 
-// ── Component ─────────────────────────────────────────────────────────────
 export default function LocalBackupSection() {
   const toast = useToast();
   const [localStatus,        setLocalStatus]        = useState<LocalStatus | null>(null);
@@ -89,7 +69,12 @@ export default function LocalBackupSection() {
         body: JSON.stringify({ folder: localFolder.trim() || null, schedule: selectedLocalSched }),
       });
       const label = SCHEDULES.find(s => s.key === selectedLocalSched)?.label;
-      toast(selectedLocalSched === 'off' ? 'Local auto-backup disabled.' : `Local auto-backup: ${label}`, 'success');
+      toast(
+        selectedLocalSched === 'off'
+          ? 'Local auto-backup disabled.'
+          : `Local auto-backup: ${label}`,
+        'success'
+      );
       loadLocalStatus();
     } catch (e: any) {
       toast(e.message || 'Failed', 'error');
@@ -147,7 +132,9 @@ export default function LocalBackupSection() {
             value={localFolder}
             onChange={e => setLocalFolder(e.target.value)}
           />
-          <p className="text-zinc-600 text-[10px] mt-1">Leave blank to use backend/data/backups/ (inside the app folder)</p>
+          <p className="text-zinc-600 text-[10px] mt-1">
+            Leave blank to use backend/data/backups/ (inside the app folder)
+          </p>
         </div>
 
         <div>
@@ -186,15 +173,16 @@ export default function LocalBackupSection() {
               onClick={handleLocalBackupNow}
               disabled={localBacking}
             >
-              {localBacking
-                ? <><Spinner />Backing up…</>
-                : <>
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                    </svg>
-                    Back Up Now
-                  </>
-              }
+              {localBacking ? (
+                <><Spinner />Backing up…</>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  Back Up Now
+                </>
+              )}
             </button>
           </div>
         </div>

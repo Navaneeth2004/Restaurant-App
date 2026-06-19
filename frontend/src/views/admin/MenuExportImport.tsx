@@ -3,43 +3,25 @@
  *
  * Export / Import panel for the menu — download a .zip with all items
  * and photos, or upload one to restore / migrate a menu.
- * Extracted from AdminMenu.tsx.
  */
 
-import React from 'react';
-import { useToast }      from '../../context/ToastContext';
-import { useAdminLock }  from '../../context/AdminLockContext';
+import React, { useRef, useState } from 'react';
+import { useToast }     from '../../context/ToastContext';
+import { useAdminLock } from '../../context/AdminLockContext';
+import { authedFetch }  from '../../utils/authedFetch';
 
 const BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
-// ── Auth token helpers ────────────────────────────────────────────────────
-let _tok: string | null = null;
-async function tok(): Promise<string | null> {
-  if (_tok !== null) return _tok;
-  try {
-    const r = await fetch(`${BASE}/api/auth/token`);
-    const d = await r.json();
-    _tok = d.token ?? null;
-    return _tok;
-  } catch { return null; }
-}
-async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {
-  const t = await tok();
-  const h: Record<string, string> = { ...(opts.headers as any || {}) };
-  if (t) h['Authorization'] = `Bearer ${t}`;
-  return fetch(url, { ...opts, headers: h });
-}
-
-// ── Component ─────────────────────────────────────────────────────────────
 export default function MenuExportImport() {
-  const [importing,    setImporting]    = React.useState(false);
-  const [importResult, setImportResult] = React.useState<string | null>(null);
-  const [importError,  setImportError]  = React.useState<string | null>(null);
-  const [exporting,    setExporting]    = React.useState(false);
-  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [importing,    setImporting]    = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const [importError,  setImportError]  = useState<string | null>(null);
+  const [exporting,    setExporting]    = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const toast   = useToast();
   const { requirePin, config: lockConfig } = useAdminLock();
 
+  // ── Export ──────────────────────────────────────────────────────────────
   const doExport = async () => {
     setExporting(true);
     try {
@@ -52,8 +34,7 @@ export default function MenuExportImport() {
       const url     = URL.createObjectURL(blob);
       const a       = document.createElement('a');
       a.href        = url;
-      const dateStr = new Date().toISOString().slice(0, 10);
-      a.download    = `menu_export_${dateStr}.zip`;
+      a.download    = `menu_export_${new Date().toISOString().slice(0, 10)}.zip`;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
       toast('Menu exported', 'success');
@@ -69,6 +50,7 @@ export default function MenuExportImport() {
     requirePin(doExport, 'Export Menu', 'Enter admin PIN to download menu');
   };
 
+  // ── Import ──────────────────────────────────────────────────────────────
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -79,6 +61,7 @@ export default function MenuExportImport() {
       setImportError(null);
       try {
         let res: Response;
+
         if (
           file.name.endsWith('.zip') ||
           file.type === 'application/zip' ||
@@ -98,8 +81,10 @@ export default function MenuExportImport() {
         } else {
           throw new Error('Please choose a .zip or .json file');
         }
+
         const result = await res.json();
         if (!res.ok) throw new Error(result.error || 'Import failed');
+
         const imgNote = result.images_imported > 0 ? `, ${result.images_imported} images` : '';
         setImportResult(
           `Done — ${result.categories_added} categories added, ${result.items_added} items added${imgNote}, ${result.items_skipped} skipped`
@@ -144,13 +129,12 @@ export default function MenuExportImport() {
             Downloads a <span className="text-zinc-400 font-mono">.zip</span> with all categories, items and photos.
           </p>
           <button className="btn btn-brand btn-sm w-full" onClick={handleExport} disabled={exporting}>
-            {exporting
-              ? <span className="flex items-center justify-center gap-2">
-                  <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                  Exporting…
-                </span>
-              : 'Download menu.zip'
-            }
+            {exporting ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                Exporting…
+              </span>
+            ) : 'Download menu.zip'}
           </button>
         </div>
 
@@ -176,13 +160,12 @@ export default function MenuExportImport() {
             onClick={() => fileRef.current?.click()}
             disabled={importing}
           >
-            {importing
-              ? <span className="flex items-center justify-center gap-2">
-                  <span className="w-3.5 h-3.5 border-2 border-zinc-400/40 border-t-zinc-400 rounded-full animate-spin" />
-                  Importing…
-                </span>
-              : 'Choose .zip or .json'
-            }
+            {importing ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="w-3.5 h-3.5 border-2 border-zinc-400/40 border-t-zinc-400 rounded-full animate-spin" />
+                Importing…
+              </span>
+            ) : 'Choose .zip or .json'}
           </button>
           <input
             ref={fileRef}
@@ -202,6 +185,7 @@ export default function MenuExportImport() {
           {importResult}
         </div>
       )}
+
       {importError && (
         <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-start gap-2">
           <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
