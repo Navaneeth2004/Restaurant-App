@@ -158,7 +158,7 @@ export function useSortable<T>({
       cleanupDocListeners.current = null;
     };
     cleanupDocListeners.current = cleanup;
-  }, [doReorder]);
+  }, [doReorder, longPressDuration]);
 
   // ── Mouse / HTML5 drag ──────────────────────────────────────────────────
   const onDragStart = useCallback((e: React.DragEvent, id: string | number) => {

@@ -8,7 +8,8 @@
 'use client';
 import React, { useState, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { useAdminLock, PinModal } from '../../context/AdminLockContext';
+import { useAdminLock } from '../../context/AdminLockContext';
+import { PinModal } from '../../components/admin/PinModal';
 import { useToast }               from '../../context/ToastContext';
 import { authedFetch, authedJson, getToken } from '../../utils/authedFetch';
 import LocalBackupSection  from './LocalBackupSection';

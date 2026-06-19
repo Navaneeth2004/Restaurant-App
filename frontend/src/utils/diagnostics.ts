@@ -7,38 +7,41 @@
  */
 
 // ── Console error capture ─────────────────────────────────────────────────
+//
+// FIX: previously this monkey-patched console.error directly:
+//   console.error = (...args) => { ...; origError(...args); };
+// That permanently replaces console.error for the whole app session, which
+// in React StrictMode causes double-invocations and can interfere with
+// React's own error overlay/logging. We now rely solely on the window-level
+// 'error' and 'unhandledrejection' listeners below, which already capture
+// uncaught exceptions and unhandled promise rejections without touching any
+// global. This intentionally means console.error() calls that are caught
+// and logged deliberately (not thrown) won't appear in the bug report —
+// that's a reasonable trade-off for not patching a global console method.
 
 const _capturedErrors: string[] = [];
 let _capturing = false;
 
 /**
  * Call once at app startup (e.g. in index.tsx) to begin capturing errors.
- * Safe to call multiple times — only installs once.
+ * Safe to call multiple times — only installs listeners once.
  */
 export function startErrorCapture(): void {
   if (_capturing) return;
   _capturing = true;
 
-  const origError = console.error.bind(console);
-  console.error = (...args: any[]) => {
-    const msg = args
-      .map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a)))
-      .join(' ');
-    _capturedErrors.push(`[${new Date().toISOString()}] ${msg}`);
-    if (_capturedErrors.length > 30) _capturedErrors.shift();
-    origError(...args);
-  };
-
   window.addEventListener('error', e => {
     _capturedErrors.push(
       `[${new Date().toISOString()}] Uncaught: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`
     );
+    if (_capturedErrors.length > 30) _capturedErrors.shift();
   });
 
   window.addEventListener('unhandledrejection', e => {
     _capturedErrors.push(
       `[${new Date().toISOString()}] UnhandledPromise: ${e.reason}`
     );
+    if (_capturedErrors.length > 30) _capturedErrors.shift();
   });
 }
 
