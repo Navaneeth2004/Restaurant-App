@@ -80,6 +80,7 @@ export const closeOrderWithPayment = (
     customer_name?: string;
     customer_phone?: string;
     amount_paid?: number;
+    order_type?: 'dine_in' | 'parcel';
   }
 ): Promise<void> => api.patch(`/orders/${id}/close`, payment).then(r => r.data);
 
@@ -90,6 +91,7 @@ export const updateOrderPayment = (
     payment_details?: any;
     change_amount?: number;
     amount_paid?: number;
+    order_type?: 'dine_in' | 'parcel';
   }
 ): Promise<void> => api.patch(`/orders/${id}/payment`, payment).then(r => r.data);
 

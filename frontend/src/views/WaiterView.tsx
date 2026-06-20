@@ -204,15 +204,47 @@ export default function WaiterView() {
   const allOrdersTotal = allOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0);
   const cartTotal      = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const grandTotal     = allOrdersTotal + cartTotal;
-  const hasBillableOrder = allOrders.length > 0;
+  const hasBillableOrder = allOrders.length > 0 || cart.length > 0;
   const billOrderId      = allOrders.length > 0 ? allOrders[allOrders.length - 1].id : null;
   const filtered         = menuItems.filter(m => m.category_id === activeCatId);
   const pastRounds       = allOrders.filter(o => o.status === 'delivered');
   const activeRound      = allOrders.find(o => o.status === 'active') || null;
   const isDelivered      = !activeRound && pastRounds.length > 0;
 
-  const handleBill = () => {
-    if (!hasBillableOrder) { toast('No order for this table', 'error'); return; }
+  const handleBill = async () => {
+    if (cart.length === 0 && !hasBillableOrder) {
+      toast('No order for this table', 'error');
+      return;
+    }
+    if (!selectedTable) return;
+
+    // If there are unsent cart items, submit them first so they become a
+    // real order the backend/kitchen/reports know about, then bill normally.
+    if (cart.length > 0) {
+      setLoading(true);
+      try {
+        let activeItems: CartItem[] = [];
+        if (activeRound) {
+          const freshOrders = await getTableOrders(selectedTable.id);
+          const freshActive = freshOrders.find(o => o.status === 'active');
+          if (freshActive) {
+            activeItems = freshActive.items.map(i => ({
+              menu_item_id: i.menu_item_id,
+              name: i.name, price: i.price, quantity: i.quantity, note: i.note || '',
+            }));
+          }
+        }
+        await submitOrder({ table_id: selectedTable.id, items: [...activeItems, ...cart] });
+        setCart([]);
+        await loadTableOrders(selectedTable.id);
+      } catch (e: any) {
+        toast(e.response?.data?.error || 'Failed to add items before billing', 'error');
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+    }
+
     setBillModal(true);
   };
 

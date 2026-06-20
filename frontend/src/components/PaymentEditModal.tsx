@@ -11,6 +11,8 @@ const PAYMENT_METHODS = [
   { key: 'split',  label: 'Split' },
 ];
 
+type OrderType = 'dine_in' | 'parcel';
+
 interface SplitEntry { method: string; amount: string; }
 
 interface Props {
@@ -21,8 +23,10 @@ interface Props {
   currentAmountPaid?: number | null;
   /** Previously recorded split entries, if method was split (for prefill) */
   currentPaymentDetails?: any;
+  /** Previously recorded order type, if any (for prefill) */
+  currentOrderType?: OrderType | null;
   onClose: () => void;
-  onSaved: (newMethod: string, newDetails?: any, newAmountPaid?: number) => void;
+  onSaved: (newMethod: string, newDetails?: any, newAmountPaid?: number, newOrderType?: OrderType) => void;
 }
 
 function parseSplitDetails(details: any): SplitEntry[] | null {
@@ -40,7 +44,8 @@ function parseSplitDetails(details: any): SplitEntry[] | null {
 }
 
 export default function PaymentEditModal({
-  orderIds, currentMethod, total, currentAmountPaid, currentPaymentDetails, onClose, onSaved,
+  orderIds, currentMethod, total, currentAmountPaid, currentPaymentDetails, currentOrderType,
+  onClose, onSaved,
 }: Props) {
   const settings = useSettings();
   const sym      = settings.currency_symbol || '₹';
@@ -65,6 +70,9 @@ export default function PaymentEditModal({
   const [amountPaid, setAmountPaid] = useState(
     currentAmountPaid != null ? currentAmountPaid.toFixed(2) : grandTotal.toFixed(2)
   );
+  // Order type — defaults to whatever was recorded, or Dine In if unset
+  // (testing-stage app, so older/unset orders default to Dine In).
+  const [orderType, setOrderType] = useState<OrderType>(currentOrderType || 'dine_in');
   const [saving,  setSaving]  = useState(false);
   const toast = useToast();
 
@@ -106,9 +114,10 @@ export default function PaymentEditModal({
         payment_details: paymentDetails,
         change_amount: 0,
         amount_paid: finalAmountPaid,
+        order_type: orderType,
       } as any)));
       toast('Payment updated', 'success');
-      onSaved(method, paymentDetails, finalAmountPaid);
+      onSaved(method, paymentDetails, finalAmountPaid, orderType);
     } catch (e: any) {
       toast(e.response?.data?.error || 'Failed to update payment', 'error');
     } finally {
@@ -137,6 +146,35 @@ export default function PaymentEditModal({
             )}
           </div>
         )}
+
+        {/* Order type — Dine In / Parcel slider */}
+        <label className="label mb-2">Order Type</label>
+        <div
+          role="radiogroup"
+          aria-label="Order type"
+          onClick={() => setOrderType(t => t === 'dine_in' ? 'parcel' : 'dine_in')}
+          className="relative flex bg-surface-raised rounded-xl p-1 mb-4 cursor-pointer border border-brand-500/50 select-none"
+        >
+          <div
+            aria-hidden
+            className="absolute top-1 bottom-1 bg-brand-500 rounded-lg transition-all duration-150"
+            style={{ left: orderType === 'dine_in' ? 4 : '50%', width: 'calc(50% - 4px)' }}
+          />
+          {(['dine_in', 'parcel'] as const).map(t => (
+            <button
+              key={t}
+              type="button"
+              role="radio"
+              aria-checked={orderType === t}
+              onClick={e => { e.stopPropagation(); setOrderType(t); }}
+              className={`flex-1 relative z-10 text-center py-2 text-xs font-bold transition-colors bg-transparent border-none cursor-pointer ${
+                orderType === t ? 'text-white' : 'text-zinc-400'
+              }`}
+            >
+              {t === 'dine_in' ? 'Dine In' : 'Parcel'}
+            </button>
+          ))}
+        </div>
 
         <label className="label mb-2">Payment Method</label>
         <div className="grid grid-cols-3 gap-2 mb-4">

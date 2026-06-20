@@ -18,6 +18,27 @@ interface Props {
   brand:   string;
 }
 
+/**
+ * Small pill badge for Dine In / Parcel.
+ * Per spec: this is a testing-stage app, so orders with no recorded type
+ * (null/undefined) just default to showing "Dine In" rather than blank.
+ */
+function OrderTypeBadge({ type }: { type: 'dine_in' | 'parcel' | null }) {
+  const resolved = type === 'parcel' ? 'parcel' : 'dine_in';
+  const isParcel = resolved === 'parcel';
+  return (
+    <span
+      className={`text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${
+        isParcel
+          ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/25'
+          : 'bg-zinc-700/30 text-zinc-400 border-zinc-600/40'
+      }`}
+    >
+      {isParcel ? 'Parcel' : 'Dine In'}
+    </span>
+  );
+}
+
 export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const [expanded,        setExpanded]        = useState(false);
   const [showBill,        setShowBill]        = useState(false);
@@ -26,6 +47,8 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const [paymentDetails,  setPaymentDetails]  = useState<any>(session.paymentDetails);
   // FIX: initialise from session.amountPaid (now correctly set by sessions.ts)
   const [amountPaid, setAmountPaid] = useState<number | null>(session.amountPaid ?? null);
+  // Order type — dine in / parcel, editable via PaymentEditModal
+  const [orderType, setOrderType] = useState<'dine_in' | 'parcel' | null>(session.orderType ?? null);
 
   const tax       = session.totalAmount * taxPct;
   const billTotal = session.totalAmount + tax;
@@ -63,9 +86,10 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
           currentMethod={paymentMethod}
           currentAmountPaid={amountPaid}
           currentPaymentDetails={paymentDetails}
+          currentOrderType={orderType}
           total={session.totalAmount}
           onClose={() => setShowPaymentEdit(false)}
-          onSaved={(newMethod, newDetails, newAmountPaid) => {
+          onSaved={(newMethod, newDetails, newAmountPaid, newOrderType) => {
             setPaymentMethod(newMethod);
             setPaymentDetails(newDetails ?? null);
             // FIX: always update local state so the row reflects the edit
@@ -73,6 +97,9 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
             // was a number, but the condition was missing for split payments
             if (typeof newAmountPaid === 'number') {
               setAmountPaid(newAmountPaid);
+            }
+            if (newOrderType) {
+              setOrderType(newOrderType);
             }
             setShowPaymentEdit(false);
           }}
@@ -97,6 +124,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                   {session.orders.length} rounds
                 </span>
               )}
+              <OrderTypeBadge type={orderType} />
               {paymentMethod && <PaymentBadge method={paymentMethod} />}
               {hasDiff && (
                 <span
@@ -227,6 +255,12 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                   <span className="font-mono">{paidDiff < 0 ? '-' : '+'}{sym}{Math.abs(paidDiff).toFixed(2)}</span>
                 </div>
               )}
+
+              {/* Order type — always shown */}
+              <div className="flex justify-between items-center text-xs text-zinc-500 pt-1">
+                <span>Order type</span>
+                <OrderTypeBadge type={orderType} />
+              </div>
 
               {paymentMethod && (
                 <div className="pt-1 border-t border-surface-border/50">

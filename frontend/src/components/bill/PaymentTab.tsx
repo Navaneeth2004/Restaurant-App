@@ -1,8 +1,8 @@
 /**
  * components/bill/PaymentTab.tsx
  *
- * Full payment tab — method selection, split form, cash/change calculator,
- * and optional customer name/phone capture.
+ * Full payment tab — order type (dine in / parcel), method selection,
+ * split form, cash/change calculator, and optional customer name/phone capture.
  *
  * FIX: "Amount Received" used to only appear for non-split methods and was
  * really just used to calculate cash change — it wasn't treated as the
@@ -12,6 +12,10 @@
  * lost. Now every method (including split) has an explicit, visible
  * "Amount Actually Paid" total that defaults to the bill total but can be
  * edited, and the difference from the bill is shown clearly.
+ *
+ * ADDED: Order Type slider (Dine In / Parcel) — required at payment time.
+ * Implemented as a two-state toggle so it always has a value (defaults to
+ * Dine In), satisfying "required" without needing separate validation.
  */
 
 import React, { useEffect } from 'react';
@@ -66,12 +70,16 @@ export const WARN_THRESHOLD_ABS = 20;
 
 export interface SplitEntry { method: string; amount: string; }
 
+export type OrderType = 'dine_in' | 'parcel';
+
 interface Props {
   brand:         string;
   sym:           string;
   total:         number;
   tableLabel:    string;
   itemCount:     number;
+  orderType:     OrderType;
+  setOrderType:  (t: OrderType) => void;
   payMethod:     string;
   setPayMethod:  (m: string) => void;
   received:      string;
@@ -86,6 +94,7 @@ interface Props {
 
 export default function PaymentTab({
   brand, sym, total, tableLabel, itemCount,
+  orderType, setOrderType,
   payMethod, setPayMethod,
   received, setReceived,
   splits, setSplits,
@@ -137,6 +146,68 @@ export default function PaymentTab({
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 10, color: '#9ca3af', fontFamily: sans }}>{itemCount} items</div>
           <div style={{ fontSize: 11, color: '#6b7280', fontFamily: sans }}>{tableLabel}</div>
+        </div>
+      </div>
+
+      {/* Order type — required slider, defaults to Dine In */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>
+          Order Type
+        </div>
+        <div
+          role="radiogroup"
+          aria-label="Order type"
+          onClick={() => setOrderType(orderType === 'dine_in' ? 'parcel' : 'dine_in')}
+          style={{
+            position: 'relative',
+            display: 'flex',
+            background: '#f3f4f6',
+            borderRadius: 12,
+            padding: 4,
+            cursor: 'pointer',
+            border: `1.5px solid ${brand}`,
+            userSelect: 'none',
+          }}
+        >
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              top: 4,
+              bottom: 4,
+              left: orderType === 'dine_in' ? 4 : '50%',
+              width: 'calc(50% - 4px)',
+              background: brand,
+              borderRadius: 9,
+              transition: 'left 0.18s ease',
+            }}
+          />
+          {(['dine_in', 'parcel'] as const).map(t => (
+            <button
+              key={t}
+              type="button"
+              role="radio"
+              aria-checked={orderType === t}
+              onClick={e => { e.stopPropagation(); setOrderType(t); }}
+              style={{
+                flex: 1,
+                position: 'relative',
+                zIndex: 1,
+                textAlign: 'center',
+                padding: '9px 0',
+                fontFamily: sans,
+                fontSize: 13,
+                fontWeight: 700,
+                color: orderType === t ? '#fff' : '#6b7280',
+                transition: 'color 0.18s ease',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              {t === 'dine_in' ? 'Dine In' : 'Parcel'}
+            </button>
+          ))}
         </div>
       </div>
 

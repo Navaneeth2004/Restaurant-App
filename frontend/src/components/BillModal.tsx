@@ -54,6 +54,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
   // Tab + payment state
   const [activeTab,      setActiveTab]      = useState<'bill' | 'payment'>('bill');
   const [paymentVisited, setPaymentVisited] = useState(false);
+  const [orderType,      setOrderType]      = useState<'dine_in' | 'parcel'>('dine_in');
   const [payMethod,      setPayMethod]      = useState('cash');
   const [received,       setReceived]       = useState('');
   const [splits,         setSplits]         = useState<SplitEntry[]>([
@@ -102,6 +103,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
         customer_name:   customerName.trim()  || undefined,
         customer_phone:  customerPhone.trim() || undefined,
         amount_paid:     amountPaid,
+        order_type:      orderType,
       } as any);
       toast('Table cleared!', 'success');
       onClosed();
@@ -285,6 +287,8 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
               total={total}
               tableLabel={tableLabel}
               itemCount={allItems.reduce((s, i) => s + i.quantity, 0)}
+              orderType={orderType}
+              setOrderType={setOrderType}
               payMethod={payMethod}
               setPayMethod={setPayMethod}
               received={received}

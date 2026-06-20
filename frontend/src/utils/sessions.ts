@@ -21,6 +21,8 @@ export interface TableSession {
   amountPaid:    number | null;   // FIX: was missing — caused History to always show bill total
   customerName:  string | null;
   customerPhone: string | null;
+  /** 'dine_in' or 'parcel' — taken from the most recent round with a value set. */
+  orderType:     'dine_in' | 'parcel' | null;
 }
 
 const LEGACY_SESSION_GAP_MS = 4 * 60 * 60 * 1000;
@@ -65,6 +67,11 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       if ((order as any).payment_method) {
         existing.paymentMethod  = (order as any).payment_method;
         existing.paymentDetails = (order as any).payment_details;
+      }
+      // Order type — keep the most recent round's value if set, so an edit
+      // made after the fact (which updates the latest round) is reflected.
+      if ((order as any).order_type) {
+        existing.orderType = (order as any).order_type;
       }
       // FIX: accumulate amount_paid across rounds in a session
       if ((order as any).amount_paid != null) {
@@ -115,6 +122,7 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       amountPaid:     (order as any).amount_paid ?? null,   // FIX: read from order
       customerName:   (order as any).customer_name   || null,
       customerPhone:  (order as any).customer_phone  || null,
+      orderType:      (order as any).order_type || null,
     };
 
     sessionMap[key] = sessions.length;

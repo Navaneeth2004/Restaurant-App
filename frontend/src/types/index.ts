@@ -58,13 +58,8 @@ export interface Order {
   change_amount?: number;
   customer_name?: string | null;
   customer_phone?: string | null;
-  /**
-   * Amount actually collected from the customer, including tax.
-   * May differ from `total * (1 + taxPct)` (the bill) due to discounts,
-   * rounding, card surcharges, or a customer paying extra. Null/undefined
-   * on orders closed before this field existed — treat as "same as bill".
-   */
   amount_paid?: number | null;
+  order_type?: 'dine_in' | 'parcel' | null;
 }
 
 export interface Staff {

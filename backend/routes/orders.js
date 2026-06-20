@@ -13,14 +13,8 @@ const db      = require('../db/database');
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN session_id TEXT DEFAULT NULL`); } catch (_) {}
-  // FIX: explicit "amount actually paid" column, separate from `total`
-  // (the bill amount incl. tax that was DUE). Previously the only record
-  // of what was actually collected was buried inside payment_details JSON
-  // for cash only (`received`), and split payments had no concept of an
-  // intentional discount/rounding at all. Now every payment method writes
-  // amount_paid explicitly, so History/Analytics can show "Bill vs Paid"
-  // and flag any difference.
   try { db.exec(`ALTER TABLE orders ADD COLUMN amount_paid REAL DEFAULT NULL`); } catch (_) {}
+  try { db.exec(`ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'dine_in'`); } catch (_) {}
 })();
 
 // ── In-memory guards ──────────────────────────────────────────────────────
@@ -328,12 +322,7 @@ router.patch('/:id/close', (req, res) => {
   }
   _closingOrders.add(lockKey);
 
-  // FIX: accept an explicit amount_paid from the client (the actual amount
-  // collected from the customer — may differ from the bill total due to
-  // discounts, rounding, or a customer paying slightly more/less). Falls
-  // back to the bill total if not provided, so older clients / direct API
-  // calls keep working exactly as before.
-  const { payment_method, payment_details, change_amount, customer_name, customer_phone, amount_paid } = req.body || {};
+  const { payment_method, payment_details, change_amount, customer_name, customer_phone, amount_paid, order_type } = req.body || {};
 
   try {
     try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
@@ -343,26 +332,23 @@ router.patch('/:id/close', (req, res) => {
     try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN session_id TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN amount_paid REAL DEFAULT NULL`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'dine_in'`); } catch (_) {}
 
     const close = db.transaction(() => {
       const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
       if (!order) return { notFound: true };
-
-      if (order.status === 'closed') {
-        return { alreadyClosed: true, table_id: order.table_id };
-      }
+      if (order.status === 'closed') return { alreadyClosed: true, table_id: order.table_id };
 
       const payMethod  = payment_method  || 'cash';
       const payDetails = payment_details ? JSON.stringify(payment_details) : null;
       const change     = typeof change_amount === 'number' ? change_amount : 0;
       const custName   = customer_name  || null;
       const custPhone  = customer_phone || null;
+      const orderType  = (order_type === 'parcel') ? 'parcel' : 'dine_in';
 
-      // Determine the bill total for this session, to fall back on if the
-      // client didn't send an explicit amount_paid (keeps old behavior).
-      const taxPct       = getTaxPercent();
-      const billTotal    = getSessionBillTotal(order.table_id, order.session_id, taxPct);
-      const paidAmount   = typeof amount_paid === 'number' && !Number.isNaN(amount_paid)
+      const taxPct     = getTaxPercent();
+      const billTotal  = getSessionBillTotal(order.table_id, order.session_id, taxPct);
+      const paidAmount = typeof amount_paid === 'number' && !Number.isNaN(amount_paid)
         ? amount_paid
         : billTotal;
 
@@ -374,11 +360,12 @@ router.patch('/:id/close', (req, res) => {
             change_amount   = ?,
             customer_name   = ?,
             customer_phone  = ?,
-            amount_paid     = ?
+            amount_paid     = ?,
+            order_type      = ?
         WHERE table_id = ?
           AND session_id = ?
           AND status IN ('active','delivered')
-      `).run(payMethod, payDetails, change, custName, custPhone, paidAmount, order.table_id, order.session_id);
+      `).run(payMethod, payDetails, change, custName, custPhone, paidAmount, orderType, order.table_id, order.session_id);
 
       db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
       return { table_id: order.table_id };
@@ -409,7 +396,7 @@ router.patch('/:id/close', (req, res) => {
 
 // ── PATCH update payment on already-closed orders (for history editing) ───
 router.patch('/:id/payment', (req, res) => {
-  const { payment_method, payment_details, change_amount, customer_name, customer_phone, amount_paid } = req.body || {};
+  const { payment_method, payment_details, change_amount, customer_name, customer_phone, amount_paid, order_type } = req.body || {};
   if (!payment_method) return res.status(400).json({ error: 'payment_method required' });
 
   try {
@@ -419,28 +406,27 @@ router.patch('/:id/payment', (req, res) => {
     try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
     try { db.exec(`ALTER TABLE orders ADD COLUMN amount_paid REAL DEFAULT NULL`); } catch (_) {}
+    try { db.exec(`ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'dine_in'`); } catch (_) {}
 
     const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     const payDetails = payment_details ? JSON.stringify(payment_details) : null;
     const change     = typeof change_amount === 'number' ? change_amount : 0;
-
-    // FIX: allow editing amount_paid from History too. If not provided,
-    // keep whatever was already stored (COALESCE) rather than silently
-    // resetting it back to the bill total.
     const paidAmount = typeof amount_paid === 'number' && !Number.isNaN(amount_paid) ? amount_paid : null;
+    const orderType  = order_type === 'parcel' || order_type === 'dine_in' ? order_type : null;
 
     db.prepare(`
       UPDATE orders
       SET payment_method = ?, payment_details = ?, change_amount = ?,
           customer_name = COALESCE(?, customer_name),
           customer_phone = COALESCE(?, customer_phone),
-          amount_paid = COALESCE(?, amount_paid)
+          amount_paid = COALESCE(?, amount_paid),
+          order_type = COALESCE(?, order_type)
       WHERE id = ?
     `).run(payment_method, payDetails, change,
            customer_name || null, customer_phone || null,
-           paidAmount,
+           paidAmount, orderType,
            req.params.id);
 
     res.json({ success: true });
