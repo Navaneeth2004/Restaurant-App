@@ -3,6 +3,12 @@
  *
  * Expandable row for a single dining session in the history list.
  * Extracted from ReportsView.tsx.
+ *
+ * FIX: shows "Bill" vs "Paid" separately whenever they differ. Also now
+ * passes the existing split payment_details into PaymentEditModal so
+ * re-opening "Edit Payment" on a split order prefills the real split rows
+ * instead of blank ones (previously caused the displayed "Amount Paid" to
+ * disagree with the actual split entries shown).
  */
 
 import React, { useState } from 'react';
@@ -24,9 +30,14 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const [showPaymentEdit, setShowPaymentEdit] = useState(false);
   const [paymentMethod,   setPaymentMethod]   = useState<string | null>(session.paymentMethod);
   const [paymentDetails,  setPaymentDetails]  = useState<any>(session.paymentDetails);
+  const [amountPaid,      setAmountPaid]      = useState<number | null>(session.amountPaid);
 
   const tax          = session.totalAmount * taxPct;
-  const total        = session.totalAmount + tax;
+  const billTotal     = session.totalAmount + tax;
+  const paidTotal      = amountPaid != null ? amountPaid : billTotal;
+  const paidDiff        = paidTotal - billTotal;
+  const hasDiff         = Math.abs(paidDiff) >= 0.01;
+
   const date         = new Date(session.startedAt);
   const isMultiRound = session.orders.length > 1;
   const orderIds     = session.orders.map(o => o.id);
@@ -54,11 +65,14 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
         <PaymentEditModal
           orderIds={orderIds}
           currentMethod={paymentMethod}
+          currentAmountPaid={amountPaid}
+          currentPaymentDetails={paymentDetails}
           total={session.totalAmount}
           onClose={() => setShowPaymentEdit(false)}
-          onSaved={(newMethod, newDetails) => {
+          onSaved={(newMethod, newDetails, newAmountPaid) => {
             setPaymentMethod(newMethod);
             setPaymentDetails(newDetails || null);
+            if (typeof newAmountPaid === 'number') setAmountPaid(newAmountPaid);
             setShowPaymentEdit(false);
           }}
         />
@@ -83,6 +97,18 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                 </span>
               )}
               {paymentMethod && <PaymentBadge method={paymentMethod} />}
+              {hasDiff && (
+                <span
+                  className={`text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${
+                    paidDiff < 0
+                      ? 'bg-red-500/15 text-red-400 border-red-500/25'
+                      : 'bg-blue-500/15 text-blue-400 border-blue-500/25'
+                  }`}
+                  title={paidDiff < 0 ? 'Paid less than bill' : 'Paid more than bill'}
+                >
+                  {paidDiff < 0 ? 'Short' : 'Over'} {sym}{Math.abs(paidDiff).toFixed(2)}
+                </span>
+              )}
             </div>
             {session.customerName && (
               <div className="text-zinc-400 text-xs truncate mt-0.5">
@@ -104,7 +130,21 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
           </div>
 
           <div className="flex items-center gap-3 flex-shrink-0">
-            <span className="font-mono font-bold text-white text-sm">{sym}{total.toFixed(2)}</span>
+            <div className="text-right">
+              {hasDiff ? (
+                <>
+                  <div className="flex items-center gap-1 justify-end">
+                    <span className="text-zinc-500 text-[10px]">Bill</span>
+                    <span className="font-mono text-zinc-500 text-xs line-through">{sym}{billTotal.toFixed(2)}</span>
+                  </div>
+                  <span className={`font-mono font-bold text-sm ${paidDiff < 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                    {sym}{paidTotal.toFixed(2)}
+                  </span>
+                </>
+              ) : (
+                <span className="font-mono font-bold text-white text-sm">{sym}{billTotal.toFixed(2)}</span>
+              )}
+            </div>
             <svg
               className={`w-4 h-4 text-zinc-500 transition-transform flex-shrink-0 ${expanded ? 'rotate-180' : ''}`}
               fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
@@ -171,9 +211,21 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                 <span className="font-mono">{sym}{tax.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-sm font-bold text-white pt-1 border-t border-surface-border/50">
-                <span>Total</span>
-                <span className="font-mono">{sym}{total.toFixed(2)}</span>
+                <span>Bill Total</span>
+                <span className="font-mono">{sym}{billTotal.toFixed(2)}</span>
               </div>
+
+              {/* Bill vs Paid — always shown explicitly */}
+              <div className={`flex justify-between text-sm font-bold pt-1 ${hasDiff ? (paidDiff < 0 ? 'text-red-400' : 'text-blue-400') : 'text-emerald-400'}`}>
+                <span>Amount Paid</span>
+                <span className="font-mono">{sym}{paidTotal.toFixed(2)}</span>
+              </div>
+              {hasDiff && (
+                <div className={`flex justify-between text-xs ${paidDiff < 0 ? 'text-red-400/80' : 'text-blue-400/80'}`}>
+                  <span>{paidDiff < 0 ? 'Difference (short / discount)' : 'Difference (overpaid)'}</span>
+                  <span className="font-mono">{paidDiff < 0 ? '-' : '+'}{sym}{Math.abs(paidDiff).toFixed(2)}</span>
+                </div>
+              )}
 
               {paymentMethod && (
                 <div className="pt-1 border-t border-surface-border/50">

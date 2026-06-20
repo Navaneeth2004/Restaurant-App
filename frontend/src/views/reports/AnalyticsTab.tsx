@@ -4,6 +4,11 @@
  * Today's KPI cards, revenue/volume charts, 30-day insights,
  * and best-days-of-week panel.
  * Extracted from ReportsView.tsx.
+ *
+ * FIX: added a "Bill vs Paid" card so any cumulative difference between
+ * what was billed and what was actually collected today (discounts,
+ * rounding, card surcharges, overpayments) is visible at a glance,
+ * instead of being invisible/buried in individual orders.
  */
 
 import React from 'react';
@@ -40,6 +45,12 @@ export default function AnalyticsTab({ summary, chart, sym, taxPct, settings }: 
     return ((second - first) / first) * 100;
   })();
 
+  // ── Bill vs Paid for today ────────────────────────────────────────────
+  const billTotalToday = summary?.billTotalInclTax ?? 0;
+  const paidTotalToday = summary?.paidTotal ?? billTotalToday;
+  const paidDiffToday  = summary?.paidVsBillDiff ?? (paidTotalToday - billTotalToday);
+  const hasDiffToday    = Math.abs(paidDiffToday) >= 0.01;
+
   return (
     <div className="space-y-4">
       {/* KPI cards */}
@@ -58,6 +69,58 @@ export default function AnalyticsTab({ summary, chart, sym, taxPct, settings }: 
             <p className="text-zinc-600 text-xs mt-2">{stat.sub}</p>
           </div>
         ))}
+      </div>
+
+      {/* Bill vs Paid — only worth a dedicated card when there's an actual difference,
+          but always shown so staff get used to checking it */}
+      <div className={`rounded-xl border p-4 sm:p-5 ${
+        hasDiffToday
+          ? (paidDiffToday < 0 ? 'border-red-500/30 bg-red-500/5' : 'border-blue-500/30 bg-blue-500/5')
+          : 'border-surface-border bg-surface-card'
+      }`}>
+        <div className="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <h3 className="font-bold text-white text-sm flex items-center gap-2">
+              Bill vs. Actually Paid — Today
+              {hasDiffToday && (
+                <span className={`text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${
+                  paidDiffToday < 0
+                    ? 'bg-red-500/15 text-red-400 border-red-500/25'
+                    : 'bg-blue-500/15 text-blue-400 border-blue-500/25'
+                }`}>
+                  {paidDiffToday < 0 ? 'Short' : 'Over'}
+                </span>
+              )}
+            </h3>
+            <p className="text-zinc-500 text-xs mt-0.5">
+              Tracks discounts, rounding, surcharges, or overpayments across all closed orders today
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3 mt-4">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1">Billed</p>
+            <p className="font-mono font-bold text-lg text-white">{sym}{billTotalToday.toFixed(2)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1">Actually Paid</p>
+            <p className={`font-mono font-bold text-lg ${hasDiffToday ? (paidDiffToday < 0 ? 'text-red-400' : 'text-blue-400') : 'text-emerald-400'}`}>
+              {sym}{paidTotalToday.toFixed(2)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1">Difference</p>
+            <p className={`font-mono font-bold text-lg ${hasDiffToday ? (paidDiffToday < 0 ? 'text-red-400' : 'text-blue-400') : 'text-zinc-600'}`}>
+              {hasDiffToday ? `${paidDiffToday < 0 ? '-' : '+'}${sym}${Math.abs(paidDiffToday).toFixed(2)}` : `${sym}0.00`}
+            </p>
+          </div>
+        </div>
+        {!hasDiffToday && (summary?.ordersCount ?? 0) > 0 && (
+          <p className="text-zinc-600 text-xs mt-3">Every order today was paid exactly as billed.</p>
+        )}
+        {(summary?.ordersCount ?? 0) === 0 && (
+          <p className="text-zinc-600 text-xs mt-3">No completed orders yet today.</p>
+        )}
       </div>
 
       {/* Revenue chart */}

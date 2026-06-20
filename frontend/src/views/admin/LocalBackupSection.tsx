@@ -3,6 +3,11 @@
  *
  * Local auto-backup configuration panel.
  * Extracted from AdminBackup.tsx.
+ *
+ * FIX: "Back Up Now" used to toast the full file path
+ * (e.g. "Saved to /home/user/pos-backups/pos_backup_2026-06-20...zip"),
+ * which is long and not useful to read in a toast. Now just confirms
+ * success; the path is still visible afterwards via "Last saved" below.
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -86,11 +91,12 @@ export default function LocalBackupSection() {
   const handleLocalBackupNow = async () => {
     setLocalBacking(true);
     try {
-      const d = await authedJson(`${API}/api/backup/local/now`, {
+      await authedJson(`${API}/api/backup/local/now`, {
         method: 'POST',
         body: JSON.stringify({ folder: localFolder.trim() || null }),
       });
-      toast(`Saved to ${d.path}`, 'success');
+      // FIX: short, simple confirmation instead of toasting the full path.
+      toast('Saved successfully', 'success');
       loadLocalStatus();
     } catch (e: any) {
       toast(e.message || 'Local backup failed', 'error');

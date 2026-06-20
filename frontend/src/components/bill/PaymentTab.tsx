@@ -3,9 +3,18 @@
  *
  * Full payment tab — method selection, split form, cash/change calculator,
  * and optional customer name/phone capture.
+ *
+ * FIX: "Amount Received" used to only appear for non-split methods and was
+ * really just used to calculate cash change — it wasn't treated as the
+ * authoritative "amount actually paid." UPI/card/cheque payments often
+ * settle for a slightly different amount than the bill (rounding, a small
+ * discount, a card surcharge, etc.) and that difference was completely
+ * lost. Now every method (including split) has an explicit, visible
+ * "Amount Actually Paid" total that defaults to the bill total but can be
+ * edited, and the difference from the bill is shown clearly.
  */
 
-import React from 'react';
+import React, { useEffect } from 'react';
 
 const sans = 'system-ui,-apple-system,sans-serif';
 
@@ -88,10 +97,26 @@ export default function PaymentTab({
   const splitTotal   = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const splitBalance = total - splitTotal;
 
+  // "Amount actually paid" — for split, this IS splitTotal (sum of the
+  // individual entries). For non-split, it's whatever is in `received`.
+  // We default `received` to the bill total when the method changes so a
+  // waiter who doesn't touch the field still gets the expected behavior
+  // (paid == bill), but it stays fully editable.
+  useEffect(() => {
+    if (payMethod !== 'split' && !received) {
+      setReceived(total.toFixed(2));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payMethod]);
+
   const addSplit    = () => setSplits([...splits, { method: 'cash', amount: '' }]);
   const removeSplit = (i: number) => setSplits(splits.filter((_, idx) => idx !== i));
   const updateSplit = (i: number, field: keyof SplitEntry, val: string) =>
     setSplits(splits.map((e, idx) => idx === i ? { ...e, [field]: val } : e));
+
+  const paidAmount = payMethod === 'split' ? splitTotal : receivedNum;
+  const paidDiff   = paidAmount - total;
+  const diffIsTiny = Math.abs(paidDiff) < 0.01;
 
   return (
     <div className="no-print flex-1 overflow-y-auto" style={{ padding: '16px 18px', background: '#fff' }}>
@@ -103,7 +128,7 @@ export default function PaymentTab({
       }}>
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', fontFamily: sans, marginBottom: 2 }}>
-            Total Due
+            Bill Total
           </div>
           <div style={{ fontSize: 22, fontWeight: 800, color: brand, fontFamily: sans, letterSpacing: '-0.5px' }}>
             {sym}{total.toFixed(2)}
@@ -190,46 +215,16 @@ export default function PaymentTab({
             style={{ width: '100%', padding: '8px', borderRadius: 10, border: '1.5px dashed #d1d5db', background: '#f9fafb', color: '#6b7280', fontFamily: sans, fontSize: 13, cursor: 'pointer', marginBottom: 12 }}>
             + Add another method
           </button>
-          <div style={{
-            padding: '10px 14px', borderRadius: 10,
-            background: Math.abs(splitBalance) < 0.01 ? '#f0fdf4' : splitBalance > total * WARN_THRESHOLD_PCT ? '#fef2f2' : '#fffbeb',
-            border: `1.5px solid ${Math.abs(splitBalance) < 0.01 ? '#bbf7d0' : splitBalance > total * WARN_THRESHOLD_PCT ? '#fca5a5' : '#fde68a'}`,
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: sans, fontSize: 13, marginBottom: 4 }}>
-              <span style={{ color: '#374151', fontWeight: 500 }}>Split total</span>
-              <span style={{ fontWeight: 700, color: Math.abs(splitBalance) < 0.01 ? '#16a34a' : '#374151' }}>
-                {sym}{splitTotal.toFixed(2)}
-              </span>
-            </div>
-            {splitBalance > 0.01 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: sans, fontSize: 12 }}>
-                <span style={{ color: splitBalance > total * WARN_THRESHOLD_PCT ? '#dc2626' : '#d97706', fontWeight: 500 }}>
-                  {splitBalance > total * WARN_THRESHOLD_PCT ? 'Significant underpayment' : 'Difference (discount / rounding)'}
-                </span>
-                <span style={{ fontWeight: 700, color: splitBalance > total * WARN_THRESHOLD_PCT ? '#dc2626' : '#d97706' }}>
-                  -{sym}{splitBalance.toFixed(2)}
-                </span>
-              </div>
-            )}
-            {Math.abs(splitBalance) < 0.01 && (
-              <div style={{ fontSize: 11, color: '#16a34a', fontFamily: sans, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="#16a34a" strokeWidth={3}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                </svg>
-                Balanced
-              </div>
-            )}
-          </div>
         </div>
       )}
 
-      {/* Cash received / change */}
+      {/* Cash / UPI / Card / Cheque — amount paid */}
       {payMethod !== 'split' && (
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>
-            Amount Received
+            Amount Actually Paid
           </div>
-          <div style={{ position: 'relative', marginBottom: 12 }}>
+          <div style={{ position: 'relative', marginBottom: 8 }}>
             <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontFamily: sans, fontSize: 16, color: '#9ca3af', fontWeight: 500 }}>
               {sym}
             </span>
@@ -237,6 +232,10 @@ export default function PaymentTab({
               onChange={e => setReceived(e.target.value)}
               style={{ width: '100%', padding: '12px 12px 12px 30px', borderRadius: 12, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 18, fontWeight: 700, color: '#111', boxSizing: 'border-box' as any, outline: 'none' }} />
           </div>
+          <p style={{ fontSize: 11, color: '#9ca3af', fontFamily: sans, margin: '0 0 12px' }}>
+            Defaults to the bill total — edit if the customer paid a different amount (discount, rounding, card surcharge, etc.)
+          </p>
+
           {/* Quick-amount buttons */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
             {[total, Math.ceil(total / 10) * 10, Math.ceil(total / 50) * 50, Math.ceil(total / 100) * 100]
@@ -255,31 +254,69 @@ export default function PaymentTab({
                 </button>
               ))}
           </div>
-          {/* Change display */}
-          <div style={{
-            padding: '12px 16px', borderRadius: 12,
-            background: change > 0 ? '#f0fdf4' : '#f9fafb',
-            border: `1.5px solid ${change > 0 ? '#bbf7d0' : '#e5e7eb'}`,
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: change > 0 ? '#16a34a' : '#9ca3af', fontFamily: sans, marginBottom: 2 }}>
-                Change to return
+
+          {/* Change display — only meaningful for cash, but harmless to show for all */}
+          {payMethod === 'cash' && (
+            <div style={{
+              padding: '12px 16px', borderRadius: 12,
+              background: change > 0 ? '#f0fdf4' : '#f9fafb',
+              border: `1.5px solid ${change > 0 ? '#bbf7d0' : '#e5e7eb'}`,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              marginBottom: 10,
+            }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: change > 0 ? '#16a34a' : '#9ca3af', fontFamily: sans, marginBottom: 2 }}>
+                  Change to return
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: change > 0 ? '#16a34a' : '#d1d5db', fontFamily: sans }}>
+                  {sym}{change.toFixed(2)}
+                </div>
               </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: change > 0 ? '#16a34a' : '#d1d5db', fontFamily: sans }}>
-                {sym}{change.toFixed(2)}
-              </div>
+              {change > 0 && (
+                <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#16a34a" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                </div>
+              )}
             </div>
-            {change > 0 && (
-              <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#16a34a" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                </svg>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
+
+      {/* Bill vs Paid summary — shown for ALL methods including split */}
+      <div style={{
+        padding: '10px 14px', borderRadius: 10,
+        background: diffIsTiny ? '#f0fdf4' : paidDiff < 0 ? '#fef2f2' : '#eff6ff',
+        border: `1.5px solid ${diffIsTiny ? '#bbf7d0' : paidDiff < 0 ? '#fca5a5' : '#bfdbfe'}`,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: sans, fontSize: 13, marginBottom: diffIsTiny ? 0 : 4 }}>
+          <span style={{ color: '#374151', fontWeight: 500 }}>
+            {payMethod === 'split' ? 'Split total' : 'Amount paid'}
+          </span>
+          <span style={{ fontWeight: 700, color: diffIsTiny ? '#16a34a' : '#374151' }}>
+            {sym}{paidAmount.toFixed(2)}
+          </span>
+        </div>
+        {!diffIsTiny && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: sans, fontSize: 12 }}>
+            <span style={{ color: paidDiff < 0 ? '#dc2626' : '#2563eb', fontWeight: 500 }}>
+              {paidDiff < 0 ? 'Less than bill (discount/short)' : 'More than bill (overpaid/tip)'}
+            </span>
+            <span style={{ fontWeight: 700, color: paidDiff < 0 ? '#dc2626' : '#2563eb' }}>
+              {paidDiff < 0 ? '-' : '+'}{sym}{Math.abs(paidDiff).toFixed(2)}
+            </span>
+          </div>
+        )}
+        {diffIsTiny && (
+          <div style={{ fontSize: 11, color: '#16a34a', fontFamily: sans, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="#16a34a" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+            </svg>
+            Matches bill exactly
+          </div>
+        )}
+      </div>
     </div>
   );
 }

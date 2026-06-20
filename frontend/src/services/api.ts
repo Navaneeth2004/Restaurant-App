@@ -70,15 +70,42 @@ export const deliverOrder      = (id: string): Promise<Order> => api.patch(`/ord
 export const closeOrder        = (id: string): Promise<void> => api.patch(`/orders/${id}/close`).then(r => r.data);
 export const cancelOrderItem   = (orderId: string, itemId: number): Promise<void> => api.patch(`/orders/${orderId}/cancel-item`, { item_id: itemId }).then(r => r.data);
 export const cancelOrder       = (orderId: string): Promise<void> => api.patch(`/orders/${orderId}/cancel`).then(r => r.data);
-export const closeOrderWithPayment = (id: string, payment: { payment_method: string; payment_details?: any; change_amount?: number }): Promise<void> => api.patch(`/orders/${id}/close`, payment).then(r => r.data);
-export const updateOrderPayment = (id: string, payment: { payment_method: string; payment_details?: any; change_amount?: number }): Promise<void> => api.patch(`/orders/${id}/payment`, payment).then(r => r.data);
+
+export const closeOrderWithPayment = (
+  id: string,
+  payment: {
+    payment_method: string;
+    payment_details?: any;
+    change_amount?: number;
+    customer_name?: string;
+    customer_phone?: string;
+    amount_paid?: number;
+  }
+): Promise<void> => api.patch(`/orders/${id}/close`, payment).then(r => r.data);
+
+export const updateOrderPayment = (
+  id: string,
+  payment: {
+    payment_method: string;
+    payment_details?: any;
+    change_amount?: number;
+    amount_paid?: number;
+  }
+): Promise<void> => api.patch(`/orders/${id}/payment`, payment).then(r => r.data);
 
 export const getStaff          = (): Promise<Staff[]>     => api.get('/staff').then(r => r.data);
 export const createStaff       = (data: { name: string; pin: string; role: string }): Promise<Staff> => api.post('/staff', data).then(r => r.data);
 export const deleteStaff       = (id: number): Promise<void> => api.delete(`/staff/${id}`).then(r => r.data);
 export const verifyPin         = (pin: string): Promise<AuthUser> => api.post('/staff/verify', { pin }).then(r => r.data);
 
-export const getReportToday    = (): Promise<ReportSummary> => api.get('/reports/today').then(r => r.data);
+// FIX: send the browser's local UTC offset (in minutes, positive east of
+// UTC — e.g. +330 for IST) so the backend's "today" boundary matches the
+// user's actual calendar day instead of the server's UTC day. This is what
+// caused Analytics' "Bill vs Paid — Today" card (and revenue/order counts)
+// to disagree with what History showed for literally the same date.
+export const getReportToday    = (): Promise<ReportSummary> =>
+  api.get('/reports/today', { params: { tz_offset_min: -new Date().getTimezoneOffset() } }).then(r => r.data);
+
 export const getReportHistory  = (params?: Record<string, string>): Promise<Order[]> => api.get('/reports/history', { params }).then(r => r.data);
 export const getRevenueChart   = (): Promise<RevenueDay[]> => api.get('/reports/revenue').then(r => r.data);
 

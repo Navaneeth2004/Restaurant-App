@@ -53,6 +53,18 @@ export interface Order {
   delivered_at: string | null;
   total: number;
   items: OrderItem[];
+  payment_method?: string | null;
+  payment_details?: any;
+  change_amount?: number;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  /**
+   * Amount actually collected from the customer, including tax.
+   * May differ from `total * (1 + taxPct)` (the bill) due to discounts,
+   * rounding, card surcharges, or a customer paying extra. Null/undefined
+   * on orders closed before this field existed — treat as "same as bill".
+   */
+  amount_paid?: number | null;
 }
 
 export interface Staff {
@@ -68,6 +80,13 @@ export interface ReportSummary {
   activeOrders: number;
   occupiedTables: number;
   topItems: { name: string; total_qty: number; total_rev: number }[];
+  paymentBreakdown?: { payment_method: string | null; count: number; total: number }[];
+  /** Sum of all closed orders' bill totals today, incl. tax */
+  billTotalInclTax?: number;
+  /** Sum of all closed orders' amount_paid today, incl. tax (falls back to bill if unset) */
+  paidTotal?: number;
+  /** paidTotal - billTotalInclTax — positive means overpaid overall, negative means underpaid/discounted */
+  paidVsBillDiff?: number;
 }
 
 export interface RevenueDay {

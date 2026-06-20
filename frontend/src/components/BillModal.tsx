@@ -70,6 +70,14 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
   const splitTotal   = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const splitBalance = total - splitTotal;
 
+  // FIX: the authoritative "amount actually paid" for ANY method —
+  // previously only computed/used for the cash change calculation, and
+  // never sent to the backend at all for non-cash, non-split methods
+  // (UPI/card/cheque always silently recorded the bill total as paid,
+  // even if the customer paid a rounded/discounted amount).
+  const receivedNum = parseFloat(received) || 0;
+  const amountPaid  = payMethod === 'split' ? splitTotal : (received ? receivedNum : total);
+
   const switchToPayment = () => { setActiveTab('payment'); setPaymentVisited(true); };
 
   const executePay = async () => {
@@ -84,8 +92,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
           .filter(s => parseFloat(s.amount) > 0)
           .map(s => ({ method: s.method, amount: parseFloat(s.amount) }));
       } else {
-        const receivedNum = parseFloat(received) || 0;
-        changeAmt = Math.max(0, receivedNum - total);
+        changeAmt = payMethod === 'cash' ? Math.max(0, receivedNum - total) : 0;
         if (received) paymentDetails = { received: receivedNum, change: changeAmt };
       }
       await closeOrderWithPayment(orderId, {
@@ -94,6 +101,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
         change_amount:   changeAmt,
         customer_name:   customerName.trim()  || undefined,
         customer_phone:  customerPhone.trim() || undefined,
+        amount_paid:     amountPaid,
       } as any);
       toast('Table cleared!', 'success');
       onClosed();
@@ -112,9 +120,21 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
         setWarnModal(true);
         return;
       }
+    } else {
+      // FIX: previously only split payments could trigger the "large
+      // difference" warning. Now a significant shortfall on cash/UPI/
+      // card/cheque (amount paid notably less than bill) gets the same
+      // confirmation step, since this is exactly the case the user
+      // reported — bill rate and paid rate being "a little off."
+      const diff = total - amountPaid;
+      if (diff > total * WARN_THRESHOLD_PCT || diff > WARN_THRESHOLD_ABS) {
+        if (diff > 0) { setWarnModal(true); return; }
+      }
     }
     await executePay();
   };
+
+  const warnDiff = payMethod === 'split' ? splitBalance : (total - amountPaid);
 
   return (
     <>
@@ -158,7 +178,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
         </div>
       )}
 
-      {/* ── Large split difference warning ── */}
+      {/* ── Large bill/paid difference warning ── */}
       {warnModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
           onClick={() => setWarnModal(false)}>
@@ -166,7 +186,10 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
             onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-white text-base mb-2">Large Payment Difference</h3>
             <p className="text-zinc-400 text-sm leading-relaxed mb-5">
-              The split total ({sym}{splitTotal.toFixed(2)}) is {sym}{Math.abs(splitBalance).toFixed(2)} less than the bill ({sym}{total.toFixed(2)}). Proceed?
+              {payMethod === 'split'
+                ? <>The split total ({sym}{splitTotal.toFixed(2)}) is {sym}{Math.abs(warnDiff).toFixed(2)} less than the bill ({sym}{total.toFixed(2)}). Proceed?</>
+                : <>The amount paid ({sym}{amountPaid.toFixed(2)}) is {sym}{Math.abs(warnDiff).toFixed(2)} less than the bill ({sym}{total.toFixed(2)}). This will be recorded and shown in History. Proceed?</>
+              }
             </p>
             <div className="flex gap-3">
               <button className="btn flex-1" onClick={() => setWarnModal(false)}>Go Back</button>
@@ -298,7 +321,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
                     <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                     </svg>
-                    Mark Paid &nbsp;·&nbsp; {sym}{total.toFixed(2)}
+                    Mark Paid &nbsp;·&nbsp; {sym}{amountPaid.toFixed(2)}
                   </>
                 )}
               </button>

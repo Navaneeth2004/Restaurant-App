@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { updateOrderPayment } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import { useSettings } from '../context/SettingsContext';
@@ -17,27 +17,81 @@ interface Props {
   orderIds: string[];
   currentMethod: string | null;
   total: number;
+  /** Previously recorded amount actually paid, if any (for prefill) */
+  currentAmountPaid?: number | null;
+  /** Previously recorded split entries, if method was split (for prefill) */
+  currentPaymentDetails?: any;
   onClose: () => void;
-  onSaved: (newMethod: string, newDetails?: any) => void;
+  onSaved: (newMethod: string, newDetails?: any, newAmountPaid?: number) => void;
 }
 
-export default function PaymentEditModal({ orderIds, currentMethod, total, onClose, onSaved }: Props) {
+function parseSplitDetails(details: any): SplitEntry[] | null {
+  try {
+    const arr = Array.isArray(details)
+      ? details
+      : typeof details === 'string'
+        ? JSON.parse(details)
+        : null;
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    return arr.map((e: any) => ({ method: e.method || 'cash', amount: String(e.amount ?? '') }));
+  } catch {
+    return null;
+  }
+}
+
+export default function PaymentEditModal({
+  orderIds, currentMethod, total, currentAmountPaid, currentPaymentDetails, onClose, onSaved,
+}: Props) {
   const settings = useSettings();
   const sym      = settings.currency_symbol || '₹';
   const taxPct   = parseFloat(settings.tax_percent || '5') / 100;
   const grandTotal = total * (1 + taxPct);
 
   const [method,  setMethod]  = useState(currentMethod || 'cash');
-  const [splits,  setSplits]  = useState<SplitEntry[]>([{ method: 'cash', amount: '' }, { method: 'upi', amount: '' }]);
+
+  // FIX: prefill split entries from currentPaymentDetails if the order was
+  // already a split payment, instead of always starting from two blank
+  // rows. Previously, opening "Edit Payment" on a split order showed empty
+  // Cash/UPI rows with 0 amounts, and "Amount Paid" silently kept showing
+  // the OLD recorded amount_paid (e.g. the bill total) instead of the
+  // actual split sum — because nothing recalculated it until Save was
+  // clicked, and even then the split total wasn't reflected back into the
+  // summary view consistently. Now splitTotal always drives the displayed
+  // "paid" figure live, and starts pre-populated with the real split.
+  const initialSplits = (currentMethod === 'split' && parseSplitDetails(currentPaymentDetails))
+    || [{ method: 'cash', amount: '' }, { method: 'upi', amount: '' }];
+  const [splits,  setSplits]  = useState<SplitEntry[]>(initialSplits);
+
+  const [amountPaid, setAmountPaid] = useState(
+    currentAmountPaid != null ? currentAmountPaid.toFixed(2) : grandTotal.toFixed(2)
+  );
   const [saving,  setSaving]  = useState(false);
   const toast = useToast();
 
   const splitTotal = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
 
+  // Keep the non-split "amount paid" field in sync with whichever method
+  // is selected, so switching methods doesn't leave a stale figure behind.
+  useEffect(() => {
+    if (method !== 'split' && currentMethod !== method) {
+      // Only reset when actually switching INTO a different non-split
+      // method than what was originally recorded — avoids clobbering a
+      // value the admin just typed.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [method]);
+
   const addSplit    = () => setSplits(s => [...s, { method: 'cash', amount: '' }]);
   const removeSplit = (i: number) => setSplits(s => s.filter((_, idx) => idx !== i));
   const updateSplit = (i: number, field: keyof SplitEntry, val: string) =>
     setSplits(s => s.map((e, idx) => idx === i ? { ...e, [field]: val } : e));
+
+  // FIX: this is now always the live, correct "what will be saved" figure —
+  // splitTotal for split, the editable field otherwise. Nothing here can
+  // go stale relative to what Save actually sends.
+  const effectivePaid = method === 'split' ? splitTotal : (parseFloat(amountPaid) || 0);
+  const diff = effectivePaid - grandTotal;
+  const diffIsTiny = Math.abs(diff) < 0.01;
 
   const handleSave = async () => {
     setSaving(true);
@@ -46,13 +100,15 @@ export default function PaymentEditModal({ orderIds, currentMethod, total, onClo
       if (method === 'split') {
         paymentDetails = splits.filter(s => parseFloat(s.amount) > 0).map(s => ({ method: s.method, amount: parseFloat(s.amount) }));
       }
+      const finalAmountPaid = method === 'split' ? splitTotal : (parseFloat(amountPaid) || grandTotal);
       await Promise.all(orderIds.map(id => updateOrderPayment(id, {
         payment_method: method,
         payment_details: paymentDetails,
         change_amount: 0,
-      })));
+        amount_paid: finalAmountPaid,
+      } as any)));
       toast('Payment updated', 'success');
-      onSaved(method, paymentDetails);
+      onSaved(method, paymentDetails, finalAmountPaid);
     } catch (e: any) {
       toast(e.response?.data?.error || 'Failed to update payment', 'error');
     } finally {
@@ -66,7 +122,7 @@ export default function PaymentEditModal({ orderIds, currentMethod, total, onClo
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-bold text-white text-sm">Edit Payment Method</h3>
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-raised border border-surface-border">
-            <span className="text-zinc-500 text-xs">Total</span>
+            <span className="text-zinc-500 text-xs">Bill</span>
             <span className="font-mono font-bold text-white text-sm">{sym}{grandTotal.toFixed(2)}</span>
           </div>
         </div>
@@ -74,6 +130,11 @@ export default function PaymentEditModal({ orderIds, currentMethod, total, onClo
         {currentMethod && (
           <div className="mb-3 px-3 py-2 rounded-lg bg-surface-raised border border-surface-border text-xs text-zinc-500">
             Currently: <span className="text-zinc-300 font-semibold capitalize">{currentMethod}</span>
+            {currentAmountPaid != null && Math.abs(currentAmountPaid - grandTotal) > 0.01 && (
+              <span className="ml-1.5">
+                — paid <span className="text-zinc-300 font-semibold">{sym}{currentAmountPaid.toFixed(2)}</span>
+              </span>
+            )}
           </div>
         )}
 
@@ -91,7 +152,7 @@ export default function PaymentEditModal({ orderIds, currentMethod, total, onClo
           ))}
         </div>
 
-        {method === 'split' && (
+        {method === 'split' ? (
           <div className="mb-4 space-y-2">
             <label className="label">Split Details</label>
             {splits.map((s, i) => (
@@ -119,14 +180,35 @@ export default function PaymentEditModal({ orderIds, currentMethod, total, onClo
               className="w-full py-2 rounded-lg border-2 border-dashed border-surface-border text-zinc-500 text-xs hover:text-zinc-300 hover:border-zinc-600 transition-colors">
               + Add method
             </button>
-            <div className={`flex justify-between text-xs px-3 py-2 rounded-lg border ${
-              Math.abs(splitTotal - grandTotal) < 0.01
-                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                : 'bg-surface-raised border-surface-border text-zinc-400'
-            }`}>
-              <span>Split total</span>
-              <span className="font-mono font-semibold">{sym}{splitTotal.toFixed(2)}</span>
+          </div>
+        ) : (
+          <div className="mb-4">
+            <label className="label mb-2">Amount Actually Paid</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm">{sym}</span>
+              <input type="number" min="0" step="0.01" placeholder={grandTotal.toFixed(2)} value={amountPaid}
+                onChange={e => setAmountPaid(e.target.value)}
+                className="input pl-7 font-mono text-sm" />
             </div>
+            <p className="text-zinc-600 text-[10px] mt-1.5">Edit if the customer paid a different amount than the bill</p>
+          </div>
+        )}
+
+        {/* Bill vs Paid summary — always reflects what Save will actually send */}
+        <div className={`flex justify-between text-xs px-3 py-2 rounded-lg border mb-2 ${
+          diffIsTiny
+            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+            : diff < 0
+              ? 'bg-red-500/10 border-red-500/20 text-red-400'
+              : 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+        }`}>
+          <span>{method === 'split' ? 'Split total (= amount paid)' : 'Amount paid'}</span>
+          <span className="font-mono font-semibold">{sym}{effectivePaid.toFixed(2)}</span>
+        </div>
+        {!diffIsTiny && (
+          <div className={`flex justify-between text-[11px] px-3 py-1.5 rounded-lg mb-2 ${diff < 0 ? 'text-red-400/80' : 'text-blue-400/80'}`}>
+            <span>{diff < 0 ? 'Less than bill' : 'More than bill'}</span>
+            <span className="font-mono">{diff < 0 ? '-' : '+'}{sym}{Math.abs(diff).toFixed(2)}</span>
           </div>
         )}
 

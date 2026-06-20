@@ -4,6 +4,11 @@
  * Date-filtered order history list with session grouping.
  * Extracted from ReportsView.tsx.
  *
+ * FIX: defaults both From/To to today using LOCAL date components
+ * (not toISOString, which is UTC and caused a "From = yesterday"
+ * mismatch for users not on UTC). Loads automatically on mount.
+ * Removed the "Clear" (all-time) button per request — "Today" is
+ * the only quick-reset needed.
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -19,7 +24,11 @@ interface Props {
 }
 
 function todayStr(): string {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export default function HistoryTab({ sym, taxPct, brand }: Props) {
@@ -53,8 +62,7 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
     }
   }, []);
 
-  // Load today's orders automatically on first mount — no manual date
-  // selection required to see today's history.
+  // Load today's orders automatically on first mount.
   useEffect(() => {
     loadHistory(dateFrom, dateTo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,12 +78,6 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
   const handleToChange = (v: string) => {
     setDateTo(v);
     setDateError(validateRange(dateFrom, v));
-  };
-
-  const handleClear = () => {
-    setDateFrom('');
-    setDateTo('');
-    setDateError('');
   };
 
   const handleResetToday = () => {
@@ -117,9 +119,7 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
               {loading ? 'Loading…' : 'Search'}
             </button>
             <button className="btn btn-sm" onClick={handleResetToday}>Today</button>
-            {(dateFrom || dateTo) && (
-              <button className="btn btn-sm" onClick={handleClear}>Clear</button>
-            )}
+            {/* FIX: removed "Clear" (all-time) button per request */}
           </div>
         </div>
 

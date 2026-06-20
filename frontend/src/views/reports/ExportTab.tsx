@@ -4,8 +4,18 @@ import { useToast } from '../../context/ToastContext';
 
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 
+// FIX: previously used new Date().toISOString().split('T')[0], which
+// converts to UTC first. On a server/browser running UTC while the user
+// is in IST (UTC+5:30), or vice versa, this silently returns YESTERDAY's
+// or TOMORROW's date depending on time of day — exactly the "19 to 20"
+// mismatch reported. Build the date string from LOCAL components instead,
+// matching what a <input type="date"> picker shows the user.
 function todayStr(): string {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 /** Returns an error string if the range is invalid, else ''. */
@@ -82,9 +92,6 @@ function DateRangeError({ message }: { message: string }) {
 
 function OurFormatSection() {
   const today = todayStr();
-  // FIX: preselect today's date in both From/To instead of leaving blank,
-  // so the export defaults to "today" rather than "everything ever" /
-  // requiring the user to pick dates first.
   const [from,    setFrom]    = useState(today);
   const [to,      setTo]      = useState(today);
   const [loading, setLoading] = useState<'csv' | 'json' | null>(null);
@@ -126,7 +133,7 @@ function OurFormatSection() {
     <div className="rounded-xl border border-surface-border bg-surface-card p-5">
       <h4 className="font-semibold text-white text-sm mb-1">Detailed Report</h4>
       <p className="text-zinc-500 text-xs mb-4">
-        Full breakdown — daily totals, top items, tax, and every order. Defaults to today — change the dates or clear them to export everything.
+        Full breakdown — daily totals, top items, tax, and every order. Defaults to today.
       </p>
 
       <div className="flex items-end gap-3 flex-wrap">
@@ -142,14 +149,10 @@ function OurFormatSection() {
             value={to} max={today}
             onChange={e => setTo(e.target.value)} />
         </div>
+        {/* FIX: removed "Clear (all time)" — not needed; "Today" resets the range */}
         <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(today); setTo(today); }}>
           Today
         </button>
-        {(from || to) && (
-          <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(''); setTo(''); }}>
-            Clear (all time)
-          </button>
-        )}
       </div>
 
       <DateRangeError message={dateError} />
@@ -192,7 +195,6 @@ function OurFormatSection() {
 
 function VyaparSalesSection() {
   const today = todayStr();
-  // FIX: preselect today's date instead of leaving blank.
   const [from,    setFrom]    = useState(today);
   const [to,      setTo]      = useState(today);
   const [loading, setLoading] = useState<'without' | 'with' | null>(null);
@@ -256,14 +258,10 @@ function VyaparSalesSection() {
             value={to} max={today}
             onChange={e => setTo(e.target.value)} />
         </div>
+        {/* FIX: removed "Clear (all time)" */}
         <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(today); setTo(today); }}>
           Today
         </button>
-        {(from || to) && (
-          <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(''); setTo(''); }}>
-            Clear (all time)
-          </button>
-        )}
       </div>
 
       <DateRangeError message={dateError} />
