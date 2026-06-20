@@ -3,8 +3,6 @@
  *
  * Groups a flat list of closed orders into "dining sessions" —
  * one session = one customer sitting at one table.
- *
- * Extracted from ReportsView.tsx.
  */
 
 import type { Order } from '../types';
@@ -20,34 +18,24 @@ export interface TableSession {
   allItems:      { name: string; price: number; quantity: number; note: string }[];
   paymentMethod: string | null;
   paymentDetails: any;
+  amountPaid:    number | null;   // FIX: was missing — caused History to always show bill total
   customerName:  string | null;
   customerPhone: string | null;
 }
 
-// Orders without a session_id are "legacy" (created before the session_id column
-// was added). We group them by table with a 4-hour gap heuristic: if more than
-// 4 hours pass between consecutive orders at the same table, they are treated as
-// separate dining sessions. This avoids merging a January visit with a June visit.
 const LEGACY_SESSION_GAP_MS = 4 * 60 * 60 * 1000;
 
-/**
- * Groups orders into dining sessions using the `session_id` field.
- *
- * Modern orders (with session_id): grouped by their session_id — exact.
- * Legacy orders (no session_id): grouped per table using a 4-hour gap heuristic.
- */
 export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
   const sorted = [...orders].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
 
   const sessions: TableSession[] = [];
-  const sessionMap: Record<string, number> = {}; // sessionKey → sessions index
+  const sessionMap: Record<string, number> = {};
 
   for (const order of sorted) {
     const sessionId = (order as any).session_id as string | undefined;
 
-    // For legacy orders, find an existing session at the same table within the gap window.
     let key: string;
     if (sessionId) {
       key = sessionId;
@@ -69,7 +57,6 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
     const existingIdx = sessionMap[key];
 
     if (existingIdx !== undefined) {
-      // Merge into existing session
       const existing = sessions[existingIdx];
       existing.orders.push(order);
       existing.endedAt      = order.created_at;
@@ -78,6 +65,10 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       if ((order as any).payment_method) {
         existing.paymentMethod  = (order as any).payment_method;
         existing.paymentDetails = (order as any).payment_details;
+      }
+      // FIX: accumulate amount_paid across rounds in a session
+      if ((order as any).amount_paid != null) {
+        existing.amountPaid = ((existing.amountPaid ?? 0) + (order as any).amount_paid);
       }
       if ((order as any).customer_name)  existing.customerName  = (order as any).customer_name;
       if ((order as any).customer_phone) existing.customerPhone = (order as any).customer_phone;
@@ -99,7 +90,6 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       continue;
     }
 
-    // New session
     let parsedPayDetails: any = null;
     try {
       if ((order as any).payment_details) {
@@ -122,6 +112,7 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       })),
       paymentMethod:  (order as any).payment_method  || null,
       paymentDetails: parsedPayDetails,
+      amountPaid:     (order as any).amount_paid ?? null,   // FIX: read from order
       customerName:   (order as any).customer_name   || null,
       customerPhone:  (order as any).customer_phone  || null,
     };

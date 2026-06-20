@@ -2,13 +2,7 @@
  * views/reports/SessionRow.tsx
  *
  * Expandable row for a single dining session in the history list.
- * Extracted from ReportsView.tsx.
  *
- * FIX: shows "Bill" vs "Paid" separately whenever they differ. Also now
- * passes the existing split payment_details into PaymentEditModal so
- * re-opening "Edit Payment" on a split order prefills the real split rows
- * instead of blank ones (previously caused the displayed "Amount Paid" to
- * disagree with the actual split entries shown).
  */
 
 import React, { useState } from 'react';
@@ -30,13 +24,15 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const [showPaymentEdit, setShowPaymentEdit] = useState(false);
   const [paymentMethod,   setPaymentMethod]   = useState<string | null>(session.paymentMethod);
   const [paymentDetails,  setPaymentDetails]  = useState<any>(session.paymentDetails);
-  const [amountPaid,      setAmountPaid]      = useState<number | null>(session.amountPaid);
+  // FIX: initialise from session.amountPaid (now correctly set by sessions.ts)
+  const [amountPaid, setAmountPaid] = useState<number | null>(session.amountPaid ?? null);
 
-  const tax          = session.totalAmount * taxPct;
-  const billTotal     = session.totalAmount + tax;
-  const paidTotal      = amountPaid != null ? amountPaid : billTotal;
-  const paidDiff        = paidTotal - billTotal;
-  const hasDiff         = Math.abs(paidDiff) >= 0.01;
+  const tax       = session.totalAmount * taxPct;
+  const billTotal = session.totalAmount + tax;
+  // If no amount_paid recorded, treat as equal to bill (legacy orders)
+  const paidTotal = amountPaid != null ? amountPaid : billTotal;
+  const paidDiff  = paidTotal - billTotal;
+  const hasDiff   = Math.abs(paidDiff) >= 0.01;
 
   const date         = new Date(session.startedAt);
   const isMultiRound = session.orders.length > 1;
@@ -71,8 +67,13 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
           onClose={() => setShowPaymentEdit(false)}
           onSaved={(newMethod, newDetails, newAmountPaid) => {
             setPaymentMethod(newMethod);
-            setPaymentDetails(newDetails || null);
-            if (typeof newAmountPaid === 'number') setAmountPaid(newAmountPaid);
+            setPaymentDetails(newDetails ?? null);
+            // FIX: always update local state so the row reflects the edit
+            // immediately — previously this was only updated if newAmountPaid
+            // was a number, but the condition was missing for split payments
+            if (typeof newAmountPaid === 'number') {
+              setAmountPaid(newAmountPaid);
+            }
             setShowPaymentEdit(false);
           }}
         />
@@ -215,7 +216,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                 <span className="font-mono">{sym}{billTotal.toFixed(2)}</span>
               </div>
 
-              {/* Bill vs Paid — always shown explicitly */}
+              {/* Amount Paid — always shown */}
               <div className={`flex justify-between text-sm font-bold pt-1 ${hasDiff ? (paidDiff < 0 ? 'text-red-400' : 'text-blue-400') : 'text-emerald-400'}`}>
                 <span>Amount Paid</span>
                 <span className="font-mono">{sym}{paidTotal.toFixed(2)}</span>
@@ -238,7 +239,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                       {splitEntries.map((e, i) => (
                         <div key={i} className="flex items-center justify-between text-xs">
                           <PaymentBadge method={e.method} />
-                          <span className="font-mono text-zinc-400">{sym}{e.amount.toFixed(2)}</span>
+                          <span className="font-mono text-zinc-400">{sym}{Number(e.amount).toFixed(2)}</span>
                         </div>
                       ))}
                     </div>
