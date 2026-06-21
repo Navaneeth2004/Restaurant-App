@@ -48,7 +48,11 @@ export interface Order {
   id: string;
   table_id: string;
   session_id?: string;
-  status: 'active' | 'delivered' | 'closed';
+  // 'active'        — sent to kitchen, not yet confirmed ready
+  // 'delivered'      — kitchen confirmed ready
+  // 'billed_direct'  — waiter billed it without sending to kitchen
+  // 'closed'         — paid and done
+  status: 'active' | 'delivered' | 'billed_direct' | 'closed';
   created_at: string;
   delivered_at: string | null;
   total: number;

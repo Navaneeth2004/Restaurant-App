@@ -17,6 +17,29 @@ const db      = require('../db/database');
   try { db.exec(`ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'dine_in'`); } catch (_) {}
 })();
 
+// ── Order status model ──────────────────────────────────────────────────
+// 'active'        — sent to kitchen, not yet confirmed ready
+// 'delivered'     — kitchen confirmed ready (ONLY the kitchen sets this)
+// 'billed_direct' — waiter billed it without ever sending to kitchen
+//                   (e.g. customer already left, or items don't need prep
+//                   tracking). Kitchen never sees these. Distinct from
+//                   'delivered' so the UI never claims the kitchen
+//                   confirmed something it never saw.
+// 'closed'        — paid and done
+//
+// Table/session model (per product decision: one table = one customer at
+// a time, no concurrent sessions):
+//   A table's "current visit" = every order on that table with
+//   status IN ('active','delivered','billed_direct') — i.e. everything
+//   not yet closed. There is no separate session_id join needed; the
+//   table_id IS the session boundary, because only one visit can be open
+//   on a table at once. Billing/closing a table closes ALL open orders on
+//   it, full stop — this prevents orphaned active orders left over from a
+//   previous visit lingering after the table is reset.
+
+const OPEN_STATUSES = ['active', 'delivered', 'billed_direct'];
+const OPEN_STATUSES_SQL = `('${OPEN_STATUSES.join("','")}')`;
+
 // ── In-memory guards ──────────────────────────────────────────────────────
 const _pendingTables = new Set();
 const _closingOrders = new Set();
@@ -35,42 +58,69 @@ function recalcTotal(orderId) {
   return total;
 }
 
+/** Returns true if the table has ANY open (non-closed) order right now. */
+function tableHasOpenOrder(tableId) {
+  const row = db.prepare(
+    `SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ${OPEN_STATUSES_SQL}`
+  ).get(tableId);
+  return row.c > 0;
+}
+
 router.get('/active', (req, res) => {
   const orders = db.prepare("SELECT * FROM orders WHERE status = 'active' ORDER BY created_at ASC").all();
   orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
   res.json(orders);
 });
 
-// Returns only the rounds belonging to the current customer session at this table.
-// Falls back to the most-recently-closed session so the bill panel stays populated
-// immediately after payment, before the next loadTables refresh clears the table.
+// Returns every order belonging to the table's CURRENT open visit.
+// A table can only have one open visit at a time, so this is simply
+// "every non-closed order on this table" — no session_id matching needed.
+// Falls back to the most-recently-closed visit (grouped by closed_at
+// proximity) so the bill panel stays populated immediately after payment,
+// before the table refresh clears the selection.
 router.get('/table/:tableId/all', (req, res) => {
-  // Prefer an active/delivered session (table is still occupied)
-  let latest = db.prepare(
-    "SELECT session_id FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at DESC LIMIT 1"
-  ).get(req.params.tableId);
+  const open = db.prepare(
+    `SELECT * FROM orders WHERE table_id = ? AND status IN ${OPEN_STATUSES_SQL} ORDER BY created_at ASC`
+  ).all(req.params.tableId);
 
-  // Fall back to the most recent closed session (table was just billed)
-  if (!latest || !latest.session_id) {
-    latest = db.prepare(
-      "SELECT session_id FROM orders WHERE table_id = ? AND status = 'closed' ORDER BY created_at DESC LIMIT 1"
-    ).get(req.params.tableId);
+  if (open.length > 0) {
+    open.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
+    return res.json(open);
   }
 
-  if (!latest || !latest.session_id) return res.json([]);
+  // Nothing open — return the most recently closed visit as a single
+  // group. "Same visit" = closed orders for this table whose created_at
+  // timestamps are within a tight window of each other (covers multi-round
+  // closed visits), anchored to the single most recent closed order.
+  const last = db.prepare(
+    "SELECT * FROM orders WHERE table_id = ? AND status = 'closed' ORDER BY created_at DESC LIMIT 1"
+  ).get(req.params.tableId);
+  if (!last) return res.json([]);
 
-  const orders = db.prepare(
-    "SELECT * FROM orders WHERE table_id = ? AND session_id = ? ORDER BY created_at ASC"
-  ).all(req.params.tableId, latest.session_id);
+  const VISIT_GAP_MS = 4 * 60 * 60 * 1000; // 4h — same heuristic used elsewhere for legacy grouping
+  const candidates = db.prepare(
+    "SELECT * FROM orders WHERE table_id = ? AND status = 'closed' ORDER BY created_at DESC"
+  ).all(req.params.tableId);
 
-  orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
-  res.json(orders);
+  const group = [last];
+  let anchor = new Date(last.created_at).getTime();
+  for (const o of candidates) {
+    if (o.id === last.id) continue;
+    const t = new Date(o.created_at).getTime();
+    if (anchor - t <= VISIT_GAP_MS) { group.push(o); anchor = Math.min(anchor, t); }
+    else break; // candidates are DESC ordered, so once the gap is too big, stop
+  }
+
+  group.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  group.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
+  res.json(group);
 });
 
 // Returns the most relevant current order for a table.
 router.get('/table/:tableId', (req, res) => {
   let order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(req.params.tableId);
   if (!order) order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY delivered_at DESC LIMIT 1").get(req.params.tableId);
+  if (!order) order = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'billed_direct' ORDER BY created_at DESC LIMIT 1").get(req.params.tableId);
   if (!order) return res.json(null);
   order.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
   res.json(order);
@@ -89,6 +139,12 @@ router.get('/:id', (req, res) => {
   res.json(order);
 });
 
+// ── POST / — Send to Kitchen ────────────────────────────────────────────
+// Always safe to call whenever there are cart items, regardless of
+// billing state on the table. If an active (in-kitchen) order already
+// exists, items are merged into it. Otherwise a fresh 'active' order is
+// created. This never looks at session_id — table_id is the only scope
+// that matters, since only one visit can be open per table.
 router.post('/', (req, res) => {
   const { table_id, items } = req.body;
   if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
@@ -101,18 +157,6 @@ router.post('/', (req, res) => {
 
     const saveOrder = db.transaction(() => {
       const existingActive = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
-
-      // FIX: Only reuse a delivered session if the table is currently occupied.
-      // If table status is 'empty', the previous customer already paid and left —
-      // this is a brand new customer who needs a fresh session_id so their orders
-      // appear correctly as a separate visit in history and analytics.
-      const tableRow = db.prepare("SELECT status FROM tables WHERE id = ?").get(table_id);
-      const tableIsOccupied = tableRow && tableRow.status !== 'empty';
-
-      const existingDelivered = (!existingActive && tableIsOccupied)
-        ? db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY created_at DESC LIMIT 1").get(table_id)
-        : null;
-
       const existing = existingActive || null;
 
       if (existing) {
@@ -134,11 +178,10 @@ router.post('/', (req, res) => {
         isNew = false;
         return getOrderWithItems(existing.id);
       } else {
-        const orderId   = uuidv4();
-        const sessionId = existingDelivered ? existingDelivered.session_id : uuidv4();
+        const orderId = uuidv4();
         const now = new Date().toISOString();
-        db.prepare('INSERT INTO orders (id, table_id, session_id, status, created_at) VALUES (?, ?, ?, ?, ?)')
-          .run(orderId, table_id, sessionId, 'active', now);
+        db.prepare('INSERT INTO orders (id, table_id, status, created_at) VALUES (?, ?, ?, ?)')
+          .run(orderId, table_id, 'active', now);
         db.prepare("UPDATE tables SET status = 'occupied' WHERE id = ?").run(table_id);
         const ins = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
         for (const it of items) ins.run(orderId, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
@@ -168,8 +211,15 @@ router.post('/', (req, res) => {
 });
 
 // ── POST /direct-bill ─────────────────────────────────────────────────────
-// Creates an order already in 'delivered' state — bypasses kitchen display
-// entirely. Used when waiter wants to bill immediately without sending to kitchen.
+// Creates an order in 'billed_direct' state — bypasses kitchen entirely.
+// Distinct from 'delivered': 'delivered' means the KITCHEN confirmed it.
+// 'billed_direct' means the waiter billed it without the kitchen ever
+// seeing it (customer already left, or items need no prep tracking).
+// This NEVER disables or interferes with Send to Kitchen — it's an
+// independent action a waiter can take any time there are unsent items
+// for a table, whether or not that table also has an active kitchen
+// round (rounds 2, 3, ... can all be direct-billed individually; only
+// the round actually being billed is affected).
 router.post('/direct-bill', (req, res) => {
   const { table_id, items } = req.body;
   if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
@@ -179,27 +229,21 @@ router.post('/direct-bill', (req, res) => {
 
   try {
     const order = db.transaction(() => {
-      // FIX: Only reuse session if table is currently occupied (same customer session).
-      // If table is empty, this is a new customer — give them a fresh session_id.
-      const tableRow = db.prepare("SELECT status FROM tables WHERE id = ?").get(table_id);
-      const tableIsOccupied = tableRow && tableRow.status !== 'empty';
-
-      let sessionId;
-      if (tableIsOccupied) {
-        const existingSession = db.prepare(
-          "SELECT session_id FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at DESC LIMIT 1"
-        ).get(table_id);
-        sessionId = existingSession?.session_id ?? uuidv4();
-      } else {
-        sessionId = uuidv4();
-      }
-
       const orderId = uuidv4();
       const now     = new Date().toISOString();
 
-      db.prepare('INSERT INTO orders (id, table_id, session_id, status, created_at, delivered_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(orderId, table_id, sessionId, 'delivered', now, now);
-      db.prepare("UPDATE tables SET status = 'waiting_bill' WHERE id = ?").run(table_id);
+      // No delivered_at — it was never delivered by the kitchen.
+      db.prepare('INSERT INTO orders (id, table_id, status, created_at) VALUES (?, ?, ?, ?)')
+        .run(orderId, table_id, 'billed_direct', now);
+
+      // Table is occupied by this visit if it wasn't already (covers the
+      // "customer left without anyone marking it" case: a fresh direct
+      // bill on an empty table still needs to mark it occupied first so
+      // closing it afterwards behaves normally).
+      const tableRow = db.prepare("SELECT status FROM tables WHERE id = ?").get(table_id);
+      if (!tableRow || tableRow.status === 'empty') {
+        db.prepare("UPDATE tables SET status = 'occupied' WHERE id = ?").run(table_id);
+      }
 
       const ins = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
       for (const it of items) ins.run(orderId, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
@@ -208,7 +252,8 @@ router.post('/direct-bill', (req, res) => {
       return getOrderWithItems(orderId);
     })();
 
-    // Only emit tables_updated — no new_order so kitchen display stays clean
+    // Only emit tables_updated — no new_order, no order_updated targeting
+    // kitchen — kitchen must never see billed_direct orders.
     req.io.emit('tables_updated');
     res.status(201).json(order);
   } catch (err) {
@@ -242,9 +287,13 @@ router.patch('/:id/cancel-item', (req, res) => {
       if (remaining === 0) {
         // Delete the order entirely — never billed so must not appear in reports
         db.prepare('DELETE FROM orders WHERE id = ?').run(req.params.id);
+        // Only empty the table if NOTHING else is open on it. Scoped by
+        // table_id alone now — correct because a table can only have one
+        // open visit at a time, so "anything else open" really does mean
+        // "is the visit actually over."
         const other = db.prepare(
-          "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered') AND id != ?"
-        ).get(order.table_id, order.session_id, req.params.id).c;
+          `SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ${OPEN_STATUSES_SQL} AND id != ?`
+        ).get(order.table_id, req.params.id).c;
         if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
         return { cancelled: true, order_cancelled: true, table_id: order.table_id, cancelledItem, orderStatus: order.status };
       }
@@ -298,10 +347,11 @@ router.patch('/:id/cancel', (req, res) => {
       db.prepare('DELETE FROM order_items WHERE order_id = ?').run(req.params.id);
       db.prepare('DELETE FROM orders WHERE id = ?').run(req.params.id);
 
-      // Only free the table if no other orders in this session remain active/delivered
+      // Only free the table if nothing else is open on it (table-scoped,
+      // not session-scoped — see note above).
       const other = db.prepare(
-        "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered')"
-      ).get(order.table_id, order.session_id).c;
+        `SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND status IN ${OPEN_STATUSES_SQL}`
+      ).get(order.table_id).c;
       if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
 
       return {
@@ -353,12 +403,13 @@ router.patch('/:id/deliver', (req, res) => {
   }
 });
 
-// Helper: compute the bill total (incl. tax) for ALL orders in a session,
-// so amount_paid can be validated/derived consistently server-side too.
-function getSessionBillTotal(tableId, sessionId, taxPct) {
+// Helper: compute the bill total (incl. tax) for ALL open orders on a
+// table, so amount_paid can be validated/derived consistently server-side.
+// Table-scoped, not session_id-scoped (see status model note at top).
+function getTableBillTotal(tableId, taxPct) {
   const rows = db.prepare(
-    "SELECT total FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered','closed')"
-  ).all(tableId, sessionId);
+    `SELECT total FROM orders WHERE table_id = ? AND status IN ${OPEN_STATUSES_SQL}`
+  ).all(tableId);
   const subtotal = rows.reduce((s, r) => s + (r.total || 0), 0);
   return subtotal * (1 + taxPct);
 }
@@ -369,6 +420,11 @@ function getTaxPercent() {
 }
 
 // ── PATCH close order with payment details ─────────────────────────────────
+// Closing a table closes EVERY open order on that table (active,
+// delivered, AND billed_direct) — not just orders matching some derived
+// session id. This guarantees no order is ever left dangling on a table
+// after it's billed, and the table can safely flip to 'empty' for the
+// next customer.
 router.patch('/:id/close', (req, res) => {
   const orderId = req.params.id;
 
@@ -407,11 +463,13 @@ router.patch('/:id/close', (req, res) => {
       const orderType  = (order_type === 'parcel') ? 'parcel' : 'dine_in';
 
       const taxPct     = getTaxPercent();
-      const billTotal  = getSessionBillTotal(order.table_id, order.session_id, taxPct);
+      const billTotal  = getTableBillTotal(order.table_id, taxPct);
       const paidAmount = typeof amount_paid === 'number' && !Number.isNaN(amount_paid)
         ? amount_paid
         : billTotal;
 
+      // Close EVERY open order on this table — not just ones sharing a
+      // session_id. This is what guarantees nothing is left dangling.
       db.prepare(`
         UPDATE orders
         SET status = 'closed',
@@ -423,9 +481,8 @@ router.patch('/:id/close', (req, res) => {
             amount_paid     = ?,
             order_type      = ?
         WHERE table_id = ?
-          AND session_id = ?
-          AND status IN ('active','delivered')
-      `).run(payMethod, payDetails, change, custName, custPhone, paidAmount, orderType, order.table_id, order.session_id);
+          AND status IN ${OPEN_STATUSES_SQL}
+      `).run(payMethod, payDetails, change, custName, custPhone, paidAmount, orderType, order.table_id);
 
       db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
       return { table_id: order.table_id };

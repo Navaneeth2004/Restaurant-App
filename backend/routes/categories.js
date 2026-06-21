@@ -1,17 +1,3 @@
-// PATCH for backend/routes/categories.js
-// Add this route BEFORE module.exports:
-//
-// router.patch('/reorder', (req, res) => {
-//   const { order } = req.body;
-//   if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
-//   const upd = db.prepare('UPDATE categories SET sort_order = ? WHERE id = ?');
-//   const reorder = db.transaction(() => { order.forEach(({ id, sort_order }) => upd.run(sort_order, id)); });
-//   reorder();
-//   req.io.emit('categories_updated');
-//   res.json({ success: true });
-// });
-
-// Full updated categories.js below:
 const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
@@ -54,12 +40,15 @@ router.delete('/:id', (req, res) => {
   // Check for menu items in this category
   const count = db.prepare('SELECT COUNT(*) as c FROM menu_items WHERE category_id = ?').get(req.params.id).c;
   if (count > 0) {
+    // FIX: include 'billed_direct' — a direct-billed order can be open
+    // (not yet closed/paid) just like 'active' or 'delivered', and its
+    // items must not lose their category reference out from under it.
     const inActiveOrder = db.prepare(`
       SELECT COUNT(*) as c FROM order_items oi
       JOIN orders o ON oi.order_id = o.id
       JOIN menu_items m ON oi.menu_item_id = m.id
       WHERE m.category_id = ?
-        AND o.status IN ('active', 'delivered')
+        AND o.status IN ('active', 'delivered', 'billed_direct')
     `).get(req.params.id).c;
 
     if (inActiveOrder > 0) {

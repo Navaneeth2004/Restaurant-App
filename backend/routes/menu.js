@@ -231,11 +231,14 @@ router.delete('/:id', (req, res) => {
   const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Not found' });
 
+  // FIX: include 'billed_direct' — a direct-billed order can still be
+  // open (not yet closed/paid), and deleting the item out from under it
+  // would orphan the order_items row's menu_item_id reference.
   const inUse = db.prepare(`
     SELECT oi.id FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
     WHERE oi.menu_item_id = ?
-      AND o.status IN ('active', 'delivered')
+      AND o.status IN ('active', 'delivered', 'billed_direct')
     LIMIT 1
   `).get(req.params.id);
   if (inUse) {

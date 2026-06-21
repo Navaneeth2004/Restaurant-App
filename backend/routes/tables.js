@@ -5,20 +5,21 @@ const db      = require('../db/database');
 // NOTE: sort_order column is included in the CREATE TABLE schema in database.js
 
 router.get('/', (req, res) => {
-  // FIX: join on status IN ('active','delivered') so waiting_bill tables
-  // also get their occupied_since timestamp, not just active ones.
+  // occupied_since must consider every OPEN status — active, delivered,
+  // AND billed_direct — so a directly-billed table still shows a timer
+  // and "occupied" badge until it's actually closed/paid.
   const tables = db.prepare(`
     SELECT t.*,
       o.created_at AS occupied_since
     FROM tables t
     LEFT JOIN orders o
       ON o.table_id = t.id
-      AND o.status IN ('active', 'delivered')
+      AND o.status IN ('active', 'delivered', 'billed_direct')
       AND o.created_at = (
         SELECT MIN(o2.created_at)
         FROM orders o2
         WHERE o2.table_id = t.id
-          AND o2.status IN ('active', 'delivered')
+          AND o2.status IN ('active', 'delivered', 'billed_direct')
       )
     ORDER BY t.sort_order ASC, t.id ASC
   `).all();
@@ -87,7 +88,7 @@ router.delete('/:id', (req, res) => {
   if (table.status !== 'empty') {
     return res.status(400).json({ error: 'Cannot delete an occupied table. Clear the order and mark as paid first.' });
   }
-  const active = db.prepare("SELECT id FROM orders WHERE table_id = ? AND status IN ('active','delivered')").get(req.params.id);
+  const active = db.prepare("SELECT id FROM orders WHERE table_id = ? AND status IN ('active','delivered','billed_direct')").get(req.params.id);
   if (active) return res.status(400).json({ error: 'Table has an active order. Close it first.' });
   db.prepare('DELETE FROM tables WHERE id = ?').run(req.params.id);
   req.io.emit('tables_updated');

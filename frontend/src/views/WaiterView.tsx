@@ -3,6 +3,22 @@
  *
  * Thin shell — state, data fetching, and socket wiring only.
  * UI components live in views/waiter/.
+ *
+ * FIX (order flow rework):
+ * - "Send to Kitchen" is now a fully independent action from billing.
+ *   Clicking "Generate Bill" never silently routes the current cart
+ *   through the kitchen-bypassing direct-bill path as a side effect —
+ *   that used to mean a misclick on "Generate Bill" instead of "Send to
+ *   Kitchen" could mark unsent items as if the kitchen had confirmed them.
+ * - Direct-billing the cart is still supported (e.g. customer already
+ *   left, or items don't need kitchen prep tracking) but only happens
+ *   when there's no active kitchen round AND the waiter is explicitly
+ *   generating a bill with unsent cart items — and the resulting order
+ *   is tagged 'billed_direct', never 'delivered', so it's never confused
+ *   with a kitchen-confirmed round in the UI.
+ * - Session/visit boundaries are table-scoped, not session_id-scoped:
+ *   a table can only have one open visit at a time, so "this table's
+ *   current order group" is simply every non-closed order on it.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -42,6 +58,7 @@ export default function WaiterView() {
   const [activeCatId,   setActiveCatId]   = useState<number | null>(null);
   const [billModal,     setBillModal]     = useState(false);
   const [loading,       setLoading]       = useState(false);
+  const [billing,       setBilling]       = useState(false);
   const [mobileTab,     setMobileTab]     = useState<MobileTab>('tables');
   const [confirmModal,  setConfirmModal]  = useState<{
     title: string; message: string; confirmLabel: string; danger?: boolean; onConfirm: () => void;
@@ -136,6 +153,12 @@ export default function WaiterView() {
   const updateNote = (idx: number, note: string) =>
     setCart(prev => prev.map((it, i) => i === idx ? { ...it, note } : it));
 
+  // ── Send to Kitchen ──────────────────────────────────────────────────
+  // Always available whenever there's a table selected and items in the
+  // cart. Never disabled or affected by billing/payment state — billing
+  // a previous round, or having direct-billed something earlier in this
+  // same visit, has zero bearing on whether new items can still be sent
+  // to the kitchen.
   const sendToKitchen = async () => {
     if (!selectedTable || !cart.length) { toast('Add items first', 'error'); return; }
     setLoading(true);
@@ -201,6 +224,24 @@ export default function WaiterView() {
     });
   };
 
+  // ── Generate Bill ────────────────────────────────────────────────────
+  // FIX: This used to ALWAYS clear the cart and (when no active kitchen
+  // round existed) silently direct-bill it as a side effect of opening
+  // the bill modal — meaning a misclick here instead of "Send to
+  // Kitchen" would mark unsent items as billed/delivered with no
+  // confirmation. Now:
+  //   - If there's an active kitchen round, cart items still merge into
+  //     it (same as before) since they're going to the kitchen anyway,
+  //     just not yet billed — this matches "items added mid-round".
+  //   - If there's NO active kitchen round and the cart has items, those
+  //     items are direct-billed (status 'billed_direct', never
+  //     'delivered') — this is the explicit "customer already
+  //     ordered/left, bill it without sending to kitchen" path you
+  //     asked for, and it still works for round 2, 3, etc.
+  //   - Either way, this never touches whether "Send to Kitchen" is
+  //     enabled afterwards — that button only ever depends on cart
+  //     contents, which get cleared as a NATURAL result of being billed
+  //     (nothing left to send), not because billing "locked" anything.
   const handleBill = async () => {
     if (cart.length === 0 && !hasBillableOrder) {
       toast('No order for this table', 'error');
@@ -209,7 +250,7 @@ export default function WaiterView() {
     if (!selectedTable) return;
 
     if (cart.length > 0) {
-      setLoading(true);
+      setBilling(true);
       try {
         if (activeRound) {
           // There's already an active kitchen order — merge cart into it normally
@@ -225,18 +266,18 @@ export default function WaiterView() {
           setCart([]);
           await loadTableOrders(selectedTable.id);
         } else {
-          // No active kitchen round — use direct-bill so nothing goes to kitchen,
-          // whether this is a fresh table or one that already has delivered rounds.
+          // No active kitchen round — direct-bill these items. Tagged
+          // 'billed_direct' server-side, never 'delivered'.
           await directBillOrder({ table_id: selectedTable.id, items: cart });
           setCart([]);
           await loadTableOrders(selectedTable.id);
         }
       } catch (e: any) {
         toast(e.response?.data?.error || 'Failed to prepare bill', 'error');
-        setLoading(false);
+        setBilling(false);
         return;
       }
-      setLoading(false);
+      setBilling(false);
     }
 
     setBillModal(true);
@@ -248,17 +289,20 @@ export default function WaiterView() {
   const hasBillableOrder = allOrders.length > 0 || cart.length > 0;
   const billOrderId      = allOrders.length > 0 ? allOrders[allOrders.length - 1].id : null;
   const filtered         = menuItems.filter(m => m.category_id === activeCatId);
-  const pastRounds       = allOrders.filter(o => o.status === 'delivered');
+  const pastRounds        = allOrders.filter(o => o.status === 'delivered');
+  const directBilledRounds = allOrders.filter(o => o.status === 'billed_direct');
   const activeRound      = allOrders.find(o => o.status === 'active') || null;
   const isDelivered      = !activeRound && pastRounds.length > 0;
 
   // ── Shared order panel props ───────────────────────────────────────────
   const orderPanelProps = {
-    pastRounds, activeRound, allOrders, cart, selectedTable, sym,
+    pastRounds, directBilledRounds, activeRound, allOrders, cart, selectedTable, sym,
     updateQty, updateNote, onCancelItem: cancelItem, onCancelRound: cancelRound,
   };
   const actionProps = {
-    loading, cart, selectedTable, hasBillableOrder, activeRound,
+    // loading covers Send to Kitchen; billing covers Generate Bill — kept
+    // as separate flags so one action's spinner never disables the other.
+    loading, billing, cart, selectedTable, hasBillableOrder, activeRound,
     sendToKitchen, onBill: handleBill, clearCart: () => setCart([]),
   };
 

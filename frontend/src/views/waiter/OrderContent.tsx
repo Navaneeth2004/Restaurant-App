@@ -2,8 +2,13 @@
  * components/waiter/OrderContent.tsx
  *
  * Scrollable order list showing past rounds, the active round,
- * and the unsent cart — with inline cancel controls.
+ * direct-billed rounds, and the unsent cart — with inline cancel controls.
  * Extracted from WaiterView.tsx.
+ *
+ * FIX: direct-billed rounds (status 'billed_direct') now render under
+ * their own "Billed Directly" label instead of being lumped in with
+ * kitchen-confirmed "Delivered" rounds. The kitchen never saw these
+ * items, so the UI must never say it did.
  */
 
 import React from 'react';
@@ -19,6 +24,7 @@ type CartItem = {
 
 interface Props {
   pastRounds:    Order[];
+  directBilledRounds?: Order[];
   activeRound:   Order | null;
   allOrders:     Order[];
   cart:          CartItem[];
@@ -32,6 +38,7 @@ interface Props {
 
 export default function OrderContent({
   pastRounds,
+  directBilledRounds = [],
   activeRound,
   allOrders,
   cart,
@@ -44,7 +51,7 @@ export default function OrderContent({
 }: Props) {
   return (
     <>
-      {/* Delivered rounds */}
+      {/* Delivered rounds — kitchen-confirmed only */}
       {pastRounds.map((round, roundIdx) => (
         <div key={round.id} className="px-3 pt-3 pb-2">
           <div className="flex items-center justify-between mb-2">
@@ -75,6 +82,38 @@ export default function OrderContent({
         </div>
       ))}
 
+      {/* Direct-billed rounds — kitchen never saw these. Distinct label,
+          distinct color, never says "Delivered". */}
+      {directBilledRounds.map((round, roundIdx) => (
+        <div key={round.id} className="px-3 pt-3 pb-2">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">
+                Billed Directly{directBilledRounds.length > 1 ? ` #${roundIdx + 1}` : ''} — Not Sent to Kitchen
+              </span>
+            </div>
+            <span className="font-mono text-xs text-zinc-500">
+              {sym}{round.items.reduce((s, i) => s + i.price * i.quantity, 0).toFixed(2)}
+            </span>
+          </div>
+          {round.items.map((item, i) => (
+            <div key={i} className="flex items-center justify-between py-1 gap-2">
+              <div className="flex-1 min-w-0">
+                <span className="text-zinc-400 text-xs font-medium">
+                  <span className="text-zinc-500 font-bold">{item.quantity}×</span> {item.name}
+                </span>
+                {item.note && <div className="text-zinc-600 text-[10px] italic truncate">{item.note}</div>}
+              </div>
+              <span className="font-mono text-zinc-500 text-xs flex-shrink-0">
+                {sym}{(item.price * item.quantity).toFixed(2)}
+              </span>
+            </div>
+          ))}
+          <div className="border-t border-surface-border mt-2" />
+        </div>
+      ))}
+
       {/* Active round (in kitchen) */}
       {activeRound && activeRound.items.length > 0 && (
         <div className="px-3 pt-3 pb-1">
@@ -82,7 +121,9 @@ export default function OrderContent({
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-500 flex-shrink-0" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">
-                {pastRounds.length > 0 ? `Round ${pastRounds.length + 1}` : 'Active Order'} — In Kitchen
+                {pastRounds.length + directBilledRounds.length > 0
+                  ? `Round ${pastRounds.length + directBilledRounds.length + 1}`
+                  : 'Active Order'} — In Kitchen
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -130,11 +171,11 @@ export default function OrderContent({
       )}
 
       {/* All-delivered nudge */}
-      {!activeRound && pastRounds.length > 0 && cart.length === 0 && (
+      {!activeRound && (pastRounds.length > 0 || directBilledRounds.length > 0) && cart.length === 0 && (
         <div className="px-3 pt-2 pb-1">
           <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-600 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            All delivered — add items or generate bill
+            All settled — add items or generate bill
           </p>
         </div>
       )}
@@ -164,7 +205,7 @@ export default function OrderContent({
                 {activeRound
                   ? 'Adding to Current Round'
                   : allOrders.length > 0
-                    ? `Round ${pastRounds.length + 1} — New Order`
+                    ? `Round ${pastRounds.length + directBilledRounds.length + 1} — New Order`
                     : 'New Order'}
               </span>
             </div>
