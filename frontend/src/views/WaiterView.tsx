@@ -142,6 +142,7 @@ export default function WaiterView() {
     try {
       let activeItems: CartItem[] = [];
       if (activeRound) {
+        // Fetch fresh to avoid stale state after cancellations
         const freshOrders = await getTableOrders(selectedTable.id);
         const freshActive = freshOrders.find(o => o.status === 'active');
         if (freshActive) {
@@ -201,15 +202,43 @@ export default function WaiterView() {
   };
 
   const handleBill = async () => {
-    if (!selectedTable) return;
-    if (allOrders.length === 0 && cart.length === 0) {
+    if (cart.length === 0 && !hasBillableOrder) {
       toast('No order for this table', 'error');
       return;
     }
-    if (cart.length > 0 && activeRound) {
-      toast('You have unsent items. Send to Kitchen first, or clear them.', 'error');
-      return;
+    if (!selectedTable) return;
+
+    if (cart.length > 0) {
+      setLoading(true);
+      try {
+        if (activeRound) {
+          // There's already an active kitchen order — merge cart into it normally
+          const freshOrders = await getTableOrders(selectedTable.id);
+          const freshActive = freshOrders.find(o => o.status === 'active');
+          const activeItems: CartItem[] = freshActive
+            ? freshActive.items.map(i => ({
+                menu_item_id: i.menu_item_id,
+                name: i.name, price: i.price, quantity: i.quantity, note: i.note || '',
+              }))
+            : [];
+          await submitOrder({ table_id: selectedTable.id, items: [...activeItems, ...cart] });
+          setCart([]);
+          await loadTableOrders(selectedTable.id);
+        } else {
+          // No active kitchen round — use direct-bill so nothing goes to kitchen,
+          // whether this is a fresh table or one that already has delivered rounds.
+          await directBillOrder({ table_id: selectedTable.id, items: cart });
+          setCart([]);
+          await loadTableOrders(selectedTable.id);
+        }
+      } catch (e: any) {
+        toast(e.response?.data?.error || 'Failed to prepare bill', 'error');
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
     }
+
     setBillModal(true);
   };
 
@@ -217,12 +246,13 @@ export default function WaiterView() {
   const cartTotal      = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const grandTotal     = allOrdersTotal + cartTotal;
   const hasBillableOrder = allOrders.length > 0 || cart.length > 0;
-  const billOrderId      = allOrders.length > 0 ? allOrders[allOrders.length - 1].id : 'cart-only';
+  const billOrderId      = allOrders.length > 0 ? allOrders[allOrders.length - 1].id : null;
   const filtered         = menuItems.filter(m => m.category_id === activeCatId);
   const pastRounds       = allOrders.filter(o => o.status === 'delivered');
   const activeRound      = allOrders.find(o => o.status === 'active') || null;
   const isDelivered      = !activeRound && pastRounds.length > 0;
 
+  // ── Shared order panel props ───────────────────────────────────────────
   const orderPanelProps = {
     pastRounds, activeRound, allOrders, cart, selectedTable, sym,
     updateQty, updateNote, onCancelItem: cancelItem, onCancelRound: cancelRound,
@@ -232,10 +262,11 @@ export default function WaiterView() {
     sendToKitchen, onBill: handleBill, clearCart: () => setCart([]),
   };
 
+  // ── Table card renderer (shared between mobile and desktop) ────────────
   const TableButton = ({ table, mobile = false }: { table: Table; mobile?: boolean }) => {
     const isSelected = selectedTable?.id === table.id;
     const baseClass = mobile
-      ? `rounded-xl border p-3 text-center transition-all active:scale-95 select-none`
+      ? `rounded-2xl border p-4 text-left transition-all active:scale-95 select-none`
       : `relative rounded-xl border p-2.5 text-left transition-all duration-150 cursor-pointer select-none`;
     const statusClass =
       table.status === 'occupied'     ? 'border-brand-500/60 bg-brand-500/8'    :
@@ -249,20 +280,27 @@ export default function WaiterView() {
         className={`${baseClass} ${statusClass} ${selectedRing}`}
       >
         {mobile ? (
-          <>
-            <div className="font-mono font-bold text-base text-white">{table.id}</div>
-            <div className="text-zinc-500 text-[9px] truncate">{table.label}</div>
-          </>
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <div>
+              <div className="font-mono font-bold text-xl text-white leading-none">{table.id}</div>
+              <div className="text-zinc-500 text-xs mt-1 truncate">{table.label}</div>
+            </div>
+            <span className={`flex-shrink-0 w-2 h-2 rounded-full mt-1.5 ${
+              table.status === 'occupied'     ? 'bg-brand-400' :
+              table.status === 'waiting_bill' ? 'bg-emerald-400' :
+                                                 'bg-zinc-700'
+            }`} />
+          </div>
         ) : (
           <>
             <div className="font-mono font-bold text-sm text-white leading-none">{table.id}</div>
             <div className="text-zinc-500 text-[9px] mt-0.5 truncate">{table.label}</div>
           </>
         )}
-        <div className={`${mobile ? 'mt-1.5 flex flex-col items-center gap-1' : 'mt-1.5 flex flex-col gap-1'}`}>
-          {table.status === 'occupied'     && <span className="text-[8px] font-bold uppercase text-brand-400 bg-brand-500/15 px-1.5 py-0.5 rounded-full self-start">Active</span>}
-          {table.status === 'waiting_bill' && <span className="text-[8px] font-bold uppercase text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full self-start">Bill</span>}
-          {table.status === 'empty'        && <span className="text-[8px] font-bold uppercase text-zinc-700 px-1 py-0.5 rounded-full self-start">Empty</span>}
+        <div className={`${mobile ? 'flex items-center justify-between gap-2' : 'mt-1.5 flex flex-col gap-1'}`}>
+          {table.status === 'occupied'     && <span className={`text-[9px] font-bold uppercase text-brand-400 bg-brand-500/15 px-1.5 py-0.5 rounded-full ${mobile ? '' : 'self-start'}`}>Active</span>}
+          {table.status === 'waiting_bill' && <span className={`text-[9px] font-bold uppercase text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full ${mobile ? '' : 'self-start'}`}>Bill</span>}
+          {table.status === 'empty'        && <span className={`text-[9px] font-bold uppercase text-zinc-700 px-1 py-0.5 rounded-full ${mobile ? '' : 'self-start'}`}>Empty</span>}
           {table.occupied_since && table.status !== 'empty' && (
             <TableTimer since={table.occupied_since} compact />
           )}
@@ -284,7 +322,9 @@ export default function WaiterView() {
         />
       )}
 
+      {/* ── DESKTOP ── */}
       <div className="hidden md:flex h-full w-full overflow-hidden">
+        {/* Tables sidebar */}
         <aside className="w-40 xl:w-48 flex-shrink-0 flex flex-col border-r border-surface-border bg-surface-card">
           <div className="px-3 py-2.5 border-b border-surface-border">
             <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Tables</p>
@@ -296,6 +336,7 @@ export default function WaiterView() {
           </div>
         </aside>
 
+        {/* Menu panel */}
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-shrink-0 px-4 pt-3 pb-0 border-b border-surface-border bg-surface-card/50">
             <div className="mb-2">
@@ -310,6 +351,7 @@ export default function WaiterView() {
           </div>
         </div>
 
+        {/* Order panel */}
         <aside className="w-64 xl:w-72 flex-shrink-0 border-l border-surface-border bg-surface-card flex flex-col">
           <div className="px-4 py-3 border-b border-surface-border flex items-center justify-between flex-shrink-0">
             <p className="font-semibold text-sm text-white">
@@ -346,7 +388,9 @@ export default function WaiterView() {
         </aside>
       </div>
 
+      {/* ── MOBILE ── */}
       <div className="flex md:hidden flex-col h-full w-full overflow-hidden">
+        {/* Tab bar */}
         <div className="flex-shrink-0 flex border-b border-surface-border bg-surface-card">
           {([
             { key: 'tables', label: 'Tables' },
@@ -370,15 +414,17 @@ export default function WaiterView() {
           ))}
         </div>
 
+        {/* Tables tab */}
         {mobileTab === 'tables' && (
-          <div className="flex-1 overflow-y-auto p-3">
-            <p className="text-zinc-500 text-xs mb-3 text-center">Tap a table to select it, then go to Menu</p>
-            <div className="grid grid-cols-3 gap-2">
+          <div className="flex-1 overflow-y-auto p-4">
+            <p className="text-zinc-500 text-xs mb-3">Tap a table to select it, then go to Menu</p>
+            <div className="grid grid-cols-2 gap-3">
               {tables.map(t => <TableButton key={t.id} table={t} mobile />)}
             </div>
           </div>
         )}
 
+        {/* Menu tab */}
         {mobileTab === 'menu' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-shrink-0 px-3 pt-2.5 border-b border-surface-border bg-surface-card/50">
@@ -404,6 +450,7 @@ export default function WaiterView() {
           </div>
         )}
 
+        {/* Order tab */}
         {mobileTab === 'order' && (
           <div className="flex-1 flex flex-col overflow-hidden bg-surface-card">
             <div className="px-4 py-2.5 border-b border-surface-border flex items-center justify-between flex-shrink-0">
@@ -442,7 +489,6 @@ export default function WaiterView() {
           orders={allOrders}
           orderId={billOrderId}
           table={selectedTable}
-          cartItems={cart}
           onClose={() => setBillModal(false)}
           onClosed={() => {
             setBillModal(false);

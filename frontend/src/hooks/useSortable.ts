@@ -3,18 +3,6 @@
  *
  * Reusable hook for drag-and-drop reordering (mouse + touch).
  *
- * KEY FIXES vs previous version:
- * 1. Touch state is stored in refs, not closures – so the document-level
- *    touchmove/touchend handlers always see the current values even after
- *    re-renders (the old version captured stale closure state).
- * 2. Only ONE pair of document listeners is attached per hook instance,
- *    added on touchstart and cleaned up on touchend/cancel.  The previous
- *    version attached a permanent document listener on mount and a second
- *    per-item "cancel" listener, which left orphaned listeners after the
- *    first drag completed and caused subsequent drags to silently fail.
- * 3. touchend is now handled by the same document listener (not a React
- *    synthetic event) so it fires reliably even when the finger lifts
- *    outside the original element.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -62,6 +50,7 @@ export function useSortable<T>({
     startY: number;
     moved: boolean;
     timer: ReturnType<typeof setTimeout> | null;
+    touchId: number | null; // identifier of the touch driving this gesture
   }>({
     dragging: false,
     startId: null,
@@ -70,7 +59,12 @@ export function useSortable<T>({
     startY: 0,
     moved: false,
     timer: null,
+    touchId: null,
   });
+
+  // rAF throttle handle for elementFromPoint hit-testing during touchmove
+  const rafRef = useRef<number | null>(null);
+  const pendingPointRef = useRef<{ x: number; y: number } | null>(null);
 
   // Keep items ref current so reorder callback always sees the latest list
   const itemsRef = useRef(items);
@@ -86,6 +80,7 @@ export function useSortable<T>({
   useEffect(() => () => {
     const s = touchState.current;
     if (s.timer) clearTimeout(s.timer);
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
   }, []);
 
   const doReorder = useCallback(
@@ -108,57 +103,93 @@ export function useSortable<T>({
   const cleanupDocListeners = useRef<(() => void) | null>(null);
 
   const attachDocListeners = useCallback(() => {
-    const handleMove = (e: TouchEvent) => {
+    // Resolve the touch matching our tracked identifier from a TouchList
+    const findTrackedTouch = (touches: TouchList): Touch | null => {
+      const s = touchState.current;
+      for (let i = 0; i < touches.length; i++) {
+        if (touches[i].identifier === s.touchId) return touches[i];
+      }
+      return null;
+    };
+
+    const runHitTest = (x: number, y: number) => {
       const s = touchState.current;
       if (!s.dragging) return;
-
-      e.preventDefault(); // block page scroll
-
-      const touch = e.touches[0];
-      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      const el = document.elementFromPoint(x, y);
       const target = el?.closest('[data-sortable-id]') as HTMLElement | null;
       if (target) {
         const raw = target.getAttribute('data-sortable-id');
         if (raw !== null) {
           const parsed = isNaN(Number(raw)) ? raw : Number(raw);
-          s.overId = parsed;
-          setDragOverId(parsed);
+          if (s.overId !== parsed) {
+            s.overId = parsed;
+            setDragOverId(parsed);
+          }
         }
       }
     };
 
-    const handleEnd = (_e: TouchEvent) => {
+    const handleMove = (e: TouchEvent) => {
       const s = touchState.current;
+      if (!s.dragging) return;
+
+      const touch = findTrackedTouch(e.touches);
+      if (!touch) return; // a different finger moved — ignore
+
+      e.preventDefault(); // block page scroll while actively dragging
+
+      // Throttle the expensive elementFromPoint hit-test to once per frame
+      pendingPointRef.current = { x: touch.clientX, y: touch.clientY };
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = null;
+          const p = pendingPointRef.current;
+          if (p) runHitTest(p.x, p.y);
+        });
+      }
+    };
+
+    const handleEnd = (e: TouchEvent) => {
+      const s = touchState.current;
+
+      // Only finalize when the tracked touch is the one that ended/cancelled.
+      // changedTouches tells us which touch(es) just lifted.
+      let trackedEnded = s.touchId === null;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].identifier === s.touchId) { trackedEnded = true; break; }
+      }
+      if (!trackedEnded) return;
+
       if (s.dragging && s.startId !== null && s.overId !== null) {
         doReorder(s.startId, s.overId);
       }
       // Reset all state
       if (s.timer) { clearTimeout(s.timer); s.timer = null; }
+      if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+      pendingPointRef.current = null;
       s.dragging = false;
       s.startId  = null;
       s.overId   = null;
       s.moved    = false;
+      s.touchId  = null;
       setDraggingId(null);
       setDragOverId(null);
 
-      // Remove listeners
       cleanup();
     };
 
-    const handleCancel = () => handleEnd(new TouchEvent('touchcancel'));
-
     document.addEventListener('touchmove',   handleMove,   { passive: false });
     document.addEventListener('touchend',    handleEnd,    { passive: true });
-    document.addEventListener('touchcancel', handleCancel, { passive: true });
+    document.addEventListener('touchcancel', handleEnd,    { passive: true });
 
     const cleanup = () => {
       document.removeEventListener('touchmove',   handleMove);
       document.removeEventListener('touchend',    handleEnd);
-      document.removeEventListener('touchcancel', handleCancel);
+      document.removeEventListener('touchcancel', handleEnd);
       cleanupDocListeners.current = null;
     };
     cleanupDocListeners.current = cleanup;
-  }, [doReorder, longPressDuration]);
+  }, [doReorder]);
 
   // ── Mouse / HTML5 drag ──────────────────────────────────────────────────
   const onDragStart = useCallback((e: React.DragEvent, id: string | number) => {
@@ -189,10 +220,15 @@ export function useSortable<T>({
 
   // ── Touch start ─────────────────────────────────────────────────────────
   const onTouchStart = useCallback((e: React.TouchEvent, id: string | number) => {
+    // Ignore if a gesture is already tracked (e.g. a second finger touched
+    // down on another card while the first is still being processed).
+    if (touchState.current.touchId !== null) return;
+
     const touch = e.touches[0];
     const s = touchState.current;
 
-    // Cancel any in-progress drag
+    // Cancel any in-progress drag (defensive — shouldn't normally happen
+    // given the guard above, but keeps state consistent if it does)
     if (s.timer) { clearTimeout(s.timer); s.timer = null; }
     if (cleanupDocListeners.current) { cleanupDocListeners.current(); }
 
@@ -202,21 +238,53 @@ export function useSortable<T>({
     s.moved    = false;
     s.dragging = false;
     s.overId   = null;
+    s.touchId  = touch.identifier;
 
-    // Watch for early finger movement to cancel long-press
+    // Watch for early finger movement to cancel long-press (this lets a
+    // normal scroll gesture proceed instead of triggering a drag).
     const cancelOnMove = (me: TouchEvent) => {
-      const dx = Math.abs(me.touches[0].clientX - s.startX);
-      const dy = Math.abs(me.touches[0].clientY - s.startY);
+      let t: Touch | null = null;
+      for (let i = 0; i < me.touches.length; i++) {
+        if (me.touches[i].identifier === s.touchId) { t = me.touches[i]; break; }
+      }
+      if (!t) return;
+      const dx = Math.abs(t.clientX - s.startX);
+      const dy = Math.abs(t.clientY - s.startY);
       if (dx > 8 || dy > 8) {
         s.moved = true;
         if (s.timer) { clearTimeout(s.timer); s.timer = null; }
         document.removeEventListener('touchmove', cancelOnMove);
+        // Gesture turned out to be a scroll, not a long-press — release
+        // the tracked touch id so a fresh press can be tracked later.
+        if (!s.dragging) s.touchId = null;
       }
     };
     document.addEventListener('touchmove', cancelOnMove, { passive: true });
 
+    // Also release tracking if the finger lifts before the long-press fires
+    // (e.g. a quick tap) — otherwise touchId stays "stuck" and blocks new
+    // gestures via the guard at the top of this function.
+    const releaseOnEnd = (me: TouchEvent) => {
+      for (let i = 0; i < me.changedTouches.length; i++) {
+        if (me.changedTouches[i].identifier === s.touchId) {
+          document.removeEventListener('touchmove', cancelOnMove);
+          document.removeEventListener('touchend', releaseOnEnd);
+          document.removeEventListener('touchcancel', releaseOnEnd);
+          if (!s.dragging) {
+            if (s.timer) { clearTimeout(s.timer); s.timer = null; }
+            s.touchId = null;
+          }
+          return;
+        }
+      }
+    };
+    document.addEventListener('touchend', releaseOnEnd, { passive: true });
+    document.addEventListener('touchcancel', releaseOnEnd, { passive: true });
+
     s.timer = setTimeout(() => {
       document.removeEventListener('touchmove', cancelOnMove);
+      document.removeEventListener('touchend', releaseOnEnd);
+      document.removeEventListener('touchcancel', releaseOnEnd);
       if (!s.moved) {
         s.dragging = true;
         s.overId   = id; // start over self
@@ -251,7 +319,11 @@ export function useSortable<T>({
         borderRadius: 'inherit',
         userSelect: 'none' as const,
         WebkitUserSelect: 'none' as const,
-        touchAction: 'none',
+        // FIX: only block native touch gestures on the item actually being
+        // dragged. Previously this was 'none' for every item at all times,
+        // which prevented scrolling the whole grid on touch devices since
+        // every card under the finger refused to hand off the gesture.
+        touchAction: isDragging ? 'none' : 'auto',
       },
     };
   }, [draggingId, dragOverId, onDragStart, onDragOver, onDrop, onDragEnd, onTouchStart]);

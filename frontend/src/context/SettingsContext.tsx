@@ -3,7 +3,7 @@ import { getSettings } from '../services/api';
 import { getSocket } from '../services/socket';
 import type { Settings } from '../types';
 
-const defaults: Settings & { logo_url?: string } = {
+const defaults: Settings & { logo_url?: string; kitchen_overdue_mins?: string } = {
   restaurant_name: 'ABC Chicken',
   brand_color: '#f97316',
   currency_symbol: '₹',
@@ -11,12 +11,13 @@ const defaults: Settings & { logo_url?: string } = {
   address: '',
   phone: '',
   bill_footer: 'Thank you for dining with us!',
+  kitchen_overdue_mins: '20',
 };
 
 // ── Persist settings to sessionStorage so subsequent renders are instant ──
 const CACHE_KEY = 'pos_settings_cache';
 
-function loadCached(): Settings & { logo_url?: string } {
+function loadCached(): Settings & { logo_url?: string; kitchen_overdue_mins?: string } {
   try {
     const raw = sessionStorage.getItem(CACHE_KEY);
     if (raw) return { ...defaults, ...JSON.parse(raw) };
@@ -24,15 +25,15 @@ function loadCached(): Settings & { logo_url?: string } {
   return defaults;
 }
 
-function saveCache(s: Settings & { logo_url?: string }) {
+function saveCache(s: Settings & { logo_url?: string; kitchen_overdue_mins?: string }) {
   try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(s)); } catch {}
 }
 
-const SettingsContext = createContext<Settings & { logo_url?: string }>(defaults);
+const SettingsContext = createContext<Settings & { logo_url?: string; kitchen_overdue_mins?: string }>(defaults);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   // Initialise from cache so the first render already has correct values
-  const [settings, setSettings] = useState<Settings & { logo_url?: string }>(loadCached);
+  const [settings, setSettings] = useState<Settings & { logo_url?: string; kitchen_overdue_mins?: string }>(loadCached);
 
   useEffect(() => {
     // Apply brand color from cache immediately (before network fetch)
@@ -48,7 +49,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {});
 
     const socket = getSocket();
-    const handler = (data: Partial<Settings & { logo_url?: string }>) => {
+    const handler = (data: Partial<Settings & { logo_url?: string; kitchen_overdue_mins?: string }>) => {
       setSettings(prev => {
         const next = { ...prev, ...data };
         saveCache(next);

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { getActiveOrders, deliverOrder } from '../services/api';
 import { useSocket } from '../hooks/useSocket';
 import { useToast } from '../context/ToastContext';
+import { useSettings } from '../context/SettingsContext';
 import { formatElapsed, isUrgent } from '../utils/time';
 import { playChime } from '../utils/sound';
 import { useTick } from '../hooks/useTick';
@@ -52,6 +53,10 @@ export default function KitchenView() {
   const [cancellations, setCancellations] = useState<Cancellation[]>([]);
   const [delivering,    setDelivering]    = useState<string | null>(null);
   const toast = useToast();
+  const settings = useSettings();
+  // Configurable from Admin → Restaurant → "Kitchen Overdue Threshold".
+  // Falls back to 20 minutes if unset or invalid.
+  const overdueMins = parseInt((settings as any).kitchen_overdue_mins || '20', 10) || 20;
   useTick(15000);
 
   const load = useCallback(async () => {
@@ -160,7 +165,7 @@ export default function KitchenView() {
   const dismissAddition    = (id: string) => setAdditions(prev => prev.filter(a => a.id !== id));
   const dismissCancellation = (id: string) => setCancellations(prev => prev.filter(c => c.id !== id));
 
-  const urgentCount = orders.filter(o => isUrgent(o.created_at, 20)).length;
+  const urgentCount = orders.filter(o => isUrgent(o.created_at, overdueMins)).length;
   const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
@@ -314,7 +319,7 @@ export default function KitchenView() {
 
             {/* Regular order cards */}
             {orders.map(order => {
-              const urgent  = isUrgent(order.created_at, 20);
+              const urgent  = isUrgent(order.created_at, overdueMins);
               const elapsed = formatElapsed(order.created_at);
               return (
                 <div key={order.id} className={`rounded-xl border overflow-hidden flex flex-col animate-slide-up ${urgent ? 'border-red-500/60 shadow-lg shadow-red-500/10' : 'border-surface-border'}`}>

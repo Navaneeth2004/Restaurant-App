@@ -3,9 +3,23 @@
  *
  * Full-screen bill preview / print modal used from order history.
  * Extracted from ReportsView.tsx.
+ *
+ * FIX: this is rendered from deep inside the Reports tab's own scrolling
+ * container (ReportsView -> HistoryTab -> SessionRow -> ReprintBill). On
+ * mobile, `position: fixed` is supposed to anchor to the viewport, but if
+ * the ReportsView only renders `flex flex-col h-full` and the History tab
+ * scroll container introduces its own block formatting context, some mobile
+ * browsers (and especially when content above adds a transform/overflow
+ * ancestor) end up confining the "fixed" modal's perceived 100% width/height
+ * to that scroll container's content box instead of the visual viewport —
+ * which is exactly the "summary panel covers most of the bill" look in the
+ * report. Portaling straight to document.body guarantees the modal escapes
+ * every ancestor and always covers the true viewport, matching how
+ * AdminBackup's FactoryResetModal already solves this same class of bug.
  */
 
 import React from 'react';
+import ReactDOM from 'react-dom';
 import { useSettings } from '../../context/SettingsContext';
 import type { TableSession } from '../../utils/sessions';
 
@@ -31,8 +45,8 @@ export default function ReprintBill({ session, onClose }: Props) {
   const dateStr  = date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr  = date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-  return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col h-full md:items-center md:justify-center md:p-3">
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex flex-col h-full md:items-center md:justify-center md:p-3">
       <style>{`
         @media print {
           @page { size: 80mm auto; margin: 0; }
@@ -146,6 +160,7 @@ export default function ReprintBill({ session, onClose }: Props) {
           </p>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

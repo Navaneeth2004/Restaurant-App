@@ -7,11 +7,12 @@ import type { Settings } from '../../types';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 const PRESETS = ['#f97316','#e11d48','#8b5cf6','#0ea5e9','#10b981','#eab308','#6366f1','#f43f5e','#0f172a'];
+const OVERDUE_PRESETS = [10, 15, 20, 30, 45, 60];
 
 export default function AdminRestaurant() {
   const liveSettings = useSettings();
 
-  const [form, setForm] = useState<Partial<Settings & { logo_url?: string }>>(() => ({
+  const [form, setForm] = useState<Partial<Settings & { logo_url?: string; kitchen_overdue_mins?: string }>>(() => ({
     restaurant_name: liveSettings.restaurant_name || '',
     address:         (liveSettings as any).address         || '',
     phone:           (liveSettings as any).phone           || '',
@@ -19,6 +20,7 @@ export default function AdminRestaurant() {
     tax_percent:     liveSettings.tax_percent              || '5',
     brand_color:     liveSettings.brand_color              || '#f97316',
     currency_symbol: liveSettings.currency_symbol          || '₹',
+    kitchen_overdue_mins: (liveSettings as any).kitchen_overdue_mins || '20',
   }));
 
   const [logoUrl,     setLogoUrl]     = useState<string>((liveSettings as any).logo_url || '');
@@ -33,7 +35,7 @@ export default function AdminRestaurant() {
 
   useEffect(() => {
     getSettings().then(s => {
-      setForm(s as any);
+      setForm(prev => ({ ...prev, ...s, kitchen_overdue_mins: (s as any).kitchen_overdue_mins || prev.kitchen_overdue_mins || '20' }));
       const lurl = (s as any).logo_url as string;
       if (lurl) {
         setLogoUrl(lurl);
@@ -42,7 +44,7 @@ export default function AdminRestaurant() {
     }).catch(() => {});
   }, []);
 
-  const set = (k: keyof (Settings & { logo_url?: string }), v: string) =>
+  const set = (k: keyof (Settings & { logo_url?: string; kitchen_overdue_mins?: string }), v: string) =>
     setForm(f => ({ ...f, [k]: v }));
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -86,6 +88,7 @@ export default function AdminRestaurant() {
   };
 
   const brandColor = (form.brand_color as string) || '#f97316';
+  const overdueMins = parseInt((form.kitchen_overdue_mins as string) || '20', 10) || 20;
 
   return (
     <div className="space-y-5">
@@ -145,6 +148,44 @@ export default function AdminRestaurant() {
               </div>
               <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
             </div>
+          </div>
+
+          {/* Kitchen overdue threshold */}
+          <div className="rounded-xl border border-surface-border bg-surface-card p-5">
+            <h3 className="font-bold text-white text-sm mb-1">Kitchen Overdue Threshold</h3>
+            <p className="text-zinc-500 text-xs mb-4">
+              How long an order can sit in the Kitchen Display before it's flagged as <span className="text-red-400 font-semibold">Overdue</span>
+            </p>
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
+              {OVERDUE_PRESETS.map(n => (
+                <button
+                  key={n}
+                  onClick={() => set('kitchen_overdue_mins', String(n))}
+                  className={`py-2 rounded-lg border text-xs font-semibold transition-all ${
+                    overdueMins === n
+                      ? 'bg-brand-500 border-brand-600 text-white'
+                      : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'
+                  }`}
+                >
+                  {n}m
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-raised border border-surface-border">
+              <span className="text-zinc-500 text-xs flex-shrink-0">Custom</span>
+              <input
+                type="number"
+                min={1}
+                max={240}
+                className="input py-1.5 text-xs font-mono flex-1"
+                value={form.kitchen_overdue_mins as string || ''}
+                onChange={e => set('kitchen_overdue_mins', e.target.value)}
+              />
+              <span className="text-zinc-500 text-xs flex-shrink-0">minutes</span>
+            </div>
+            <p className="text-zinc-600 text-[10px] mt-2">
+              Orders past this time show a pulsing red "Overdue" badge in the Kitchen Display.
+            </p>
           </div>
         </div>
 
@@ -215,10 +256,12 @@ export default function AdminRestaurant() {
             </div>
           </div>
 
-          <button className="btn btn-brand w-full py-3 text-sm font-semibold" onClick={save} disabled={saving}>
-            {saving ? 'Saving…' : 'Save Settings'}
-          </button>
-          <p className="text-zinc-600 text-xs text-center">All changes apply when you click Save Settings</p>
+          <div className="rounded-xl border border-surface-border bg-surface-card p-5">
+            <button className="btn btn-brand w-full py-3 text-sm font-semibold" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : 'Save Settings'}
+            </button>
+            <p className="text-zinc-600 text-xs text-center mt-2.5">All changes apply when you click Save Settings</p>
+          </div>
         </div>
       </div>
 
