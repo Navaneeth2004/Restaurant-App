@@ -101,9 +101,18 @@ router.post('/', (req, res) => {
 
     const saveOrder = db.transaction(() => {
       const existingActive = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
-      const existingDelivered = !existingActive
+
+      // FIX: Only reuse a delivered session if the table is currently occupied.
+      // If table status is 'empty', the previous customer already paid and left —
+      // this is a brand new customer who needs a fresh session_id so their orders
+      // appear correctly as a separate visit in history and analytics.
+      const tableRow = db.prepare("SELECT status FROM tables WHERE id = ?").get(table_id);
+      const tableIsOccupied = tableRow && tableRow.status !== 'empty';
+
+      const existingDelivered = (!existingActive && tableIsOccupied)
         ? db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'delivered' ORDER BY created_at DESC LIMIT 1").get(table_id)
         : null;
+
       const existing = existingActive || null;
 
       if (existing) {
@@ -170,13 +179,23 @@ router.post('/direct-bill', (req, res) => {
 
   try {
     const order = db.transaction(() => {
-      // Reuse session if the table already has delivered rounds in progress
-      const existingSession = db.prepare(
-        "SELECT session_id FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at DESC LIMIT 1"
-      ).get(table_id);
-      const sessionId = existingSession?.session_id ?? uuidv4();
-      const orderId   = uuidv4();
-      const now       = new Date().toISOString();
+      // FIX: Only reuse session if table is currently occupied (same customer session).
+      // If table is empty, this is a new customer — give them a fresh session_id.
+      const tableRow = db.prepare("SELECT status FROM tables WHERE id = ?").get(table_id);
+      const tableIsOccupied = tableRow && tableRow.status !== 'empty';
+
+      let sessionId;
+      if (tableIsOccupied) {
+        const existingSession = db.prepare(
+          "SELECT session_id FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at DESC LIMIT 1"
+        ).get(table_id);
+        sessionId = existingSession?.session_id ?? uuidv4();
+      } else {
+        sessionId = uuidv4();
+      }
+
+      const orderId = uuidv4();
+      const now     = new Date().toISOString();
 
       db.prepare('INSERT INTO orders (id, table_id, session_id, status, created_at, delivered_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(orderId, table_id, sessionId, 'delivered', now, now);
@@ -275,8 +294,7 @@ router.patch('/:id/cancel', (req, res) => {
       const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(req.params.id);
 
       // DELETE entirely — cancelled orders were never billed and must not
-      // appear in reports history. Setting status='closed' was wrong because
-      // the history query treats ALL closed orders as completed/paid.
+      // appear in reports history.
       db.prepare('DELETE FROM order_items WHERE order_id = ?').run(req.params.id);
       db.prepare('DELETE FROM orders WHERE id = ?').run(req.params.id);
 
