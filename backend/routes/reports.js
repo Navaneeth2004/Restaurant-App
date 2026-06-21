@@ -79,14 +79,19 @@ router.get('/today', (req, res) => {
   });
 });
 
+// ── History with timezone-aware date filtering ────────────────────────────
 router.get('/history', (req, res) => {
-  const { from, to, limit = 200 } = req.query;
+  const { from, to, limit = 200, tz_offset_min } = req.query;
+  const tzOffsetMin = tz_offset_min !== undefined ? parseInt(tz_offset_min, 10) : 0;
+  const dateExpr = localDateExpr(tzOffsetMin);
+
   let q = "SELECT * FROM orders WHERE status = 'closed'";
   const p = [];
-  if (from) { q += " AND substr(created_at,1,10) >= ?"; p.push(from); }
-  if (to)   { q += " AND substr(created_at,1,10) <= ?"; p.push(to); }
+  if (from) { q += ` AND ${dateExpr} >= ?`; p.push(from); }
+  if (to)   { q += ` AND ${dateExpr} <= ?`; p.push(to); }
   q += ' ORDER BY created_at DESC LIMIT ?';
   p.push(parseInt(limit));
+
   const orders = db.prepare(q).all(...p);
   orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
   res.json(orders);

@@ -66,6 +66,7 @@ export const getTableOrder     = (tableId: string): Promise<Order | null> => api
 export const getTableOrders    = (tableId: string): Promise<Order[]> => api.get(`/orders/table/${tableId}/all`).then(r => r.data);
 export const getOrderHistory   = (params?: Record<string, string>): Promise<Order[]> => api.get('/orders/history', { params }).then(r => r.data);
 export const submitOrder       = (data: { table_id: string; items: any[] }): Promise<Order> => api.post('/orders', data).then(r => r.data);
+export const directBillOrder   = (data: { table_id: string; items: any[] }): Promise<Order> => api.post('/orders/direct-bill', data).then(r => r.data);
 export const deliverOrder      = (id: string): Promise<Order> => api.patch(`/orders/${id}/deliver`).then(r => r.data);
 export const closeOrder        = (id: string): Promise<void> => api.patch(`/orders/${id}/close`).then(r => r.data);
 export const cancelOrderItem   = (orderId: string, itemId: number): Promise<void> => api.patch(`/orders/${orderId}/cancel-item`, { item_id: itemId }).then(r => r.data);
@@ -100,15 +101,14 @@ export const createStaff       = (data: { name: string; pin: string; role: strin
 export const deleteStaff       = (id: number): Promise<void> => api.delete(`/staff/${id}`).then(r => r.data);
 export const verifyPin         = (pin: string): Promise<AuthUser> => api.post('/staff/verify', { pin }).then(r => r.data);
 
-// FIX: send the browser's local UTC offset (in minutes, positive east of
-// UTC — e.g. +330 for IST) so the backend's "today" boundary matches the
-// user's actual calendar day instead of the server's UTC day. This is what
-// caused Analytics' "Bill vs Paid — Today" card (and revenue/order counts)
-// to disagree with what History showed for literally the same date.
+// Send the browser's local UTC offset so the backend's "today" boundary
+// matches the user's actual calendar day instead of the server's UTC day.
 export const getReportToday    = (): Promise<ReportSummary> =>
   api.get('/reports/today', { params: { tz_offset_min: -new Date().getTimezoneOffset() } }).then(r => r.data);
 
-export const getReportHistory  = (params?: Record<string, string>): Promise<Order[]> => api.get('/reports/history', { params }).then(r => r.data);
+export const getReportHistory  = (params?: Record<string, string>): Promise<Order[]> =>
+  api.get('/reports/history', { params: { tz_offset_min: String(-new Date().getTimezoneOffset()), ...params } }).then(r => r.data);
+
 export const getRevenueChart   = (): Promise<RevenueDay[]> => api.get('/reports/revenue').then(r => r.data);
 
 export const reorderTables = (order: { id: string; sort_order: number }[]): Promise<void> =>

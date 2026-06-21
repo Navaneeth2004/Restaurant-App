@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   getTables, getMenuItems, getCategories,
-  getTableOrders, submitOrder, cancelOrderItem, cancelOrder,
+  getTableOrders, submitOrder, cancelOrderItem, cancelOrder, directBillOrder,
 } from '../services/api';
 import { useSocket }   from '../hooks/useSocket';
 import { useToast }    from '../context/ToastContext';
@@ -106,7 +106,7 @@ export default function WaiterView() {
       setMobileTab('menu');
       return;
     }
-  
+
     setSelectedTable(table);
     setCart([]);
     setActiveOrder(null);
@@ -201,6 +201,47 @@ export default function WaiterView() {
     });
   };
 
+  const handleBill = async () => {
+    if (cart.length === 0 && !hasBillableOrder) {
+      toast('No order for this table', 'error');
+      return;
+    }
+    if (!selectedTable) return;
+
+    if (cart.length > 0) {
+      setLoading(true);
+      try {
+        if (activeRound) {
+          // There's already an active kitchen order — merge cart into it normally
+          const freshOrders = await getTableOrders(selectedTable.id);
+          const freshActive = freshOrders.find(o => o.status === 'active');
+          const activeItems: CartItem[] = freshActive
+            ? freshActive.items.map(i => ({
+                menu_item_id: i.menu_item_id,
+                name: i.name, price: i.price, quantity: i.quantity, note: i.note || '',
+              }))
+            : [];
+          await submitOrder({ table_id: selectedTable.id, items: [...activeItems, ...cart] });
+          setCart([]);
+          await loadTableOrders(selectedTable.id);
+        } else {
+          // No active kitchen round — use direct-bill so nothing goes to kitchen,
+          // whether this is a fresh table or one that already has delivered rounds.
+          await directBillOrder({ table_id: selectedTable.id, items: cart });
+          setCart([]);
+          await loadTableOrders(selectedTable.id);
+        }
+      } catch (e: any) {
+        toast(e.response?.data?.error || 'Failed to prepare bill', 'error');
+        setLoading(false);
+        return;
+      }
+      setLoading(false);
+    }
+
+    setBillModal(true);
+  };
+
   const allOrdersTotal = allOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0);
   const cartTotal      = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const grandTotal     = allOrdersTotal + cartTotal;
@@ -210,43 +251,6 @@ export default function WaiterView() {
   const pastRounds       = allOrders.filter(o => o.status === 'delivered');
   const activeRound      = allOrders.find(o => o.status === 'active') || null;
   const isDelivered      = !activeRound && pastRounds.length > 0;
-
-  const handleBill = async () => {
-    if (cart.length === 0 && !hasBillableOrder) {
-      toast('No order for this table', 'error');
-      return;
-    }
-    if (!selectedTable) return;
-
-    // If there are unsent cart items, submit them first so they become a
-    // real order the backend/kitchen/reports know about, then bill normally.
-    if (cart.length > 0) {
-      setLoading(true);
-      try {
-        let activeItems: CartItem[] = [];
-        if (activeRound) {
-          const freshOrders = await getTableOrders(selectedTable.id);
-          const freshActive = freshOrders.find(o => o.status === 'active');
-          if (freshActive) {
-            activeItems = freshActive.items.map(i => ({
-              menu_item_id: i.menu_item_id,
-              name: i.name, price: i.price, quantity: i.quantity, note: i.note || '',
-            }));
-          }
-        }
-        await submitOrder({ table_id: selectedTable.id, items: [...activeItems, ...cart] });
-        setCart([]);
-        await loadTableOrders(selectedTable.id);
-      } catch (e: any) {
-        toast(e.response?.data?.error || 'Failed to add items before billing', 'error');
-        setLoading(false);
-        return;
-      }
-      setLoading(false);
-    }
-
-    setBillModal(true);
-  };
 
   // ── Shared order panel props ───────────────────────────────────────────
   const orderPanelProps = {

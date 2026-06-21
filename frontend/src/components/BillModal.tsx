@@ -202,8 +202,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
       )}
 
       {/* ── Main modal ── */}
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col md:items-center md:justify-center md:p-4 overflow-hidden"
-        onClick={onClose}>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col md:items-center md:justify-center md:p-4 overflow-hidden">
         <style>{`
           @media print {
             @page { size: 80mm auto; margin: 0; }
@@ -228,10 +227,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
           }
         `}</style>
 
-        <div
-          className="bill-print-area flex flex-col bg-white w-full h-full md:h-auto md:max-w-sm md:rounded-2xl overflow-hidden shadow-2xl md:max-h-[92vh]"
-          onClick={e => e.stopPropagation()}
-        >
+        <div className="bill-print-area flex flex-col bg-white w-full h-full md:h-auto md:max-w-sm md:rounded-2xl overflow-hidden shadow-2xl md:max-h-[92vh]">
           {/* Header */}
           <BillHeader
             restaurantName={settings.restaurant_name}

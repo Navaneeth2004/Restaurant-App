@@ -32,10 +32,7 @@ export default function ReprintBill({ session, onClose }: Props) {
   const timeStr  = date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
   return (
-    <div
-      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col h-full md:items-center md:justify-center md:p-3"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col h-full md:items-center md:justify-center md:p-3">
       <style>{`
         @media print {
           @page { size: 80mm auto; margin: 0; }
@@ -58,10 +55,7 @@ export default function ReprintBill({ session, onClose }: Props) {
         }
       `}</style>
 
-      <div
-        className="bill-print-area flex flex-col bg-white w-full flex-1 min-h-0 md:flex-none md:h-auto md:max-w-[320px] md:rounded-2xl md:max-h-[90vh] overflow-hidden shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
+       <div className="bill-print-area flex flex-col bg-white w-full flex-1 min-h-0 md:flex-none md:h-auto md:max-w-[320px] md:rounded-2xl md:max-h-[90vh] overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="bill-header flex-shrink-0" style={{ background: brand, padding: '16px 20px 14px', textAlign: 'center' }}>
           {logoUrl && (

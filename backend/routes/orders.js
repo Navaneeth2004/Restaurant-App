@@ -158,6 +158,48 @@ router.post('/', (req, res) => {
   }
 });
 
+// ── POST /direct-bill ─────────────────────────────────────────────────────
+// Creates an order already in 'delivered' state — bypasses kitchen display
+// entirely. Used when waiter wants to bill immediately without sending to kitchen.
+router.post('/direct-bill', (req, res) => {
+  const { table_id, items } = req.body;
+  if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
+
+  if (_pendingTables.has(table_id)) return res.status(409).json({ error: 'Order already being processed. Please wait.' });
+  _pendingTables.add(table_id);
+
+  try {
+    const order = db.transaction(() => {
+      // Reuse session if the table already has delivered rounds in progress
+      const existingSession = db.prepare(
+        "SELECT session_id FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at DESC LIMIT 1"
+      ).get(table_id);
+      const sessionId = existingSession?.session_id ?? uuidv4();
+      const orderId   = uuidv4();
+      const now       = new Date().toISOString();
+
+      db.prepare('INSERT INTO orders (id, table_id, session_id, status, created_at, delivered_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(orderId, table_id, sessionId, 'delivered', now, now);
+      db.prepare("UPDATE tables SET status = 'waiting_bill' WHERE id = ?").run(table_id);
+
+      const ins = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const it of items) ins.run(orderId, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), it.note || '');
+      recalcTotal(orderId);
+
+      return getOrderWithItems(orderId);
+    })();
+
+    // Only emit tables_updated — no new_order so kitchen display stays clean
+    req.io.emit('tables_updated');
+    res.status(201).json(order);
+  } catch (err) {
+    console.error('[Orders] Direct-bill error:', err.message);
+    res.status(500).json({ error: 'Failed to create direct-bill order.' });
+  } finally {
+    _pendingTables.delete(table_id);
+  }
+});
+
 // ── PATCH cancel a single item from an active or delivered order ──────────
 router.patch('/:id/cancel-item', (req, res) => {
   const { item_id } = req.body;
