@@ -2,13 +2,15 @@
  * views/reports/HistoryTab.tsx
  *
  * Date-filtered order history list with session grouping.
- * Extracted from ReportsView.tsx.
  *
- * FIX: defaults both From/To to today using LOCAL date components
- * (not toISOString, which is UTC and caused a "From = yesterday"
- * mismatch for users not on UTC). Loads automatically on mount.
- * Removed the "Clear" (all-time) button per request — "Today" is
- * the only quick-reset needed.
+ * REDESIGN NOTES:
+ * - Filter row: date inputs, Search and Today are now all h-10, so nothing
+ *   looks "almost aligned." Search button got a fixed min-width so it
+ *   doesn't visually dominate next to the small "Today" pill.
+ * - Replaced the bare "10 visits  ₹573.43" text line with a small stat
+ *   strip that matches the rest of the app's pill/card language.
+ * - Mobile: filters wrap onto their own rows below ~480px instead of
+ *   squeezing four controls into one line.
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -62,7 +64,6 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
     }
   }, []);
 
-  // Load today's orders automatically on first mount.
   useEffect(() => {
     loadHistory(dateFrom, dateTo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -90,36 +91,49 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
 
   const sessions  = groupOrdersIntoSessions(history);
   const histTotal = sessions.reduce((s, sess) => s + sess.totalAmount * (1 + taxPct), 0);
+  const isToday   = dateFrom === todayStr() && dateTo === todayStr();
 
   return (
     <div>
-      {/* Filters */}
+      {/* ── Filters ──────────────────────────────────────────────────── */}
       <div className="mb-4 space-y-3">
-        <div className="flex items-end gap-3 flex-wrap">
-          <div>
+        <div className="flex items-end gap-2.5 flex-wrap">
+          <div className="flex-1 min-w-[140px] sm:flex-none sm:w-44">
             <label className="label">From</label>
             <input
               type="date"
-              className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
+              className={`input h-10 w-full ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
               value={dateFrom}
               onChange={e => handleFromChange(e.target.value)}
             />
           </div>
-          <div>
+          <div className="flex-1 min-w-[140px] sm:flex-none sm:w-44">
             <label className="label">To</label>
             <input
               type="date"
-              className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
+              className={`input h-10 w-full ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
               value={dateTo}
               onChange={e => handleToChange(e.target.value)}
             />
           </div>
-          <div className="flex items-center gap-2 pb-0.5">
-            <button className="btn btn-brand" onClick={handleSearch} disabled={loading || !!dateError}>
+
+          {/* Search + Today — now identical height (h-10), Search has a
+              sensible min-width so the pair reads as one balanced group
+              instead of one oversized button next to a tiny one. */}
+          <div className="flex items-stretch gap-2 flex-1 sm:flex-none">
+            <button
+              className="btn btn-brand h-10 px-5 min-w-[104px] flex-1 sm:flex-none justify-center"
+              onClick={handleSearch}
+              disabled={loading || !!dateError}
+            >
               {loading ? 'Loading…' : 'Search'}
             </button>
-            <button className="btn btn-sm" onClick={handleResetToday}>Today</button>
-            {/* FIX: removed "Clear" (all-time) button per request */}
+            <button
+              className={`btn h-10 px-4 min-w-[88px] justify-center flex-1 sm:flex-none ${isToday ? 'border-brand-500/40 text-brand-400 bg-brand-500/10' : ''}`}
+              onClick={handleResetToday}
+            >
+              Today
+            </button>
           </div>
         </div>
 
@@ -133,14 +147,21 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
         )}
 
         {sessions.length > 0 && (
-          <div className="flex items-center gap-3">
-            <span className="text-zinc-500 text-sm">{sessions.length} visits</span>
-            <span className="font-mono font-bold text-white text-sm">{sym}{histTotal.toFixed(2)}</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-300 bg-surface-card border border-surface-border px-2.5 py-1 rounded-full">
+              <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+              </svg>
+              {sessions.length} visit{sessions.length !== 1 ? 's' : ''}
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-brand-400 bg-brand-500/10 border border-brand-500/25 px-2.5 py-1 rounded-full font-mono">
+              {sym}{histTotal.toFixed(2)}
+            </span>
           </div>
         )}
       </div>
 
-      {/* Results */}
+      {/* ── Results ──────────────────────────────────────────────────── */}
       {sessions.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-zinc-600">
           <svg className="w-10 h-10 mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -152,7 +173,7 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
       ) : (
         <div className="space-y-2">
           <div className="px-1 mb-3">
-            <p className="text-zinc-600 text-xs">Click any row to expand. Expand to edit payment or print bill.</p>
+            <p className="text-zinc-600 text-xs">Tap any visit to expand. Expand to edit payment or print bill.</p>
           </div>
           {sessions.map(session => (
             <SessionRow
