@@ -1,17 +1,10 @@
 /**
  * components/waiter/ActionButtons.tsx
  *
- * FIXES:
- * 1. "Send to Kitchen" is disabled ONLY when cart is empty or no table is selected.
- *    It is NOT disabled because of the table's billing state (waiting_bill) or
- *    because a direct-bill was done. Those are separate concerns.
- * 2. "Generate Bill" is enabled whenever there is anything to bill
- *    (sent orders OR unsent cart items).
- * 3. Button label logic: "Add to Order" if there is an active kitchen round,
- *    otherwise "Send to Kitchen".
  */
 
-import React from 'react';
+import React, { useState } from 'react';
+import ConfirmModal from '../../components/ConfirmModal';
 import type { Order, Table } from '../../types';
 
 interface Props {
@@ -35,6 +28,9 @@ export default function ActionButtons({
   onBill,
   clearCart,
 }: Props) {
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmBill,  setConfirmBill]  = useState(false);
+
   // Send to Kitchen is only disabled when there's nothing in the cart
   // or no table selected. The table's current status (waiting_bill etc.)
   // does NOT block this — a waiter may add a new round at any time.
@@ -43,8 +39,35 @@ export default function ActionButtons({
   // Generate Bill is enabled when there's anything to bill
   const canGenerateBill = hasBillableOrder;
 
+  const hasUnsentItems = cart.length > 0;
+
   return (
     <div className="p-3 flex flex-col gap-2 border-t border-surface-border flex-shrink-0">
+      {confirmClear && (
+        <ConfirmModal
+          title="Clear New Items"
+          message="This removes everything you've added that hasn't been sent to the kitchen yet. This cannot be undone."
+          confirmLabel="Clear Items"
+          danger
+          onConfirm={() => { setConfirmClear(false); clearCart(); }}
+          onCancel={() => setConfirmClear(false)}
+        />
+      )}
+
+      {confirmBill && (
+        <ConfirmModal
+          title="Generate Bill"
+          message={
+            hasUnsentItems
+              ? "This will bill the new items in your cart directly (without sending them to the kitchen) and open the bill for this table."
+              : "This will open the bill for this table so you can review items and take payment."
+          }
+          confirmLabel="Generate Bill"
+          onConfirm={() => { setConfirmBill(false); onBill(); }}
+          onCancel={() => setConfirmBill(false)}
+        />
+      )}
+
       <button
         onClick={sendToKitchen}
         disabled={!canSendToKitchen}
@@ -54,7 +77,7 @@ export default function ActionButtons({
       </button>
 
       <button
-        onClick={onBill}
+        onClick={() => setConfirmBill(true)}
         disabled={!canGenerateBill}
         className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 border bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border-emerald-500/30 disabled:opacity-30 disabled:cursor-not-allowed disabled:bg-surface-raised disabled:border-surface-border disabled:text-zinc-600"
       >
@@ -63,7 +86,7 @@ export default function ActionButtons({
 
       {cart.length > 0 && (
         <button
-          onClick={clearCart}
+          onClick={() => setConfirmClear(true)}
           className="w-full py-1.5 rounded-xl text-xs font-medium bg-red-500/8 hover:bg-red-500/15 text-red-400/80 border border-red-500/15 transition-all"
         >
           Clear New Items

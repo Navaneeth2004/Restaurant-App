@@ -11,6 +11,11 @@
  *   strip that matches the rest of the app's pill/card language.
  * - Mobile: filters wrap onto their own rows below ~480px instead of
  *   squeezing four controls into one line.
+ * - FIX: "Today" button no longer gets an orange active-state outline when
+ *   the range happens to equal today (which is the default, so it was lit
+ *   almost all the time and looked like a stray border around plain text).
+ *   It's now a plain neutral button, matching the "Today" button style in
+ *   the Export tab.
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -91,7 +96,6 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
 
   const sessions  = groupOrdersIntoSessions(history);
   const histTotal = sessions.reduce((s, sess) => s + sess.totalAmount * (1 + taxPct), 0);
-  const isToday   = dateFrom === todayStr() && dateTo === todayStr();
 
   return (
     <div>
@@ -117,9 +121,9 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
             />
           </div>
 
-          {/* Search + Today — now identical height (h-10), Search has a
-              sensible min-width so the pair reads as one balanced group
-              instead of one oversized button next to a tiny one. */}
+          {/* Search + Today — identical height (h-10). Today is now a plain
+              neutral button (no conditional orange highlight), matching the
+              Today button in the Export tab. */}
           <div className="flex items-stretch gap-2 flex-1 sm:flex-none">
             <button
               className="btn btn-brand h-10 px-5 min-w-[104px] flex-1 sm:flex-none justify-center"
@@ -129,7 +133,7 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
               {loading ? 'Loading…' : 'Search'}
             </button>
             <button
-              className={`btn h-10 px-4 min-w-[88px] justify-center flex-1 sm:flex-none ${isToday ? 'border-brand-500/40 text-brand-400 bg-brand-500/10' : ''}`}
+              className="btn h-10 px-4 min-w-[88px] justify-center flex-1 sm:flex-none"
               onClick={handleResetToday}
             >
               Today

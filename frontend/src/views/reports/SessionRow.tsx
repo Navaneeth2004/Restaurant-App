@@ -3,12 +3,16 @@
  *
  * Expandable row for a single dining session in the history list.
  *
- * REDESIGN NOTES:
+ * FIX (round count): "N rounds" badge and the Rounds breakdown list now use
+ * session.kitchenRounds (orders that actually went through the kitchen)
+ * instead of session.orders (which also includes direct-bill orders that
+ * never touched the kitchen). A session with 1 direct-bill order + 2 kitchen
+ * rounds now correctly shows "2 rounds", not "3 rounds".
+ *
+ * REDESIGN NOTES (unchanged from before):
  * - Summary row no longer crams icon + title + badges + amount + chevron
  *   into a single flex line. Title/badges sit on their own row that's
  *   free to wrap; amount + chevron sit on a second row pinned right.
- *   This is what was breaking on mobile (badges colliding with the
- *   amount in image 2).
  * - Badges wrap onto multiple lines gracefully instead of forcing the
  *   row taller in a lopsided way.
  * - Expanded panel: items / totals / payment are now visually distinct
@@ -83,8 +87,16 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const paidDiff  = paidTotal - billTotal;
   const hasDiff   = Math.abs(paidDiff) >= 0.01;
 
-  const date         = new Date(session.startedAt);
-  const isMultiRound = session.orders.length > 1;
+  const date = new Date(session.startedAt);
+
+  // FIX: round count / "multi-round" status is based on KITCHEN rounds only.
+  // Direct-bill orders never reach the kitchen, so they must not count as
+  // a "round" — a session with 1 direct-bill order + 2 kitchen rounds is
+  // "2 rounds", not 3.
+  const kitchenRounds = session.kitchenRounds ?? [];
+  const isMultiRound  = kitchenRounds.length > 1;
+  const hasDirectBill = session.orders.length > kitchenRounds.length;
+
   const orderIds     = session.orders.map(o => o.id);
   const itemCount    = session.allItems.reduce((s, i) => s + i.quantity, 0);
 
@@ -150,7 +162,12 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
               <OrderTypeBadge type={orderType} />
               {isMultiRound && (
                 <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-400 border border-brand-500/25 whitespace-nowrap">
-                  {session.orders.length} rounds
+                  {kitchenRounds.length} rounds
+                </span>
+              )}
+              {hasDirectBill && (
+                <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-zinc-700/30 text-zinc-400 border border-zinc-600/40 whitespace-nowrap">
+                  + direct bill
                 </span>
               )}
               {paymentMethod && <PaymentBadge method={paymentMethod} />}
@@ -308,12 +325,16 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
               )}
             </div>
 
-            {/* Rounds breakdown */}
-            {isMultiRound && (
+            {/* Rounds breakdown — kitchen rounds only; direct-bill orders are
+                folded into the bill silently elsewhere, matching how the
+                waiter-side OrderContent/TotalsBar already treat them. */}
+            {kitchenRounds.length > 0 && (
               <div className="px-4 pb-3.5 pt-3 border-t border-surface-border/60">
-                <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-2">Rounds</p>
+                <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-2">
+                  {kitchenRounds.length > 1 ? 'Kitchen Rounds' : 'Kitchen Round'}
+                </p>
                 <div className="space-y-1">
-                  {session.orders.map((order, i) => {
+                  {kitchenRounds.map((order, i) => {
                     const roundTotal = order.items.reduce((s, it) => s + it.price * it.quantity, 0);
                     return (
                       <div key={order.id} className="flex justify-between text-xs text-zinc-500">
@@ -322,6 +343,14 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                       </div>
                     );
                   })}
+                  {hasDirectBill && (
+                    <div className="flex justify-between text-xs text-zinc-600 pt-1 border-t border-surface-border/40 mt-1">
+                      <span>Billed directly (no kitchen round)</span>
+                      <span className="font-mono">
+                        {sym}{(session.totalAmount - kitchenRounds.reduce((s, o) => s + o.items.reduce((ss, it) => ss + it.price * it.quantity, 0), 0)).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
