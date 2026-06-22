@@ -164,7 +164,13 @@ router.get('/revenue', (req, res) => {
     ORDER BY o.created_at ASC
   `).all(dateFrom, dateTo);
 
-  orders.forEach(o => { o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id); });
+  orders.forEach(o => {
+    o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id);
+    // Parse payment_details JSON if present
+    if (o.payment_details && typeof o.payment_details === 'string') {
+      try { o.payment_details = JSON.parse(o.payment_details); } catch { o.payment_details = null; }
+    }
+  });
 
   // ── Aggregates ──────────────────────────────────────────────────────────
   const dailyMap = {};
@@ -194,6 +200,14 @@ router.get('/revenue', (req, res) => {
     paymentMap[method].revenue += o.total;
   });
 
+  // ── Order type breakdown ────────────────────────────────────────────────
+  const orderTypeMap = { dine_in: { count: 0, revenue: 0 }, parcel: { count: 0, revenue: 0 } };
+  orders.forEach(o => {
+    const t = o.order_type === 'parcel' ? 'parcel' : 'dine_in';
+    orderTypeMap[t].count   += 1;
+    orderTypeMap[t].revenue += o.total;
+  });
+
   const settingsRows = db.prepare('SELECT key, value FROM settings').all();
   const S            = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
   const currency     = S.currency_symbol || '₹';
@@ -206,6 +220,12 @@ router.get('/revenue', (req, res) => {
   const taxCollected   = parseFloat((totalRevenue * taxPct).toFixed(2));
   const revenueExTax   = parseFloat((totalRevenue).toFixed(2));
   const totalInclTax   = parseFloat((totalRevenue + taxCollected).toFixed(2));
+
+  // ── Amount paid totals ──────────────────────────────────────────────────
+  const totalAmountPaid = orders.reduce((s, o) => {
+    const billIncl = o.total * (1 + taxPct);
+    return s + (typeof o.amount_paid === 'number' && o.amount_paid !== null ? o.amount_paid : billIncl);
+  }, 0);
 
   Object.values(dailyMap).forEach(d => {
     d.tax           = parseFloat((d.revenue * taxPct).toFixed(2));
@@ -235,6 +255,7 @@ router.get('/revenue', (req, res) => {
     lines.push(row('Total Revenue (pre-tax)', `${currency}${revenueExTax.toFixed(2)}`));
     lines.push(row(`Tax Collected (${S.tax_percent || 5}%)`, `${currency}${taxCollected.toFixed(2)}`));
     lines.push(row('Total incl. Tax', `${currency}${totalInclTax.toFixed(2)}`));
+    lines.push(row('Total Amount Actually Paid', `${currency}${totalAmountPaid.toFixed(2)}`));
     lines.push(row('Total Orders', totalOrders));
     lines.push(row('Total Items Sold', totalItemsSold));
     lines.push(row('Average Order Value (pre-tax)', totalOrders > 0 ? `${currency}${avgOrderValue.toFixed(2)}` : '—'));
@@ -243,6 +264,13 @@ router.get('/revenue', (req, res) => {
       const lastDate  = orders[orders.length - 1].created_at.split('T')[0];
       lines.push(row('Date Range (actual)', `${firstDate}  to  ${lastDate}`));
     }
+    lines.push('');
+
+    // ── ORDER TYPE BREAKDOWN ──────────────────────────────────────────────
+    lines.push(row('── ORDER TYPE BREAKDOWN ──'));
+    lines.push(row('Type', 'Orders', `Revenue ${currency}`));
+    lines.push(row('Dine In', orderTypeMap.dine_in.count, orderTypeMap.dine_in.revenue.toFixed(2)));
+    lines.push(row('Parcel',  orderTypeMap.parcel.count,  orderTypeMap.parcel.revenue.toFixed(2)));
     lines.push('');
 
     // ── PAYMENT METHOD BREAKDOWN ──────────────────────────────────────────
@@ -278,29 +306,78 @@ router.get('/revenue', (req, res) => {
     lines.push(row('TOTAL', '', totalItemsSold, revenueExTax.toFixed(2), '100.0%'));
     lines.push('');
 
+    // ── ORDER DETAIL — now includes all fields ────────────────────────────
     lines.push(row('── ORDER DETAIL ──'));
-    lines.push(row('Order ID', 'Table', 'Date', 'Time', 'Items', `Subtotal ${currency}`, `Tax ${currency}`, `Total incl. Tax ${currency}`, 'Status', 'Payment Method'));
+    lines.push(row(
+      'Order ID', 'Session ID', 'Table', 'Order Type',
+      'Date', 'Time',
+      'Customer Name', 'Customer Phone',
+      'Items',
+      `Subtotal ${currency}`, `Tax ${currency}`, `Total incl. Tax ${currency}`,
+      `Amount Paid ${currency}`, `Diff from Bill ${currency}`,
+      'Payment Method', 'Split Details', `Change Given ${currency}`,
+      'Status'
+    ));
     orders.forEach(o => {
-      const d    = new Date(o.created_at);
-      const sub  = o.total;
-      const tax  = parseFloat((sub * taxPct).toFixed(2));
-      const incl = parseFloat((sub + tax).toFixed(2));
+      const d       = new Date(o.created_at);
+      const sub     = o.total;
+      const tax     = parseFloat((sub * taxPct).toFixed(2));
+      const incl    = parseFloat((sub + tax).toFixed(2));
+      const paid    = typeof o.amount_paid === 'number' && o.amount_paid !== null
+        ? o.amount_paid
+        : incl;
+      const diff    = parseFloat((paid - incl).toFixed(2));
+      const diffStr = diff === 0 ? '0.00' : diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2);
+
+      // Format split details as "Cash ₹50 + UPI ₹100"
+      let splitStr = '';
+      if (o.payment_method === 'split' && Array.isArray(o.payment_details) && o.payment_details.length > 0) {
+        splitStr = o.payment_details
+          .map(e => `${(e.method || '').toUpperCase()} ${currency}${Number(e.amount || 0).toFixed(2)}`)
+          .join(' + ');
+      }
+
+      const orderTypeLabel = o.order_type === 'parcel' ? 'Parcel' : 'Dine In';
+      const changeAmt = typeof o.change_amount === 'number' ? o.change_amount.toFixed(2) : '0.00';
+
       lines.push(row(
         o.id,
+        o.session_id || '—',
         o.table_label || o.table_id,
+        orderTypeLabel,
         d.toLocaleDateString('en-GB'),
         d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        o.customer_name  || '—',
+        o.customer_phone || '—',
         o.items.map(i => `${i.quantity}x ${i.name}${i.note ? ` (${i.note})` : ''}`).join(' | '),
         sub.toFixed(2),
         tax.toFixed(2),
         incl.toFixed(2),
-        o.status,
-        o.payment_method || '—'
+        paid.toFixed(2),
+        diffStr,
+        o.payment_method || '—',
+        splitStr || '—',
+        changeAmt,
+        o.status
       ));
     });
+
+    // Grand totals row
     const grandTax   = parseFloat((totalRevenue * taxPct).toFixed(2));
     const grandTotal = parseFloat((totalRevenue + grandTax).toFixed(2));
-    lines.push(row('GRAND TOTAL', '', '', '', '', revenueExTax.toFixed(2), grandTax.toFixed(2), grandTotal.toFixed(2), '', ''));
+    lines.push(row(
+      'GRAND TOTAL', '', '', '',
+      '', '', '', '',
+      '',
+      revenueExTax.toFixed(2), grandTax.toFixed(2), grandTotal.toFixed(2),
+      totalAmountPaid.toFixed(2),
+      parseFloat((totalAmountPaid - grandTotal).toFixed(2)) === 0
+        ? '0.00'
+        : parseFloat((totalAmountPaid - grandTotal).toFixed(2)) > 0
+          ? `+${(totalAmountPaid - grandTotal).toFixed(2)}`
+          : (totalAmountPaid - grandTotal).toFixed(2),
+      '', '', '', ''
+    ));
     lines.push('');
 
     const dateStr = from ? `${dateFrom}_to_${dateTo}` : 'all';
@@ -309,7 +386,7 @@ router.get('/revenue', (req, res) => {
     return res.send('\uFEFF' + lines.join('\r\n'));
   }
 
-  // JSON response
+  // ── JSON response ─────────────────────────────────────────────────────
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Content-Disposition', `attachment; filename="revenue_report_${dateFrom}_to_${dateTo}.json"`);
   res.json({
@@ -317,15 +394,20 @@ router.get('/revenue', (req, res) => {
     restaurant:   S.restaurant_name,
     period:       { from: dateFrom, to: dateTo },
     summary: {
-      total_revenue_pretax: revenueExTax,
-      tax_collected:        taxCollected,
-      total_incl_tax:       totalInclTax,
-      tax_percent:          parseFloat(S.tax_percent || '5'),
-      total_orders:         totalOrders,
-      total_items_sold:     totalItemsSold,
-      avg_order_value:      parseFloat(avgOrderValue.toFixed(2)),
+      total_revenue_pretax:   revenueExTax,
+      tax_collected:          taxCollected,
+      total_incl_tax:         totalInclTax,
+      total_amount_paid:      parseFloat(totalAmountPaid.toFixed(2)),
+      tax_percent:            parseFloat(S.tax_percent || '5'),
+      total_orders:           totalOrders,
+      total_items_sold:       totalItemsSold,
+      avg_order_value:        parseFloat(avgOrderValue.toFixed(2)),
       currency,
     },
+    order_type_breakdown: [
+      { type: 'dine_in', label: 'Dine In', count: orderTypeMap.dine_in.count, revenue: parseFloat(orderTypeMap.dine_in.revenue.toFixed(2)) },
+      { type: 'parcel',  label: 'Parcel',  count: orderTypeMap.parcel.count,  revenue: parseFloat(orderTypeMap.parcel.revenue.toFixed(2))  },
+    ],
     payment_breakdown: paymentBreakdown.map(p => ({
       method:  p.method,
       count:   p.count,
@@ -333,23 +415,49 @@ router.get('/revenue', (req, res) => {
     })),
     daily_breakdown: Object.values(dailyMap),
     top_items: topItems.map(i => ({ ...i, revenue: parseFloat(i.revenue.toFixed(2)) })),
-    orders: orders.map(o => ({
-      id:             o.id,
-      table:          o.table_label || o.table_id,
-      created_at:     o.created_at,
-      status:         o.status,
-      payment_method: o.payment_method || null,
-      subtotal:       parseFloat(o.total.toFixed(2)),
-      tax:            parseFloat((o.total * taxPct).toFixed(2)),
-      total_incl_tax: parseFloat((o.total * (1 + taxPct)).toFixed(2)),
-      items:          o.items.map(i => ({
-        name:     i.name,
-        qty:      i.quantity,
-        price:    i.price,
-        note:     i.note || '',
-        subtotal: parseFloat((i.price * i.quantity).toFixed(2)),
-      })),
-    })),
+    orders: orders.map(o => {
+      const sub  = o.total;
+      const tax  = parseFloat((sub * taxPct).toFixed(2));
+      const incl = parseFloat((sub + tax).toFixed(2));
+      const paid = typeof o.amount_paid === 'number' && o.amount_paid !== null
+        ? o.amount_paid
+        : incl;
+
+      // Parse split details
+      let splitDetails = null;
+      if (o.payment_method === 'split' && Array.isArray(o.payment_details) && o.payment_details.length > 0) {
+        splitDetails = o.payment_details.map(e => ({
+          method: e.method || 'unknown',
+          amount: parseFloat(Number(e.amount || 0).toFixed(2)),
+        }));
+      }
+
+      return {
+        id:              o.id,
+        session_id:      o.session_id || null,
+        table:           o.table_label || o.table_id,
+        order_type:      o.order_type === 'parcel' ? 'parcel' : 'dine_in',
+        created_at:      o.created_at,
+        status:          o.status,
+        customer_name:   o.customer_name  || null,
+        customer_phone:  o.customer_phone || null,
+        payment_method:  o.payment_method || null,
+        split_details:   splitDetails,
+        change_amount:   typeof o.change_amount === 'number' ? o.change_amount : 0,
+        subtotal:        parseFloat(sub.toFixed(2)),
+        tax:             tax,
+        total_incl_tax:  incl,
+        amount_paid:     parseFloat(paid.toFixed(2)),
+        diff_from_bill:  parseFloat((paid - incl).toFixed(2)),
+        items:           o.items.map(i => ({
+          name:     i.name,
+          qty:      i.quantity,
+          price:    i.price,
+          note:     i.note || '',
+          subtotal: parseFloat((i.price * i.quantity).toFixed(2)),
+        })),
+      };
+    }),
   });
 });
 
