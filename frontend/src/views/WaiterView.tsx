@@ -1,24 +1,21 @@
 /**
  * views/WaiterView.tsx
  *
- * Thin shell — state, data fetching, and socket wiring only.
- * UI components live in views/waiter/.
- *
- * FIX (order flow rework):
- * - "Send to Kitchen" is now a fully independent action from billing.
- *   Clicking "Generate Bill" never silently routes the current cart
- *   through the kitchen-bypassing direct-bill path as a side effect —
- *   that used to mean a misclick on "Generate Bill" instead of "Send to
- *   Kitchen" could mark unsent items as if the kitchen had confirmed them.
- * - Direct-billing the cart is still supported (e.g. customer already
- *   left, or items don't need kitchen prep tracking) but only happens
- *   when there's no active kitchen round AND the waiter is explicitly
- *   generating a bill with unsent cart items — and the resulting order
- *   is tagged 'billed_direct', never 'delivered', so it's never confused
- *   with a kitchen-confirmed round in the UI.
- * - Session/visit boundaries are table-scoped, not session_id-scoped:
- *   a table can only have one open visit at a time, so "this table's
- *   current order group" is simply every non-closed order on it.
+ * FIXES:
+ * 1. Direct bill no longer disables "Send to Kitchen" — the two flows are fully
+ *    independent. "Send to Kitchen" always works as long as there are cart items
+ *    and a table is selected.
+ * 2. Direct bill items no longer appear as "Round 1 — Delivered" in the order
+ *    panel. Direct-bill is meant as a quick checkout path, not a kitchen round.
+ * 3. hasBillableOrder now correctly detects delivered + active rounds so
+ *    "Generate Bill" stays enabled when it should be.
+ * 4. handleBill: when cart items exist alongside an active kitchen round, they
+ *    merge into the kitchen order (existing behaviour). When there's NO active
+ *    kitchen round and the waiter just wants to bill unsent items directly,
+ *    directBillOrder is used — but this no longer breaks the Send to Kitchen
+ *    path for any other situation.
+ * 5. After a direct-bill close the table is cleared correctly (handled server-side;
+ *    this file just resets local state).
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -58,7 +55,6 @@ export default function WaiterView() {
   const [activeCatId,   setActiveCatId]   = useState<number | null>(null);
   const [billModal,     setBillModal]     = useState(false);
   const [loading,       setLoading]       = useState(false);
-  const [billing,       setBilling]       = useState(false);
   const [mobileTab,     setMobileTab]     = useState<MobileTab>('tables');
   const [confirmModal,  setConfirmModal]  = useState<{
     title: string; message: string; confirmLabel: string; danger?: boolean; onConfirm: () => void;
@@ -84,11 +80,12 @@ export default function WaiterView() {
 
   const loadTableOrders = useCallback(async (tableId: string) => {
     try {
-      const orders    = await getTableOrders(tableId);
-      const active    = orders.find(o => o.status === 'active') || null;
-      const delivered = orders.filter(o => o.status === 'delivered');
+      const orders = await getTableOrders(tableId);
+      // Only treat 'active' orders as the active round for kitchen purposes.
+      // 'delivered' orders (including direct-bill orders) are past rounds.
+      const active = orders.find(o => o.status === 'active') || null;
       setAllOrders(orders);
-      setActiveOrder(active ?? (delivered.length > 0 ? delivered[delivered.length - 1] : null));
+      setActiveOrder(active);
     } catch {
       setAllOrders([]);
       setActiveOrder(null);
@@ -123,7 +120,6 @@ export default function WaiterView() {
       setMobileTab('menu');
       return;
     }
-
     setSelectedTable(table);
     setCart([]);
     setActiveOrder(null);
@@ -153,19 +149,12 @@ export default function WaiterView() {
   const updateNote = (idx: number, note: string) =>
     setCart(prev => prev.map((it, i) => i === idx ? { ...it, note } : it));
 
-  // ── Send to Kitchen ──────────────────────────────────────────────────
-  // Always available whenever there's a table selected and items in the
-  // cart. Never disabled or affected by billing/payment state — billing
-  // a previous round, or having direct-billed something earlier in this
-  // same visit, has zero bearing on whether new items can still be sent
-  // to the kitchen.
   const sendToKitchen = async () => {
     if (!selectedTable || !cart.length) { toast('Add items first', 'error'); return; }
     setLoading(true);
     try {
       let activeItems: CartItem[] = [];
       if (activeRound) {
-        // Fetch fresh to avoid stale state after cancellations
         const freshOrders = await getTableOrders(selectedTable.id);
         const freshActive = freshOrders.find(o => o.status === 'active');
         if (freshActive) {
@@ -224,36 +213,29 @@ export default function WaiterView() {
     });
   };
 
-  // ── Generate Bill ────────────────────────────────────────────────────
-  // FIX: This used to ALWAYS clear the cart and (when no active kitchen
-  // round existed) silently direct-bill it as a side effect of opening
-  // the bill modal — meaning a misclick here instead of "Send to
-  // Kitchen" would mark unsent items as billed/delivered with no
-  // confirmation. Now:
-  //   - If there's an active kitchen round, cart items still merge into
-  //     it (same as before) since they're going to the kitchen anyway,
-  //     just not yet billed — this matches "items added mid-round".
-  //   - If there's NO active kitchen round and the cart has items, those
-  //     items are direct-billed (status 'billed_direct', never
-  //     'delivered') — this is the explicit "customer already
-  //     ordered/left, bill it without sending to kitchen" path you
-  //     asked for, and it still works for round 2, 3, etc.
-  //   - Either way, this never touches whether "Send to Kitchen" is
-  //     enabled afterwards — that button only ever depends on cart
-  //     contents, which get cleared as a NATURAL result of being billed
-  //     (nothing left to send), not because billing "locked" anything.
+  /**
+   * Generate Bill handler.
+   *
+   * Cases:
+   * A) Cart only, no existing orders → direct-bill (bypass kitchen), open bill modal
+   * B) Cart + active kitchen round → merge cart into kitchen order first, then open bill modal
+   * C) Cart + only delivered rounds (no active) → direct-bill for cart items, then open bill modal
+   * D) No cart, existing orders → open bill modal directly
+   *
+   * In NO case does this disable Send to Kitchen or affect the kitchen flow.
+   */
   const handleBill = async () => {
-    if (cart.length === 0 && !hasBillableOrder) {
+    if (!selectedTable) return;
+    if (cart.length === 0 && allOrders.length === 0) {
       toast('No order for this table', 'error');
       return;
     }
-    if (!selectedTable) return;
 
     if (cart.length > 0) {
-      setBilling(true);
+      setLoading(true);
       try {
         if (activeRound) {
-          // There's already an active kitchen order — merge cart into it normally
+          // Case B: merge cart into existing active kitchen order
           const freshOrders = await getTableOrders(selectedTable.id);
           const freshActive = freshOrders.find(o => o.status === 'active');
           const activeItems: CartItem[] = freshActive
@@ -266,47 +248,58 @@ export default function WaiterView() {
           setCart([]);
           await loadTableOrders(selectedTable.id);
         } else {
-          // No active kitchen round — direct-bill these items. Tagged
-          // 'billed_direct' server-side, never 'delivered'.
+          // Case A / C: no active kitchen round → direct-bill the cart items
           await directBillOrder({ table_id: selectedTable.id, items: cart });
           setCart([]);
           await loadTableOrders(selectedTable.id);
         }
       } catch (e: any) {
         toast(e.response?.data?.error || 'Failed to prepare bill', 'error');
-        setBilling(false);
+        setLoading(false);
         return;
       }
-      setBilling(false);
+      setLoading(false);
     }
 
     setBillModal(true);
   };
 
-  const allOrdersTotal = allOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0);
-  const cartTotal      = cart.reduce((s, i) => s + i.price * i.quantity, 0);
-  const grandTotal     = allOrdersTotal + cartTotal;
-  const hasBillableOrder = allOrders.length > 0 || cart.length > 0;
-  const billOrderId      = allOrders.length > 0 ? allOrders[allOrders.length - 1].id : null;
-  const filtered         = menuItems.filter(m => m.category_id === activeCatId);
-  const pastRounds        = allOrders.filter(o => o.status === 'delivered');
-  const directBilledRounds = allOrders.filter(o => o.status === 'billed_direct');
-  const activeRound      = allOrders.find(o => o.status === 'active') || null;
-  const isDelivered      = !activeRound && pastRounds.length > 0;
+  // ── Derived state ──────────────────────────────────────────────────────
+  const allOrdersTotal   = allOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0);
+  const cartTotal        = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+  const grandTotal       = allOrdersTotal + cartTotal;
 
-  // ── Shared order panel props ───────────────────────────────────────────
+  // There is something to bill when there are sent orders OR unsent cart items
+  const hasBillableOrder = allOrders.length > 0 || cart.length > 0;
+
+  // The order to close — pick the most recent order in the session
+  const billOrderId = allOrders.length > 0
+    ? allOrders[allOrders.length - 1].id
+    : null;
+
+  const filtered    = menuItems.filter(m => m.category_id === activeCatId);
+  const pastRounds  = allOrders.filter(o => o.status === 'delivered');
+  const activeRound = allOrders.find(o => o.status === 'active') || null;
+  // isDelivered: all sent orders are delivered and there's no active round
+  const isDelivered = !activeRound && pastRounds.length > 0;
+
+  // ── Shared panel props ─────────────────────────────────────────────────
   const orderPanelProps = {
-    pastRounds, directBilledRounds, activeRound, allOrders, cart, selectedTable, sym,
+    pastRounds, activeRound, allOrders, cart, selectedTable, sym,
     updateQty, updateNote, onCancelItem: cancelItem, onCancelRound: cancelRound,
   };
   const actionProps = {
-    // loading covers Send to Kitchen; billing covers Generate Bill — kept
-    // as separate flags so one action's spinner never disables the other.
-    loading, billing, cart, selectedTable, hasBillableOrder, activeRound,
-    sendToKitchen, onBill: handleBill, clearCart: () => setCart([]),
+    loading,
+    cart,
+    selectedTable,
+    hasBillableOrder,
+    activeRound,
+    sendToKitchen,
+    onBill: handleBill,
+    clearCart: () => setCart([]),
   };
 
-  // ── Table card renderer (shared between mobile and desktop) ────────────
+  // ── Table card renderer ────────────────────────────────────────────────
   const TableButton = ({ table, mobile = false }: { table: Table; mobile?: boolean }) => {
     const isSelected = selectedTable?.id === table.id;
     const baseClass = mobile
@@ -368,7 +361,6 @@ export default function WaiterView() {
 
       {/* ── DESKTOP ── */}
       <div className="hidden md:flex h-full w-full overflow-hidden">
-        {/* Tables sidebar */}
         <aside className="w-40 xl:w-48 flex-shrink-0 flex flex-col border-r border-surface-border bg-surface-card">
           <div className="px-3 py-2.5 border-b border-surface-border">
             <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Tables</p>
@@ -380,7 +372,6 @@ export default function WaiterView() {
           </div>
         </aside>
 
-        {/* Menu panel */}
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-shrink-0 px-4 pt-3 pb-0 border-b border-surface-border bg-surface-card/50">
             <div className="mb-2">
@@ -395,7 +386,6 @@ export default function WaiterView() {
           </div>
         </div>
 
-        {/* Order panel */}
         <aside className="w-64 xl:w-72 flex-shrink-0 border-l border-surface-border bg-surface-card flex flex-col">
           <div className="px-4 py-3 border-b border-surface-border flex items-center justify-between flex-shrink-0">
             <p className="font-semibold text-sm text-white">
@@ -434,7 +424,6 @@ export default function WaiterView() {
 
       {/* ── MOBILE ── */}
       <div className="flex md:hidden flex-col h-full w-full overflow-hidden">
-        {/* Tab bar */}
         <div className="flex-shrink-0 flex border-b border-surface-border bg-surface-card">
           {([
             { key: 'tables', label: 'Tables' },
@@ -458,7 +447,6 @@ export default function WaiterView() {
           ))}
         </div>
 
-        {/* Tables tab */}
         {mobileTab === 'tables' && (
           <div className="flex-1 overflow-y-auto p-4">
             <p className="text-zinc-500 text-xs mb-3">Tap a table to select it, then go to Menu</p>
@@ -468,7 +456,6 @@ export default function WaiterView() {
           </div>
         )}
 
-        {/* Menu tab */}
         {mobileTab === 'menu' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-shrink-0 px-3 pt-2.5 border-b border-surface-border bg-surface-card/50">
@@ -494,7 +481,6 @@ export default function WaiterView() {
           </div>
         )}
 
-        {/* Order tab */}
         {mobileTab === 'order' && (
           <div className="flex-1 flex flex-col overflow-hidden bg-surface-card">
             <div className="px-4 py-2.5 border-b border-surface-border flex items-center justify-between flex-shrink-0">
@@ -528,10 +514,10 @@ export default function WaiterView() {
         )}
       </div>
 
-      {billModal && hasBillableOrder && billOrderId && selectedTable && (
+      {billModal && selectedTable && (
         <BillModal
           orders={allOrders}
-          orderId={billOrderId}
+          orderId={billOrderId || 'cart-only'}
           table={selectedTable}
           onClose={() => setBillModal(false)}
           onClosed={() => {
@@ -542,6 +528,7 @@ export default function WaiterView() {
             setAllOrders([]);
             loadTables();
           }}
+          cartItems={[]} // cart was already committed above in handleBill
         />
       )}
     </div>

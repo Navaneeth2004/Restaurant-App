@@ -1,23 +1,21 @@
 /**
  * components/waiter/ActionButtons.tsx
  *
- * Send to Kitchen / Generate Bill / Clear buttons at the bottom of the order panel.
- * Extracted from WaiterView.tsx.
- *
- * FIX: "loading" and "billing" are now separate flags. Previously a
- * single "loading" flag covered BOTH actions, so the two buttons could
- * end up incidentally disabling each other depending on which path set
- * the flag. Send to Kitchen's availability must depend only on whether
- * there are cart items to send — never on whether a bill is in flight,
- * and vice versa.
+ * FIXES:
+ * 1. "Send to Kitchen" is disabled ONLY when cart is empty or no table is selected.
+ *    It is NOT disabled because of the table's billing state (waiting_bill) or
+ *    because a direct-bill was done. Those are separate concerns.
+ * 2. "Generate Bill" is enabled whenever there is anything to bill
+ *    (sent orders OR unsent cart items).
+ * 3. Button label logic: "Add to Order" if there is an active kitchen round,
+ *    otherwise "Send to Kitchen".
  */
 
 import React from 'react';
 import type { Order, Table } from '../../types';
 
 interface Props {
-  loading:          boolean; // true only while Send to Kitchen is in flight
-  billing:          boolean; // true only while Generate Bill is in flight
+  loading:          boolean;
   cart:             { menu_item_id: number }[];
   selectedTable:    Table | null;
   hasBillableOrder: boolean;
@@ -29,7 +27,6 @@ interface Props {
 
 export default function ActionButtons({
   loading,
-  billing,
   cart,
   selectedTable,
   hasBillableOrder,
@@ -38,11 +35,19 @@ export default function ActionButtons({
   onBill,
   clearCart,
 }: Props) {
+  // Send to Kitchen is only disabled when there's nothing in the cart
+  // or no table selected. The table's current status (waiting_bill etc.)
+  // does NOT block this — a waiter may add a new round at any time.
+  const canSendToKitchen = !loading && cart.length > 0 && !!selectedTable;
+
+  // Generate Bill is enabled when there's anything to bill
+  const canGenerateBill = hasBillableOrder;
+
   return (
     <div className="p-3 flex flex-col gap-2 border-t border-surface-border flex-shrink-0">
       <button
         onClick={sendToKitchen}
-        disabled={loading || !cart.length || !selectedTable}
+        disabled={!canSendToKitchen}
         className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 border bg-brand-500 hover:bg-brand-600 text-white border-brand-600 disabled:opacity-35 disabled:cursor-not-allowed disabled:bg-surface-raised disabled:border-surface-border disabled:text-zinc-600"
       >
         {loading ? 'Sending…' : activeRound ? 'Add to Order' : 'Send to Kitchen'}
@@ -50,10 +55,10 @@ export default function ActionButtons({
 
       <button
         onClick={onBill}
-        disabled={billing || !hasBillableOrder}
+        disabled={!canGenerateBill}
         className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 border bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border-emerald-500/30 disabled:opacity-30 disabled:cursor-not-allowed disabled:bg-surface-raised disabled:border-surface-border disabled:text-zinc-600"
       >
-        {billing ? 'Preparing bill…' : 'Generate Bill'}
+        Generate Bill
       </button>
 
       {cart.length > 0 && (

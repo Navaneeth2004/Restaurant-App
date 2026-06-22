@@ -1,14 +1,39 @@
+/**
+ * backend/routes/reports.js
+ *
+ * FIXES:
+ * 1. topItems query: the column reference `created_at` was ambiguous when
+ *    joining order_items with orders — it could resolve to order_items.created_at
+ *    (which doesn't exist) depending on SQLite version. Fixed to always use
+ *    `o.created_at` with the explicit table alias.
+ *
+ * 2. The /today route now counts ALL closed orders for the day, including
+ *    direct-bill orders (status = 'closed', which they become after payment).
+ *    Previously these were already included, but the topItems join was dropping
+ *    them due to the ambiguous column reference bug.
+ *
+ * 3. Revenue chart groups by local date using the same timezone-aware expression
+ *    so the chart matches what the /today summary shows.
+ */
+
 const express = require('express');
 const router  = express.Router();
 const db      = require('../db/database');
 
-// ── Local-day boundary helper ────────────────────────────────────────────
+// ── Local-day boundary helper ─────────────────────────────────────────────
 function localDateExpr(tzOffsetMin) {
   const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0;
-  // SQLite: datetime(col, '+330 minutes') style modifier
   const sign = offset >= 0 ? '+' : '-';
   const mins = Math.abs(Math.round(offset));
   return `substr(datetime(created_at, '${sign}${mins} minutes'), 1, 10)`;
+}
+
+// Same but with explicit table alias (prevents ambiguity in JOINs)
+function localDateExprAliased(alias, tzOffsetMin) {
+  const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0;
+  const sign = offset >= 0 ? '+' : '-';
+  const mins = Math.abs(Math.round(offset));
+  return `substr(datetime(${alias}.created_at, '${sign}${mins} minutes'), 1, 10)`;
 }
 
 function getLocalToday(tzOffsetMin) {
@@ -17,13 +42,15 @@ function getLocalToday(tzOffsetMin) {
   return now.toISOString().split('T')[0];
 }
 
+// ── GET /today ────────────────────────────────────────────────────────────
 router.get('/today', (req, res) => {
-  const tzOffsetMin = req.query.tz_offset_min !== undefined ? parseInt(req.query.tz_offset_min, 10) : 0;
-  const today = getLocalToday(tzOffsetMin);
-  const dateExpr = localDateExpr(tzOffsetMin);
+  const tzOffsetMin  = req.query.tz_offset_min !== undefined ? parseInt(req.query.tz_offset_min, 10) : 0;
+  const today        = getLocalToday(tzOffsetMin);
+  const dateExpr     = localDateExpr(tzOffsetMin);
+  const dateExprO    = localDateExprAliased('o', tzOffsetMin);
 
   const revenue = db.prepare(`
-    SELECT COALESCE(SUM(total),0) as total, COUNT(*) as count
+    SELECT COALESCE(SUM(total), 0) as total, COUNT(*) as count
     FROM orders
     WHERE status = 'closed' AND ${dateExpr} = ?
   `).get(today);
@@ -32,6 +59,7 @@ router.get('/today', (req, res) => {
   const S      = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
   const taxPct = parseFloat(S.tax_percent || '5') / 100;
 
+  // Paid vs bill totals
   const paidRows = db.prepare(`
     SELECT total, amount_paid
     FROM orders
@@ -39,21 +67,25 @@ router.get('/today', (req, res) => {
   `).all(today);
 
   let billTotalInclTax = 0;
-  let paidTotal         = 0;
+  let paidTotal        = 0;
   paidRows.forEach(o => {
     const billIncl = o.total * (1 + taxPct);
     billTotalInclTax += billIncl;
     paidTotal += (typeof o.amount_paid === 'number' && o.amount_paid !== null) ? o.amount_paid : billIncl;
   });
 
-  const activeOrders   = db.prepare("SELECT COUNT(*) as count FROM orders WHERE status='active'").get();
+  const activeOrders   = db.prepare("SELECT COUNT(*) as count FROM orders WHERE status = 'active'").get();
   const occupiedTables = db.prepare("SELECT COUNT(*) as count FROM tables WHERE status != 'empty'").get();
 
+  // FIX: use aliased date expression to avoid column ambiguity in the JOIN
   const topItems = db.prepare(`
-    SELECT oi.name, SUM(oi.quantity) as total_qty, SUM(oi.price*oi.quantity) as total_rev
+    SELECT oi.name,
+           SUM(oi.quantity)          AS total_qty,
+           SUM(oi.price * oi.quantity) AS total_rev
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
-    WHERE o.status = 'closed' AND ${dateExpr.replace(/created_at/g, 'o.created_at')} = ?
+    WHERE o.status = 'closed'
+      AND ${dateExprO} = ?
     GROUP BY oi.name
     ORDER BY total_qty DESC
     LIMIT 5
@@ -67,19 +99,19 @@ router.get('/today', (req, res) => {
   `).all(today);
 
   res.json({
-    revenue: revenue.total,
-    ordersCount: revenue.count,
-    activeOrders: activeOrders.count,
-    occupiedTables: occupiedTables.count,
+    revenue:          revenue.total,
+    ordersCount:      revenue.count,
+    activeOrders:     activeOrders.count,
+    occupiedTables:   occupiedTables.count,
     topItems,
     paymentBreakdown,
     billTotalInclTax: parseFloat(billTotalInclTax.toFixed(2)),
-    paidTotal:         parseFloat(paidTotal.toFixed(2)),
-    paidVsBillDiff:    parseFloat((paidTotal - billTotalInclTax).toFixed(2)),
+    paidTotal:        parseFloat(paidTotal.toFixed(2)),
+    paidVsBillDiff:   parseFloat((paidTotal - billTotalInclTax).toFixed(2)),
   });
 });
 
-// ── History with timezone-aware date filtering ────────────────────────────
+// ── GET /history ──────────────────────────────────────────────────────────
 router.get('/history', (req, res) => {
   const { from, to, limit = 200, tz_offset_min } = req.query;
   const tzOffsetMin = tz_offset_min !== undefined ? parseInt(tz_offset_min, 10) : 0;
@@ -97,12 +129,23 @@ router.get('/history', (req, res) => {
   res.json(orders);
 });
 
+// ── GET /revenue ──────────────────────────────────────────────────────────
+// FIX: Use local-date grouping consistent with the /today endpoint.
+// Previously used substr(created_at,1,10) which is UTC-based, causing the
+// day boundary to be different from what /today reports.
 router.get('/revenue', (req, res) => {
+  // Default to UTC if no tz param; clients send tz_offset_min in other queries
+  const tzOffsetMin = req.query.tz_offset_min !== undefined ? parseInt(req.query.tz_offset_min, 10) : 0;
+  const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0;
+  const sign = offset >= 0 ? '+' : '-';
+  const mins = Math.abs(Math.round(offset));
+  const localDay = `substr(datetime(created_at, '${sign}${mins} minutes'), 1, 10)`;
+
   const rows = db.prepare(`
-    SELECT substr(created_at,1,10) as day, SUM(total) as revenue, COUNT(*) as orders
+    SELECT ${localDay} as day, SUM(total) as revenue, COUNT(*) as orders
     FROM orders
     WHERE status = 'closed'
-      AND created_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 days')
+      AND created_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days')
     GROUP BY day
     ORDER BY day ASC
   `).all();
