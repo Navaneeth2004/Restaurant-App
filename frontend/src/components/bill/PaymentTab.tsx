@@ -1,24 +1,12 @@
 /**
  * components/bill/PaymentTab.tsx
  *
- * Full payment tab — order type (dine in / parcel), method selection,
- * split form, cash/change calculator, and optional customer name/phone capture.
- *
- * FIX: "Amount Received" used to only appear for non-split methods and was
- * really just used to calculate cash change — it wasn't treated as the
- * authoritative "amount actually paid." UPI/card/cheque payments often
- * settle for a slightly different amount than the bill (rounding, a small
- * discount, a card surcharge, etc.) and that difference was completely
- * lost. Now every method (including split) has an explicit, visible
- * "Amount Actually Paid" total that defaults to the bill total but can be
- * edited, and the difference from the bill is shown clearly.
- *
- * ADDED: Order Type slider (Dine In / Parcel) — required at payment time.
- * Implemented as a two-state toggle so it always has a value (defaults to
- * Dine In), satisfying "required" without needing separate validation.
+ * FIX: Added customerGstin prop so BillModal can pass it through.
+ * FIX: Shows Customer GSTIN field when b2b_enabled setting is true.
  */
 
 import React, { useEffect } from 'react';
+import { useSettings } from '../../context/SettingsContext';
 
 const sans = 'system-ui,-apple-system,sans-serif';
 
@@ -90,6 +78,8 @@ interface Props {
   setCustomerName: (v: string) => void;
   customerPhone: string;
   setCustomerPhone: (v: string) => void;
+  customerGstin: string;
+  setCustomerGstin: (v: string) => void;
 }
 
 export default function PaymentTab({
@@ -100,17 +90,16 @@ export default function PaymentTab({
   splits, setSplits,
   customerName, setCustomerName,
   customerPhone, setCustomerPhone,
+  customerGstin, setCustomerGstin,
 }: Props) {
+  const settings = useSettings();
+  const b2bEnabled = (settings as any).b2b_enabled === 'true';
+
   const receivedNum  = parseFloat(received) || 0;
   const change       = payMethod !== 'split' ? Math.max(0, receivedNum - total) : 0;
   const splitTotal   = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const splitBalance = total - splitTotal;
 
-  // "Amount actually paid" — for split, this IS splitTotal (sum of the
-  // individual entries). For non-split, it's whatever is in `received`.
-  // We default `received` to the bill total when the method changes so a
-  // waiter who doesn't touch the field still gets the expected behavior
-  // (paid == bill), but it stays fully editable.
   useEffect(() => {
     if (payMethod !== 'split' && !received) {
       setReceived(total.toFixed(2));
@@ -149,7 +138,7 @@ export default function PaymentTab({
         </div>
       </div>
 
-      {/* Order type — required slider, defaults to Dine In */}
+      {/* Order type */}
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>
           Order Type
@@ -159,27 +148,18 @@ export default function PaymentTab({
           aria-label="Order type"
           onClick={() => setOrderType(orderType === 'dine_in' ? 'parcel' : 'dine_in')}
           style={{
-            position: 'relative',
-            display: 'flex',
-            background: '#f3f4f6',
-            borderRadius: 12,
-            padding: 4,
-            cursor: 'pointer',
-            border: `1.5px solid ${brand}`,
-            userSelect: 'none',
+            position: 'relative', display: 'flex', background: '#f3f4f6',
+            borderRadius: 12, padding: 4, cursor: 'pointer',
+            border: `1.5px solid ${brand}`, userSelect: 'none',
           }}
         >
           <div
             aria-hidden
             style={{
-              position: 'absolute',
-              top: 4,
-              bottom: 4,
+              position: 'absolute', top: 4, bottom: 4,
               left: orderType === 'dine_in' ? 4 : '50%',
-              width: 'calc(50% - 4px)',
-              background: brand,
-              borderRadius: 9,
-              transition: 'left 0.18s ease',
+              width: 'calc(50% - 4px)', background: brand,
+              borderRadius: 9, transition: 'left 0.18s ease',
             }}
           />
           {(['dine_in', 'parcel'] as const).map(t => (
@@ -190,19 +170,11 @@ export default function PaymentTab({
               aria-checked={orderType === t}
               onClick={e => { e.stopPropagation(); setOrderType(t); }}
               style={{
-                flex: 1,
-                position: 'relative',
-                zIndex: 1,
-                textAlign: 'center',
-                padding: '9px 0',
-                fontFamily: sans,
-                fontSize: 13,
-                fontWeight: 700,
+                flex: 1, position: 'relative', zIndex: 1, textAlign: 'center',
+                padding: '9px 0', fontFamily: sans, fontSize: 13, fontWeight: 700,
                 color: orderType === t ? '#fff' : '#6b7280',
-                transition: 'color 0.18s ease',
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
+                transition: 'color 0.18s ease', background: 'transparent',
+                border: 'none', cursor: 'pointer',
               }}
             >
               {t === 'dine_in' ? 'Dine In' : 'Parcel'}
@@ -216,7 +188,7 @@ export default function PaymentTab({
         <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>
           Customer <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: '#d1d5db' }}>— optional</span>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: b2bEnabled ? 8 : 0 }}>
           <div style={{ flex: 1, position: 'relative' }}>
             <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', width: 14, height: 14 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
@@ -232,6 +204,30 @@ export default function PaymentTab({
               style={{ width: '100%', padding: '9px 9px 9px 30px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 13, color: '#374151', boxSizing: 'border-box' as any }} />
           </div>
         </div>
+
+        {/* Customer GSTIN — only when B2B invoicing enabled */}
+        {b2bEnabled && (
+          <div>
+            <div style={{ position: 'relative' }}>
+              <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', width: 14, height: 14 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Customer GSTIN (B2B invoice)"
+                value={customerGstin}
+                onChange={e => setCustomerGstin(e.target.value.toUpperCase())}
+                maxLength={15}
+                style={{ width: '100%', padding: '9px 9px 9px 30px', borderRadius: 10, border: `1.5px solid ${customerGstin ? '#6366f1' : '#e5e7eb'}`, fontFamily: 'ui-monospace,monospace', fontSize: 12, color: '#374151', boxSizing: 'border-box' as any, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+              />
+            </div>
+            {customerGstin && (
+              <div style={{ fontSize: 10, color: '#6366f1', marginTop: 4, fontFamily: sans }}>
+                B2B tax invoice — will appear in GSTR-1 B2B section
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Payment method grid */}
@@ -289,7 +285,7 @@ export default function PaymentTab({
         </div>
       )}
 
-      {/* Cash / UPI / Card / Cheque — amount paid */}
+      {/* Amount paid (non-split) */}
       {payMethod !== 'split' && (
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', marginBottom: 8, fontFamily: sans }}>
@@ -304,7 +300,7 @@ export default function PaymentTab({
               style={{ width: '100%', padding: '12px 12px 12px 30px', borderRadius: 12, border: '1.5px solid #e5e7eb', fontFamily: sans, fontSize: 18, fontWeight: 700, color: '#111', boxSizing: 'border-box' as any, outline: 'none' }} />
           </div>
           <p style={{ fontSize: 11, color: '#9ca3af', fontFamily: sans, margin: '0 0 12px' }}>
-            Defaults to the bill total — edit if the customer paid a different amount (discount, rounding, card surcharge, etc.)
+            Defaults to the bill total — edit if the customer paid a different amount.
           </p>
 
           {/* Quick-amount buttons */}
@@ -326,7 +322,6 @@ export default function PaymentTab({
               ))}
           </div>
 
-          {/* Change display — only meaningful for cash, but harmless to show for all */}
           {payMethod === 'cash' && (
             <div style={{
               padding: '12px 16px', borderRadius: 12,
@@ -355,7 +350,7 @@ export default function PaymentTab({
         </div>
       )}
 
-      {/* Bill vs Paid summary — shown for ALL methods including split */}
+      {/* Bill vs Paid summary */}
       <div style={{
         padding: '10px 14px', borderRadius: 10,
         background: diffIsTiny ? '#f0fdf4' : paidDiff < 0 ? '#fef2f2' : '#eff6ff',

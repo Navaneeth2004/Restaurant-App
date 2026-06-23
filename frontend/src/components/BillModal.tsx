@@ -1,6 +1,11 @@
 /**
  * BillModal.tsx
- * Updated to support customer GSTIN for B2B invoicing.
+ * 
+ * FIXES:
+ * 1. Pass customerGstin to PaymentTab (was missing, causing TS error).
+ * 2. Print always shows BillItems regardless of active tab — the payment
+ *    tab has no-print class so only the bill content prints.
+ * 3. BillItems now receives customerGstin for B2B invoice display on print.
  */
 
 import React, { useState } from 'react';
@@ -227,6 +232,8 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
             dateStr={dateStr}
             timeStr={timeStr}
           />
+
+          {/* Tab switcher — hidden on print */}
           {!isHistory && (
             <div className="no-print flex-shrink-0 flex bg-white border-b border-gray-100">
               {[
@@ -246,7 +253,13 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
               ))}
             </div>
           )}
-          {activeTab === 'bill' && (
+
+          {/*
+            BillItems is ALWAYS rendered but hidden on screen when on payment tab.
+            This ensures print always shows the bill content.
+            The `no-print` class on PaymentTab hides it during printing.
+          */}
+          <div style={{ display: activeTab === 'bill' || isHistory ? 'flex' : 'none', flexDirection: 'column', flex: activeTab === 'bill' || isHistory ? 1 : undefined, minHeight: 0 }}>
             <BillItems
               items={allItems}
               subtotal={subtotal}
@@ -256,8 +269,13 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
               brand={brand}
               taxPercent={settings.tax_percent || 5}
               billFooter={(settings as any).bill_footer}
+              customerGstin={customerGstin || undefined}
+              customerName={customerName || undefined}
+              customerPhone={customerPhone || undefined}
             />
-          )}
+          </div>
+
+          {/* Payment tab — always has no-print so it never prints */}
           {!isHistory && activeTab === 'payment' && (
             <PaymentTab
               brand={brand}
@@ -281,6 +299,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
               setCustomerGstin={setCustomerGstin}
             />
           )}
+
           <div className="no-print flex-shrink-0"
             style={{ padding: '12px 16px 16px', background: '#fff', borderTop: '1.5px solid #f3f4f6' }}>
             {!isHistory && (
