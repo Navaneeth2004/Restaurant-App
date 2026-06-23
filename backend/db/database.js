@@ -229,7 +229,7 @@ function _initSchema() {
     console.log('[DB] Migrated tables: added session_id column');
   } catch (_) { /* column already exists — safe to ignore */ }
 
-  _raw.run(`
+_raw.run(`
     CREATE TABLE IF NOT EXISTS orders (
       id               TEXT    PRIMARY KEY,
       table_id         TEXT    NOT NULL,
@@ -244,6 +244,9 @@ function _initSchema() {
       customer_name    TEXT    DEFAULT NULL,
       customer_phone   TEXT    DEFAULT NULL,
       session_id       TEXT    DEFAULT NULL,
+      amount_paid      REAL    DEFAULT NULL,
+      order_type       TEXT    DEFAULT 'dine_in',
+      customer_gstin   TEXT    DEFAULT NULL,
       FOREIGN KEY (table_id) REFERENCES tables(id)
     )
   `);
