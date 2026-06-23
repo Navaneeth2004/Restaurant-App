@@ -11,7 +11,7 @@ const db       = require('../db/database');
 const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-// ── Multer for zip uploads (memory storage — parse in-memory) ─────────────
+// ── Multer for zip uploads ────────────────────────────────────────────────
 const zipUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
@@ -23,6 +23,46 @@ const zipUpload = multer({
     ok ? cb(null, true) : cb(new Error('ZIP files only'));
   },
 });
+
+// ── Indian state codes for GST ────────────────────────────────────────────
+const STATE_CODES = {
+  'Andaman and Nicobar Islands': '35',
+  'Andhra Pradesh': '37',
+  'Arunachal Pradesh': '12',
+  'Assam': '18',
+  'Bihar': '10',
+  'Chandigarh': '04',
+  'Chhattisgarh': '22',
+  'Dadra and Nagar Haveli and Daman and Diu': '26',
+  'Delhi': '07',
+  'Goa': '30',
+  'Gujarat': '24',
+  'Haryana': '06',
+  'Himachal Pradesh': '02',
+  'Jammu and Kashmir': '01',
+  'Jharkhand': '20',
+  'Karnataka': '29',
+  'Kerala': '32',
+  'Ladakh': '38',
+  'Lakshadweep': '31',
+  'Madhya Pradesh': '23',
+  'Maharashtra': '27',
+  'Manipur': '14',
+  'Meghalaya': '17',
+  'Mizoram': '15',
+  'Nagaland': '13',
+  'Odisha': '21',
+  'Puducherry': '34',
+  'Punjab': '03',
+  'Rajasthan': '08',
+  'Sikkim': '11',
+  'Tamil Nadu': '33',
+  'Telangana': '36',
+  'Tripura': '16',
+  'Uttar Pradesh': '09',
+  'Uttarakhand': '05',
+  'West Bengal': '19',
+};
 
 // ── MENU EXPORT ───────────────────────────────────────────────────────────
 router.get('/menu', (req, res) => {
@@ -166,13 +206,11 @@ router.get('/revenue', (req, res) => {
 
   orders.forEach(o => {
     o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id);
-    // Parse payment_details JSON if present
     if (o.payment_details && typeof o.payment_details === 'string') {
       try { o.payment_details = JSON.parse(o.payment_details); } catch { o.payment_details = null; }
     }
   });
 
-  // ── Aggregates ──────────────────────────────────────────────────────────
   const dailyMap = {};
   orders.forEach(o => {
     const day = o.created_at.split('T')[0];
@@ -191,7 +229,6 @@ router.get('/revenue', (req, res) => {
     });
   });
 
-  // ── Payment method breakdown ────────────────────────────────────────────
   const paymentMap = {};
   orders.filter(o => o.status === 'closed').forEach(o => {
     const method = o.payment_method || 'unknown';
@@ -200,7 +237,6 @@ router.get('/revenue', (req, res) => {
     paymentMap[method].revenue += o.total;
   });
 
-  // ── Order type breakdown ────────────────────────────────────────────────
   const orderTypeMap = { dine_in: { count: 0, revenue: 0 }, parcel: { count: 0, revenue: 0 } };
   orders.forEach(o => {
     const t = o.order_type === 'parcel' ? 'parcel' : 'dine_in';
@@ -221,7 +257,6 @@ router.get('/revenue', (req, res) => {
   const revenueExTax   = parseFloat((totalRevenue).toFixed(2));
   const totalInclTax   = parseFloat((totalRevenue + taxCollected).toFixed(2));
 
-  // ── Amount paid totals ──────────────────────────────────────────────────
   const totalAmountPaid = orders.reduce((s, o) => {
     const billIncl = o.total * (1 + taxPct);
     return s + (typeof o.amount_paid === 'number' && o.amount_paid !== null ? o.amount_paid : billIncl);
@@ -238,9 +273,8 @@ router.get('/revenue', (req, res) => {
 
   if (format === 'csv') {
     const NOW = new Date().toLocaleString();
-    const sep = ',';
     const q   = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const row = (...cols) => cols.map(c => q(c)).join(sep);
+    const row = (...cols) => cols.map(c => q(c)).join(',');
 
     const lines = [];
 
@@ -259,21 +293,14 @@ router.get('/revenue', (req, res) => {
     lines.push(row('Total Orders', totalOrders));
     lines.push(row('Total Items Sold', totalItemsSold));
     lines.push(row('Average Order Value (pre-tax)', totalOrders > 0 ? `${currency}${avgOrderValue.toFixed(2)}` : '—'));
-    if (totalOrders > 0) {
-      const firstDate = orders[0].created_at.split('T')[0];
-      const lastDate  = orders[orders.length - 1].created_at.split('T')[0];
-      lines.push(row('Date Range (actual)', `${firstDate}  to  ${lastDate}`));
-    }
     lines.push('');
 
-    // ── ORDER TYPE BREAKDOWN ──────────────────────────────────────────────
     lines.push(row('── ORDER TYPE BREAKDOWN ──'));
     lines.push(row('Type', 'Orders', `Revenue ${currency}`));
     lines.push(row('Dine In', orderTypeMap.dine_in.count, orderTypeMap.dine_in.revenue.toFixed(2)));
     lines.push(row('Parcel',  orderTypeMap.parcel.count,  orderTypeMap.parcel.revenue.toFixed(2)));
     lines.push('');
 
-    // ── PAYMENT METHOD BREAKDOWN ──────────────────────────────────────────
     if (paymentBreakdown.length > 0) {
       lines.push(row('── PAYMENT METHODS ──'));
       lines.push(row('Method', 'Orders', `Revenue ${currency}`, '% of Total'));
@@ -290,11 +317,6 @@ router.get('/revenue', (req, res) => {
     dailyRows.forEach(d => {
       lines.push(row(d.date, d.orders, d.items_sold, d.revenue.toFixed(2), d.tax.toFixed(2), d.total_incl_tax.toFixed(2)));
     });
-    const dailyTotals = dailyRows.reduce(
-      (acc, d) => ({ orders: acc.orders + d.orders, items: acc.items + d.items_sold, rev: acc.rev + d.revenue, tax: acc.tax + d.tax, total: acc.total + d.total_incl_tax }),
-      { orders: 0, items: 0, rev: 0, tax: 0, total: 0 }
-    );
-    lines.push(row('TOTAL', dailyTotals.orders, dailyTotals.items, dailyTotals.rev.toFixed(2), dailyTotals.tax.toFixed(2), dailyTotals.total.toFixed(2)));
     lines.push('');
 
     lines.push(row('── TOP ITEMS ──'));
@@ -303,15 +325,13 @@ router.get('/revenue', (req, res) => {
       const pct = totalRevenue > 0 ? ((item.revenue / totalRevenue) * 100).toFixed(1) : '0.0';
       lines.push(row(i + 1, item.name, item.qty_sold, item.revenue.toFixed(2), `${pct}%`));
     });
-    lines.push(row('TOTAL', '', totalItemsSold, revenueExTax.toFixed(2), '100.0%'));
     lines.push('');
 
-    // ── ORDER DETAIL — now includes all fields ────────────────────────────
     lines.push(row('── ORDER DETAIL ──'));
     lines.push(row(
       'Order ID', 'Session ID', 'Table', 'Order Type',
       'Date', 'Time',
-      'Customer Name', 'Customer Phone',
+      'Customer Name', 'Customer Phone', 'Customer GSTIN',
       'Items',
       `Subtotal ${currency}`, `Tax ${currency}`, `Total incl. Tax ${currency}`,
       `Amount Paid ${currency}`, `Diff from Bill ${currency}`,
@@ -323,13 +343,10 @@ router.get('/revenue', (req, res) => {
       const sub     = o.total;
       const tax     = parseFloat((sub * taxPct).toFixed(2));
       const incl    = parseFloat((sub + tax).toFixed(2));
-      const paid    = typeof o.amount_paid === 'number' && o.amount_paid !== null
-        ? o.amount_paid
-        : incl;
+      const paid    = typeof o.amount_paid === 'number' && o.amount_paid !== null ? o.amount_paid : incl;
       const diff    = parseFloat((paid - incl).toFixed(2));
       const diffStr = diff === 0 ? '0.00' : diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2);
 
-      // Format split details as "Cash ₹50 + UPI ₹100"
       let splitStr = '';
       if (o.payment_method === 'split' && Array.isArray(o.payment_details) && o.payment_details.length > 0) {
         splitStr = o.payment_details
@@ -349,6 +366,7 @@ router.get('/revenue', (req, res) => {
         d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         o.customer_name  || '—',
         o.customer_phone || '—',
+        o.customer_gstin || '—',
         o.items.map(i => `${i.quantity}x ${i.name}${i.note ? ` (${i.note})` : ''}`).join(' | '),
         sub.toFixed(2),
         tax.toFixed(2),
@@ -362,31 +380,12 @@ router.get('/revenue', (req, res) => {
       ));
     });
 
-    // Grand totals row
-    const grandTax   = parseFloat((totalRevenue * taxPct).toFixed(2));
-    const grandTotal = parseFloat((totalRevenue + grandTax).toFixed(2));
-    lines.push(row(
-      'GRAND TOTAL', '', '', '',
-      '', '', '', '',
-      '',
-      revenueExTax.toFixed(2), grandTax.toFixed(2), grandTotal.toFixed(2),
-      totalAmountPaid.toFixed(2),
-      parseFloat((totalAmountPaid - grandTotal).toFixed(2)) === 0
-        ? '0.00'
-        : parseFloat((totalAmountPaid - grandTotal).toFixed(2)) > 0
-          ? `+${(totalAmountPaid - grandTotal).toFixed(2)}`
-          : (totalAmountPaid - grandTotal).toFixed(2),
-      '', '', '', ''
-    ));
-    lines.push('');
-
     const dateStr = from ? `${dateFrom}_to_${dateTo}` : 'all';
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="revenue_report_${dateStr}.csv"`);
     return res.send('\uFEFF' + lines.join('\r\n'));
   }
 
-  // ── JSON response ─────────────────────────────────────────────────────
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Content-Disposition', `attachment; filename="revenue_report_${dateFrom}_to_${dateTo}.json"`);
   res.json({
@@ -419,11 +418,8 @@ router.get('/revenue', (req, res) => {
       const sub  = o.total;
       const tax  = parseFloat((sub * taxPct).toFixed(2));
       const incl = parseFloat((sub + tax).toFixed(2));
-      const paid = typeof o.amount_paid === 'number' && o.amount_paid !== null
-        ? o.amount_paid
-        : incl;
+      const paid = typeof o.amount_paid === 'number' && o.amount_paid !== null ? o.amount_paid : incl;
 
-      // Parse split details
       let splitDetails = null;
       if (o.payment_method === 'split' && Array.isArray(o.payment_details) && o.payment_details.length > 0) {
         splitDetails = o.payment_details.map(e => ({
@@ -441,6 +437,7 @@ router.get('/revenue', (req, res) => {
         status:          o.status,
         customer_name:   o.customer_name  || null,
         customer_phone:  o.customer_phone || null,
+        customer_gstin:  o.customer_gstin || null,
         payment_method:  o.payment_method || null,
         split_details:   splitDetails,
         change_amount:   typeof o.change_amount === 'number' ? o.change_amount : 0,
@@ -458,6 +455,253 @@ router.get('/revenue', (req, res) => {
         })),
       };
     }),
+  });
+});
+
+// ── GST GSTR-1 JSON Export ────────────────────────────────────────────────
+// Generates a portal-uploadable GSTR-1 JSON for the given period.
+// B2CS (B2C Small, below ₹2.5L per invoice) aggregate is the standard
+// path for restaurants. B2B invoices are included when customer_gstin is set.
+router.get('/gst/gstr1', (req, res) => {
+  const { from, to } = req.query;
+  const today    = new Date().toISOString().split('T')[0];
+  const dateFrom = from || today.slice(0, 7) + '-01'; // default to start of current month
+  const dateTo   = to   || today;
+
+  const settingsRows = db.prepare('SELECT key, value FROM settings').all();
+  const S = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
+
+  const gstin       = S.gstin || '';
+  const legalName   = S.legal_name || S.restaurant_name || '';
+  const stateName   = S.state_name || 'Kerala';
+  const stateCode   = STATE_CODES[stateName] || '32';
+  const sacCode     = S.sac_code || '9963';
+  const taxPct      = parseFloat(S.tax_percent || '5');
+  const taxRate     = taxPct; // e.g. 5
+  // For intra-state: CGST = SGST = taxRate/2
+  const cgstRate    = taxRate / 2;
+  const sgstRate    = taxRate / 2;
+
+  // Derive period: MMYYYY for GSTR-1
+  const fromDate  = new Date(dateFrom + 'T00:00:00');
+  const retPeriod = String(fromDate.getMonth() + 1).padStart(2, '0') + String(fromDate.getFullYear());
+
+  const orders = db.prepare(`
+    SELECT o.*
+    FROM orders o
+    WHERE o.status = 'closed'
+      AND substr(o.created_at,1,10) >= ?
+      AND substr(o.created_at,1,10) <= ?
+    ORDER BY o.created_at ASC
+  `).all(dateFrom, dateTo);
+
+  orders.forEach(o => {
+    o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id);
+  });
+
+  // Separate B2B (customer has GSTIN) from B2C
+  const b2bOrders  = orders.filter(o => o.customer_gstin && o.customer_gstin.trim());
+  const b2cOrders  = orders.filter(o => !o.customer_gstin || !o.customer_gstin.trim());
+
+  function round2(n) { return Math.round(n * 100) / 100; }
+
+  // ── B2CS aggregate (B2C Small — all walk-in/no-GSTIN invoices) ──────────
+  // Grouped by: supply type + rate + place of supply
+  const b2csMap = {};
+  for (const o of b2cOrders) {
+    const taxableValue = round2(o.total);
+    const key = `OE|${taxRate}|${stateCode}`;
+    if (!b2csMap[key]) {
+      b2csMap[key] = {
+        sply_ty: 'INTRA',
+        typ: 'OE',
+        pos: stateCode,
+        txval: 0,
+        iamt: 0,
+        camt: 0,
+        samt: 0,
+        csamt: 0,
+      };
+    }
+    b2csMap[key].txval  = round2(b2csMap[key].txval  + taxableValue);
+    b2csMap[key].camt   = round2(b2csMap[key].camt   + taxableValue * cgstRate / 100);
+    b2csMap[key].samt   = round2(b2csMap[key].samt   + taxableValue * sgstRate / 100);
+  }
+  const b2csArray = Object.values(b2csMap).map(r => ({ ...r, rt: taxRate }));
+
+  // ── B2B invoices (customers with GSTIN) ──────────────────────────────────
+  const b2bMap = {};
+  for (const o of b2bOrders) {
+    const gstin_b2b = o.customer_gstin.trim().toUpperCase();
+    if (!b2bMap[gstin_b2b]) {
+      b2bMap[gstin_b2b] = {
+        ctin: gstin_b2b,
+        inv: [],
+      };
+    }
+    const taxableValue = round2(o.total);
+    const cgstAmt = round2(taxableValue * cgstRate / 100);
+    const sgstAmt = round2(taxableValue * sgstRate / 100);
+    const invoiceDate = new Date(o.created_at);
+    const dd = String(invoiceDate.getDate()).padStart(2, '0');
+    const mm = String(invoiceDate.getMonth() + 1).padStart(2, '0');
+    const yyyy = invoiceDate.getFullYear();
+
+    b2bMap[gstin_b2b].inv.push({
+      inum:  o.id,
+      idt:   `${dd}-${mm}-${yyyy}`,
+      val:   round2(taxableValue + cgstAmt + sgstAmt),
+      pos:   stateCode,
+      rchrg: 'N',
+      inv_typ: 'R',
+      itms: [{
+        num: 1,
+        itm_det: {
+          ty:   'G',
+          hsn_sc: sacCode,
+          txval: taxableValue,
+          irt:  taxRate,
+          iamt: 0,
+          crt:  cgstRate,
+          camt: cgstAmt,
+          srt:  sgstRate,
+          samt: sgstAmt,
+          csrt: 0,
+          csamt: 0,
+        }
+      }],
+    });
+  }
+  const b2bArray = Object.values(b2bMap);
+
+  // ── Totals for summary ────────────────────────────────────────────────────
+  const totalTaxable = round2(orders.reduce((s, o) => s + o.total, 0));
+  const totalCgst    = round2(totalTaxable * cgstRate / 100);
+  const totalSgst    = round2(totalTaxable * sgstRate / 100);
+
+  // ── GSTR-1 JSON structure (portal format) ────────────────────────────────
+  const gstr1 = {
+    gstin,
+    fp:   retPeriod,
+    gt:   round2(totalTaxable + totalCgst + totalSgst),
+    cur_gt: round2(totalTaxable + totalCgst + totalSgst),
+    b2b:  b2bArray,
+    b2c:  [], // B2CL (large, above ₹2.5L) — not applicable for restaurants
+    b2cs: b2csArray,
+    cdnr: [],
+    cdnur: [],
+    exp:  [],
+    at:   [],
+    txpd: [],
+    hsn: {
+      data: [{
+        num: 1,
+        hsn_sc: sacCode,
+        desc: 'Restaurant Services',
+        uqc: 'OTH',
+        cnt: orders.length,
+        txval: totalTaxable,
+        iamt: 0,
+        camt: totalCgst,
+        samt: totalSgst,
+        csamt: 0,
+      }]
+    },
+    doc_issue: {
+      doc_det: [{
+        doc_num: 1,
+        docs: [{
+          num: 1,
+          to: orders.length,
+          totnum: orders.length,
+          cancel: 0,
+          net_issue: orders.length,
+        }]
+      }]
+    },
+  };
+
+  const periodLabel = from ? `${dateFrom}_to_${dateTo}` : retPeriod;
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="GSTR1_${periodLabel}.json"`);
+  res.json(gstr1);
+});
+
+// ── GST GSTR-3B Summary ───────────────────────────────────────────────────
+// Returns a JSON summary for GSTR-3B manual filing (on-screen use).
+router.get('/gst/gstr3b', (req, res) => {
+  const { from, to } = req.query;
+  const today    = new Date().toISOString().split('T')[0];
+  const dateFrom = from || today.slice(0, 7) + '-01';
+  const dateTo   = to   || today;
+
+  const settingsRows = db.prepare('SELECT key, value FROM settings').all();
+  const S = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
+  const taxPct   = parseFloat(S.tax_percent || '5');
+  const cgstRate = taxPct / 2;
+  const sgstRate = taxPct / 2;
+
+  const orders = db.prepare(`
+    SELECT o.total, o.customer_gstin
+    FROM orders o
+    WHERE o.status = 'closed'
+      AND substr(o.created_at,1,10) >= ?
+      AND substr(o.created_at,1,10) <= ?
+  `).all(dateFrom, dateTo);
+
+  const totalTaxable = orders.reduce((s, o) => s + o.total, 0);
+  const totalCgst    = totalTaxable * cgstRate / 100;
+  const totalSgst    = totalTaxable * sgstRate / 100;
+  const totalIgst    = 0; // intra-state restaurants
+  const totalInclTax = totalTaxable + totalCgst + totalSgst;
+  const b2bCount     = orders.filter(o => o.customer_gstin && o.customer_gstin.trim()).length;
+
+  function round2(n) { return Math.round(n * 100) / 100; }
+
+  res.json({
+    period:       { from: dateFrom, to: dateTo },
+    gstin:        S.gstin || '',
+    legal_name:   S.legal_name || S.restaurant_name || '',
+    tax_rate:     taxPct,
+    // Table 3.1 — Outward taxable supplies
+    outward_taxable: {
+      total_taxable_value: round2(totalTaxable),
+      integrated_tax:      round2(totalIgst),
+      central_tax:         round2(totalCgst),
+      state_ut_tax:        round2(totalSgst),
+      cess:                0,
+      total_tax:           round2(totalCgst + totalSgst),
+      total_incl_tax:      round2(totalInclTax),
+    },
+    // Table 3.1(a) — Intra-state B2C (most restaurant sales)
+    intrastate_b2c: {
+      taxable_value: round2(totalTaxable - orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0)),
+      central_tax:   round2((totalTaxable - orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0)) * cgstRate / 100),
+      state_ut_tax:  round2((totalTaxable - orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0)) * sgstRate / 100),
+    },
+    // Table 3.1(b) — Intra-state B2B
+    intrastate_b2b: {
+      taxable_value: round2(orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0)),
+      central_tax:   round2(orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0) * cgstRate / 100),
+      state_ut_tax:  round2(orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0) * sgstRate / 100),
+      invoice_count: b2bCount,
+    },
+    // Table 4 — ITC (most small restaurants don't claim ITC at 5%)
+    itc_claimed: {
+      note: 'ITC not applicable for restaurants filing at 5% GST without ITC.',
+      integrated_tax: 0,
+      central_tax:    0,
+      state_ut_tax:   0,
+      cess:           0,
+    },
+    // Table 6.1 — Tax paid
+    tax_paid: {
+      integrated_tax: round2(totalIgst),
+      central_tax:    round2(totalCgst),
+      state_ut_tax:   round2(totalSgst),
+      cess:           0,
+    },
+    order_count: orders.length,
   });
 });
 

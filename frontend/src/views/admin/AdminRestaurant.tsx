@@ -3,24 +3,78 @@ import { getSettings, updateSettings, uploadLogo } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
 import AdminLockSettings from './AdminLockSettings';
+import { TogglePill } from './AdminLockSettings';
 import type { Settings } from '../../types';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 const PRESETS = ['#f97316','#e11d48','#8b5cf6','#0ea5e9','#10b981','#eab308','#6366f1','#f43f5e','#0f172a'];
 const OVERDUE_PRESETS = [10, 15, 20, 30, 45, 60];
 
+// All Indian states/UTs with GST state codes
+const INDIAN_STATES: { name: string; code: string }[] = [
+  { name: 'Andaman and Nicobar Islands', code: '35' },
+  { name: 'Andhra Pradesh', code: '37' },
+  { name: 'Arunachal Pradesh', code: '12' },
+  { name: 'Assam', code: '18' },
+  { name: 'Bihar', code: '10' },
+  { name: 'Chandigarh', code: '04' },
+  { name: 'Chhattisgarh', code: '22' },
+  { name: 'Dadra and Nagar Haveli and Daman and Diu', code: '26' },
+  { name: 'Delhi', code: '07' },
+  { name: 'Goa', code: '30' },
+  { name: 'Gujarat', code: '24' },
+  { name: 'Haryana', code: '06' },
+  { name: 'Himachal Pradesh', code: '02' },
+  { name: 'Jammu and Kashmir', code: '01' },
+  { name: 'Jharkhand', code: '20' },
+  { name: 'Karnataka', code: '29' },
+  { name: 'Kerala', code: '32' },
+  { name: 'Ladakh', code: '38' },
+  { name: 'Lakshadweep', code: '31' },
+  { name: 'Madhya Pradesh', code: '23' },
+  { name: 'Maharashtra', code: '27' },
+  { name: 'Manipur', code: '14' },
+  { name: 'Meghalaya', code: '17' },
+  { name: 'Mizoram', code: '15' },
+  { name: 'Nagaland', code: '13' },
+  { name: 'Odisha', code: '21' },
+  { name: 'Puducherry', code: '34' },
+  { name: 'Punjab', code: '03' },
+  { name: 'Rajasthan', code: '08' },
+  { name: 'Sikkim', code: '11' },
+  { name: 'Tamil Nadu', code: '33' },
+  { name: 'Telangana', code: '36' },
+  { name: 'Tripura', code: '16' },
+  { name: 'Uttar Pradesh', code: '09' },
+  { name: 'Uttarakhand', code: '05' },
+  { name: 'West Bengal', code: '19' },
+];
+
 export default function AdminRestaurant() {
   const liveSettings = useSettings();
 
-  const [form, setForm] = useState<Partial<Settings & { logo_url?: string; kitchen_overdue_mins?: string }>>(() => ({
-    restaurant_name: liveSettings.restaurant_name || '',
-    address:         (liveSettings as any).address         || '',
-    phone:           (liveSettings as any).phone           || '',
-    bill_footer:     (liveSettings as any).bill_footer     || '',
-    tax_percent:     liveSettings.tax_percent              || '5',
-    brand_color:     liveSettings.brand_color              || '#f97316',
-    currency_symbol: liveSettings.currency_symbol          || '₹',
+  const [form, setForm] = useState<Partial<Settings & {
+    logo_url?: string;
+    kitchen_overdue_mins?: string;
+    gstin?: string;
+    legal_name?: string;
+    state_name?: string;
+    sac_code?: string;
+    b2b_enabled?: string;
+  }>>(() => ({
+    restaurant_name:      liveSettings.restaurant_name || '',
+    address:              (liveSettings as any).address              || '',
+    phone:                (liveSettings as any).phone                || '',
+    bill_footer:          (liveSettings as any).bill_footer          || '',
+    tax_percent:          liveSettings.tax_percent                   || '5',
+    brand_color:          liveSettings.brand_color                   || '#f97316',
+    currency_symbol:      liveSettings.currency_symbol               || '₹',
     kitchen_overdue_mins: (liveSettings as any).kitchen_overdue_mins || '20',
+    gstin:                (liveSettings as any).gstin                || '',
+    legal_name:           (liveSettings as any).legal_name           || '',
+    state_name:           (liveSettings as any).state_name           || 'Kerala',
+    sac_code:             (liveSettings as any).sac_code             || '9963',
+    b2b_enabled:          (liveSettings as any).b2b_enabled          || 'false',
   }));
 
   const [logoUrl,     setLogoUrl]     = useState<string>((liveSettings as any).logo_url || '');
@@ -35,7 +89,16 @@ export default function AdminRestaurant() {
 
   useEffect(() => {
     getSettings().then(s => {
-      setForm(prev => ({ ...prev, ...s, kitchen_overdue_mins: (s as any).kitchen_overdue_mins || prev.kitchen_overdue_mins || '20' }));
+      setForm(prev => ({
+        ...prev,
+        ...s,
+        kitchen_overdue_mins: (s as any).kitchen_overdue_mins || prev.kitchen_overdue_mins || '20',
+        gstin:       (s as any).gstin       || '',
+        legal_name:  (s as any).legal_name  || '',
+        state_name:  (s as any).state_name  || 'Kerala',
+        sac_code:    (s as any).sac_code    || '9963',
+        b2b_enabled: (s as any).b2b_enabled || 'false',
+      }));
       const lurl = (s as any).logo_url as string;
       if (lurl) {
         setLogoUrl(lurl);
@@ -44,8 +107,7 @@ export default function AdminRestaurant() {
     }).catch(() => {});
   }, []);
 
-  const set = (k: keyof (Settings & { logo_url?: string; kitchen_overdue_mins?: string }), v: string) =>
-    setForm(f => ({ ...f, [k]: v }));
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -67,7 +129,8 @@ export default function AdminRestaurant() {
     try {
       let finalLogoUrl = logoUrl;
       if (pendingFile) {
-        const res = await uploadLogo(pendingFile);
+        const { uploadLogo: ul } = await import('../../services/api');
+        const res = await ul(pendingFile);
         finalLogoUrl = res.logo_url;
         setLogoUrl(finalLogoUrl);
         setLogoPreview(API_BASE + finalLogoUrl);
@@ -87,14 +150,17 @@ export default function AdminRestaurant() {
     }
   };
 
-  const brandColor = (form.brand_color as string) || '#f97316';
+  const brandColor  = (form.brand_color as string) || '#f97316';
   const overdueMins = parseInt((form.kitchen_overdue_mins as string) || '20', 10) || 20;
+  const b2bEnabled  = form.b2b_enabled === 'true';
+  const selectedState = INDIAN_STATES.find(s => s.name === form.state_name);
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* LEFT */}
         <div className="space-y-4">
+          {/* Restaurant Details */}
           <div className="rounded-xl border border-surface-border bg-surface-card p-5">
             <h3 className="font-bold text-white text-sm mb-4">Restaurant Details</h3>
             <div className="space-y-3">
@@ -103,15 +169,21 @@ export default function AdminRestaurant() {
                 ['address',         'Address',         '123 Main Street'],
                 ['phone',           'Phone Number',    '+91 98765 43210'],
                 ['bill_footer',     'Bill Footer',     'Thank you for dining with us!'],
-              ] as [keyof Settings, string, string][]).map(([k,label,ph]) => (
+              ] as [string, string, string][]).map(([k, label, ph]) => (
                 <div key={k}>
                   <label className="label">{label}</label>
-                  <input className="input" placeholder={ph} value={(form[k] as string)||''} onChange={e => set(k, e.target.value)} />
+                  <input className="input" placeholder={ph} value={(form[k as keyof typeof form] as string) || ''} onChange={e => set(k, e.target.value)} />
                 </div>
               ))}
               <div className="grid grid-cols-2 gap-3">
-                <div><label className="label">Currency Symbol</label><input className="input" value={(form.currency_symbol as string)||''} onChange={e => set('currency_symbol', e.target.value)} /></div>
-                <div><label className="label">Tax %</label><input className="input" type="number" min="0" max="30" step="0.5" value={(form.tax_percent as string)||''} onChange={e => set('tax_percent', e.target.value)} /></div>
+                <div>
+                  <label className="label">Currency Symbol</label>
+                  <input className="input" value={(form.currency_symbol as string) || ''} onChange={e => set('currency_symbol', e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Tax %</label>
+                  <input className="input" type="number" min="0" max="30" step="0.5" value={(form.tax_percent as string) || ''} onChange={e => set('tax_percent', e.target.value)} />
+                </div>
               </div>
             </div>
           </div>
@@ -120,14 +192,12 @@ export default function AdminRestaurant() {
           <div className="rounded-xl border border-surface-border bg-surface-card p-5">
             <h3 className="font-bold text-white text-sm mb-1">Restaurant Logo</h3>
             <p className="text-zinc-500 text-xs mb-3">Shown next to your restaurant name in the navigation bar</p>
-
             {pendingFile && (
               <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
                 <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
                 <span className="text-amber-400 text-xs">Logo ready — click <strong>Save Settings</strong> to apply</span>
               </div>
             )}
-
             <div className="flex items-center gap-4">
               <div
                 className="w-16 h-16 rounded-xl border-2 border-dashed border-surface-border bg-surface-raised flex items-center justify-center cursor-pointer hover:border-brand-500/50 overflow-hidden transition-colors flex-shrink-0"
@@ -174,34 +244,28 @@ export default function AdminRestaurant() {
             <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-raised border border-surface-border">
               <span className="text-zinc-500 text-xs flex-shrink-0">Custom</span>
               <input
-                type="number"
-                min={1}
-                max={240}
+                type="number" min={1} max={240}
                 className="input py-1.5 text-xs font-mono flex-1"
-                value={form.kitchen_overdue_mins as string || ''}
+                value={(form.kitchen_overdue_mins as string) || ''}
                 onChange={e => set('kitchen_overdue_mins', e.target.value)}
               />
               <span className="text-zinc-500 text-xs flex-shrink-0">minutes</span>
             </div>
-            <p className="text-zinc-600 text-[10px] mt-2">
-              Orders past this time show a pulsing red "Overdue" badge in the Kitchen Display.
-            </p>
           </div>
         </div>
 
         {/* RIGHT */}
         <div className="space-y-4">
+          {/* Brand Color */}
           <div className="rounded-xl border border-surface-border bg-surface-card p-5">
             <h3 className="font-bold text-white text-sm mb-1">Brand Color</h3>
             <p className="text-zinc-500 text-xs mb-4">Changes header, buttons, and accents across all screens</p>
-
             <div className="flex items-center gap-2.5 flex-wrap mb-4">
               {PRESETS.map(c => (
                 <button key={c} onClick={() => set('brand_color', c)} style={{ background: c }}
                   className={`w-9 h-9 rounded-full transition-all hover:scale-110 ${brandColor === c ? 'ring-2 ring-white ring-offset-2 ring-offset-surface-card scale-110' : ''}`} />
               ))}
             </div>
-
             <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-raised border border-surface-border">
               <span className="text-zinc-500 text-xs flex-shrink-0">Custom</span>
               <input
@@ -220,18 +284,16 @@ export default function AdminRestaurant() {
                 maxLength={7}
               />
             </div>
-
             <div className="mt-3 h-1 rounded-full" style={{ background: brandColor }} />
           </div>
 
-          {/* Preview */}
+          {/* Live Preview */}
           <div className="rounded-xl border border-surface-border bg-surface-card p-5">
             <h3 className="font-bold text-white text-sm mb-3">Live Preview</h3>
             <div className="rounded-xl overflow-hidden border border-surface-border">
-              {/* Nav bar — scrollable so it never wraps on small screens */}
               <div
                 className="flex items-center px-2.5 gap-2 overflow-x-auto"
-                style={{ background: brandColor, height: 44, scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}
+                style={{ background: brandColor, height: 44, scrollbarWidth: 'none' }}
               >
                 {logoPreview
                   ? <img src={logoPreview} alt="logo" className="w-6 h-6 rounded object-cover flex-shrink-0" />
@@ -241,9 +303,9 @@ export default function AdminRestaurant() {
                   {(form.restaurant_name as string) || 'Restaurant'}
                 </span>
                 <div className="flex gap-1 flex-shrink-0 ml-1">
-                  {['Waiter','Kitchen','Admin'].map(l => (
+                  {['Waiter', 'Kitchen', 'Admin'].map(l => (
                     <span key={l} className="px-2 py-0.5 rounded-md text-[11px] font-medium whitespace-nowrap"
-                      style={{ background: brandColor+'33', color: '#fff', border: `1px solid ${brandColor}55` }}>{l}</span>
+                      style={{ background: brandColor + '33', color: '#fff', border: `1px solid ${brandColor}55` }}>{l}</span>
                   ))}
                 </div>
               </div>
@@ -256,6 +318,7 @@ export default function AdminRestaurant() {
             </div>
           </div>
 
+          {/* Save button */}
           <div className="rounded-xl border border-surface-border bg-surface-card p-5">
             <button className="btn btn-brand w-full py-3 text-sm font-semibold" onClick={save} disabled={saving}>
               {saving ? 'Saving…' : 'Save Settings'}
@@ -265,7 +328,90 @@ export default function AdminRestaurant() {
         </div>
       </div>
 
-      {/* Admin Lock Settings — full width below */}
+      {/* GST Settings — full width */}
+      <div className="rounded-xl border border-surface-border bg-surface-card p-5">
+        <div className="flex items-center gap-2 mb-1">
+          <h3 className="font-bold text-white text-sm">GST Settings</h3>
+          <span className="text-[10px] font-semibold text-zinc-500 bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded-full">For GST Filing</span>
+        </div>
+        <p className="text-zinc-500 text-xs mb-4 leading-relaxed">
+          Used to generate GSTR-1 JSON for portal upload. Leave blank if not GST registered.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">GSTIN</label>
+            <input
+              className="input font-mono uppercase"
+              placeholder="22AAAAA0000A1Z5"
+              maxLength={15}
+              value={(form.gstin as string) || ''}
+              onChange={e => set('gstin', e.target.value.toUpperCase())}
+            />
+            <p className="text-zinc-700 text-[10px] mt-1">15-character GST Identification Number</p>
+          </div>
+          <div>
+            <label className="label">Legal Business Name</label>
+            <input
+              className="input"
+              placeholder="As per GST registration"
+              value={(form.legal_name as string) || ''}
+              onChange={e => set('legal_name', e.target.value)}
+            />
+            <p className="text-zinc-700 text-[10px] mt-1">Exact name on your GST certificate</p>
+          </div>
+          <div>
+            <label className="label">State / Place of Supply</label>
+            <select
+              className="input"
+              value={(form.state_name as string) || 'Kerala'}
+              onChange={e => set('state_name', e.target.value)}
+            >
+              {INDIAN_STATES.map(s => (
+                <option key={s.code} value={s.name}>{s.name} ({s.code})</option>
+              ))}
+            </select>
+            <p className="text-zinc-700 text-[10px] mt-1">
+              State code: <span className="font-mono text-zinc-500">{selectedState?.code || '32'}</span> — used in GSTR-1 JSON
+            </p>
+          </div>
+          <div>
+            <label className="label">SAC Code</label>
+            <input
+              className="input font-mono"
+              placeholder="9963"
+              value={(form.sac_code as string) || '9963'}
+              onChange={e => set('sac_code', e.target.value)}
+            />
+            <p className="text-zinc-700 text-[10px] mt-1">9963 = Restaurant services (default). Check with your CA if different.</p>
+          </div>
+        </div>
+
+        {/* B2B toggle */}
+        <div className="mt-4 pt-4 border-t border-surface-border">
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <TogglePill
+              enabled={b2bEnabled}
+              onChange={() => set('b2b_enabled', b2bEnabled ? 'false' : 'true')}
+            />
+            <div>
+              <span className="text-sm font-medium text-white">Enable B2B Invoicing</span>
+              <p className="text-zinc-600 text-xs leading-relaxed mt-0.5">
+                Shows a "Customer GSTIN" field at payment time. When filled, that invoice
+                goes into the B2B section of GSTR-1 instead of the B2CS aggregate.
+                Leave off for restaurants with 100% walk-in (B2C) customers.
+              </p>
+            </div>
+          </label>
+        </div>
+
+        <div className="mt-4">
+          <button className="btn btn-brand btn-sm" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save GST Settings'}
+          </button>
+        </div>
+      </div>
+
+      {/* Admin Lock Settings */}
       <AdminLockSettings />
     </div>
   );

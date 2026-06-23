@@ -19,14 +19,12 @@ interface Props {
   orderIds: string[];
   currentMethod: string | null;
   total: number;
-  /** Previously recorded amount actually paid, if any (for prefill) */
   currentAmountPaid?: number | null;
-  /** Previously recorded split entries, if method was split (for prefill) */
   currentPaymentDetails?: any;
-  /** Previously recorded order type, if any (for prefill) */
   currentOrderType?: OrderType | null;
+  currentCustomerGstin?: string | null;
   onClose: () => void;
-  onSaved: (newMethod: string, newDetails?: any, newAmountPaid?: number, newOrderType?: OrderType) => void;
+  onSaved: (newMethod: string, newDetails?: any, newAmountPaid?: number, newOrderType?: OrderType, newGstin?: string) => void;
 }
 
 function parseSplitDetails(details: any): SplitEntry[] | null {
@@ -44,47 +42,34 @@ function parseSplitDetails(details: any): SplitEntry[] | null {
 }
 
 export default function PaymentEditModal({
-  orderIds, currentMethod, total, currentAmountPaid, currentPaymentDetails, currentOrderType,
+  orderIds, currentMethod, total, currentAmountPaid, currentPaymentDetails, currentOrderType, currentCustomerGstin,
   onClose, onSaved,
 }: Props) {
-  const settings = useSettings();
-  const sym      = settings.currency_symbol || '₹';
-  const taxPct   = parseFloat(settings.tax_percent || '5') / 100;
-  const grandTotal = total * (1 + taxPct);
+  const settings    = useSettings();
+  const sym         = settings.currency_symbol || '₹';
+  const taxPct      = parseFloat(settings.tax_percent || '5') / 100;
+  const grandTotal  = total * (1 + taxPct);
+  const b2bEnabled  = (settings as any).b2b_enabled === 'true';
 
   const [method,  setMethod]  = useState(currentMethod || 'cash');
 
-  // FIX: prefill split entries from currentPaymentDetails if the order was
-  // already a split payment, instead of always starting from two blank
-  // rows. Previously, opening "Edit Payment" on a split order showed empty
-  // Cash/UPI rows with 0 amounts, and "Amount Paid" silently kept showing
-  // the OLD recorded amount_paid (e.g. the bill total) instead of the
-  // actual split sum — because nothing recalculated it until Save was
-  // clicked, and even then the split total wasn't reflected back into the
-  // summary view consistently. Now splitTotal always drives the displayed
-  // "paid" figure live, and starts pre-populated with the real split.
   const initialSplits = (currentMethod === 'split' && parseSplitDetails(currentPaymentDetails))
     || [{ method: 'cash', amount: '' }, { method: 'upi', amount: '' }];
   const [splits,  setSplits]  = useState<SplitEntry[]>(initialSplits);
 
-  const [amountPaid, setAmountPaid] = useState(
+  const [amountPaid,    setAmountPaid]    = useState(
     currentAmountPaid != null ? currentAmountPaid.toFixed(2) : grandTotal.toFixed(2)
   );
-  // Order type — defaults to whatever was recorded, or Dine In if unset
-  // (testing-stage app, so older/unset orders default to Dine In).
-  const [orderType, setOrderType] = useState<OrderType>(currentOrderType || 'dine_in');
-  const [saving,  setSaving]  = useState(false);
+  const [orderType,     setOrderType]     = useState<OrderType>(currentOrderType || 'dine_in');
+  const [customerGstin, setCustomerGstin] = useState(currentCustomerGstin || '');
+  const [saving,        setSaving]        = useState(false);
   const toast = useToast();
 
   const splitTotal = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
 
-  // Keep the non-split "amount paid" field in sync with whichever method
-  // is selected, so switching methods doesn't leave a stale figure behind.
   useEffect(() => {
     if (method !== 'split' && currentMethod !== method) {
-      // Only reset when actually switching INTO a different non-split
-      // method than what was originally recorded — avoids clobbering a
-      // value the admin just typed.
+      // intentionally not resetting — allow user to type
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [method]);
@@ -94,9 +79,6 @@ export default function PaymentEditModal({
   const updateSplit = (i: number, field: keyof SplitEntry, val: string) =>
     setSplits(s => s.map((e, idx) => idx === i ? { ...e, [field]: val } : e));
 
-  // FIX: this is now always the live, correct "what will be saved" figure —
-  // splitTotal for split, the editable field otherwise. Nothing here can
-  // go stale relative to what Save actually sends.
   const effectivePaid = method === 'split' ? splitTotal : (parseFloat(amountPaid) || 0);
   const diff = effectivePaid - grandTotal;
   const diffIsTiny = Math.abs(diff) < 0.01;
@@ -110,14 +92,15 @@ export default function PaymentEditModal({
       }
       const finalAmountPaid = method === 'split' ? splitTotal : (parseFloat(amountPaid) || grandTotal);
       await Promise.all(orderIds.map(id => updateOrderPayment(id, {
-        payment_method: method,
+        payment_method:  method,
         payment_details: paymentDetails,
-        change_amount: 0,
-        amount_paid: finalAmountPaid,
-        order_type: orderType,
+        change_amount:   0,
+        amount_paid:     finalAmountPaid,
+        order_type:      orderType,
+        customer_gstin:  customerGstin.trim() || undefined,
       } as any)));
       toast('Payment updated', 'success');
-      onSaved(method, paymentDetails, finalAmountPaid, orderType);
+      onSaved(method, paymentDetails, finalAmountPaid, orderType, customerGstin.trim() || undefined);
     } catch (e: any) {
       toast(e.response?.data?.error || 'Failed to update payment', 'error');
     } finally {
@@ -147,7 +130,7 @@ export default function PaymentEditModal({
           </div>
         )}
 
-        {/* Order type — Dine In / Parcel slider */}
+        {/* Order type slider */}
         <label className="label mb-2">Order Type</label>
         <div
           role="radiogroup"
@@ -228,11 +211,28 @@ export default function PaymentEditModal({
                 onChange={e => setAmountPaid(e.target.value)}
                 className="input pl-7 font-mono text-sm" />
             </div>
-            <p className="text-zinc-600 text-[10px] mt-1.5">Edit if the customer paid a different amount than the bill</p>
           </div>
         )}
 
-        {/* Bill vs Paid summary — always reflects what Save will actually send */}
+        {/* Customer GSTIN — shown only when B2B invoicing is enabled */}
+        {b2bEnabled && (
+          <div className="mb-4">
+            <label className="label mb-1">Customer GSTIN <span className="text-zinc-600 font-normal normal-case tracking-normal">(optional)</span></label>
+            <input
+              type="text"
+              className="input font-mono uppercase text-xs"
+              placeholder="22AAAAA0000A1Z5"
+              maxLength={15}
+              value={customerGstin}
+              onChange={e => setCustomerGstin(e.target.value.toUpperCase())}
+            />
+            {customerGstin && (
+              <p className="text-indigo-400 text-[10px] mt-1">B2B invoice — will appear in GSTR-1 B2B section</p>
+            )}
+          </div>
+        )}
+
+        {/* Bill vs Paid summary */}
         <div className={`flex justify-between text-xs px-3 py-2 rounded-lg border mb-2 ${
           diffIsTiny
             ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'

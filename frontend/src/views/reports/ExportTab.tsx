@@ -1,15 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminLock } from '../../context/AdminLockContext';
 import { useToast } from '../../context/ToastContext';
+import { useSettings } from '../../context/SettingsContext';
+import { authedJson } from '../../utils/authedFetch';
 
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 
-// FIX: previously used new Date().toISOString().split('T')[0], which
-// converts to UTC first. On a server/browser running UTC while the user
-// is in IST (UTC+5:30), or vice versa, this silently returns YESTERDAY's
-// or TOMORROW's date depending on time of day — exactly the "19 to 20"
-// mismatch reported. Build the date string from LOCAL components instead,
-// matching what a <input type="date"> picker shows the user.
 function todayStr(): string {
   const d = new Date();
   const y = d.getFullYear();
@@ -18,7 +14,21 @@ function todayStr(): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Returns an error string if the range is invalid, else ''. */
+function monthStartStr(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}-01`;
+}
+
+function quarterStartStr(): string {
+  const d = new Date();
+  const m = d.getMonth(); // 0-indexed
+  const quarterStartMonth = Math.floor(m / 3) * 3;
+  const y = d.getFullYear();
+  return `${y}-${String(quarterStartMonth + 1).padStart(2, '0')}-01`;
+}
+
 function validateRange(from: string, to: string): string {
   if (from && to && from > to) {
     return `"From" date (${from}) is after "To" date (${to}). Please fix the range.`;
@@ -55,7 +65,6 @@ async function downloadFile(url: string, filename: string): Promise<void> {
   a.remove();
   URL.revokeObjectURL(blobUrl);
 }
-
 
 function DownloadIcon() {
   return (
@@ -149,7 +158,6 @@ function OurFormatSection() {
             value={to} max={today}
             onChange={e => setTo(e.target.value)} />
         </div>
-        {/* FIX: removed "Clear (all time)" — not needed; "Today" resets the range */}
         <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(today); setTo(today); }}>
           Today
         </button>
@@ -191,135 +199,338 @@ function OurFormatSection() {
   );
 }
 
-// ── Vyapar TaxOne Sales Export ────────────────────────────────────────────
+// ── GSTR-3B on-screen summary ──────────────────────────────────────────────
 
-function VyaparSalesSection() {
-  const today = todayStr();
-  const [from,    setFrom]    = useState(today);
-  const [to,      setTo]      = useState(today);
-  const [loading, setLoading] = useState<'without' | 'with' | null>(null);
-  const { requirePin, config: lockConfig } = useAdminLock();
-  const toast = useToast();
+function Gstr3bSummary({ from, to }: { from: string; to: string }) {
+  const [data,    setData]    = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState('');
+  const settings = useSettings();
+  const sym      = settings.currency_symbol || '₹';
+  const toast    = useToast();
 
-  const dateError = validateRange(from, to);
-
-  const label = () => {
-    if (from && to) return `${from}_to_${to}`;
-    if (from)       return `from_${from}`;
-    if (to)         return `to_${to}`;
-    return 'all';
-  };
-
-  const doRun = async (type: 'without' | 'with') => {
-    setLoading(type);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
     try {
       const params = new URLSearchParams();
       if (from) params.set('from', from);
       if (to)   params.set('to',   to);
-      const suffix   = type === 'with' ? 'with-item' : 'without-item';
-      const prefix   = type === 'with' ? 'sales_vyapar_items' : 'sales_vyapar';
-      const filename = `${prefix}_${label()}.xlsx`;
-      await downloadFile(`${API_ORIGIN}/api/export/vyapar-sales/${suffix}?${params}`, filename);
-      toast(`Downloaded ${filename}`, 'success');
+      const d = await authedJson(`${API_ORIGIN}/api/export/gst/gstr3b?${params}`);
+      setData(d);
+    } catch (e: any) {
+      setError(e.message || 'Failed to load summary');
+    } finally {
+      setLoading(false);
+    }
+  }, [from, to]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const copyField = (label: string, value: string) => {
+    navigator.clipboard.writeText(value).then(() => toast(`Copied: ${label}`, 'success'));
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-4 text-zinc-500 text-xs">
+        <span className="w-3.5 h-3.5 border-2 border-zinc-600 border-t-zinc-400 rounded-full animate-spin" />
+        Loading GSTR-3B summary…
+      </div>
+    );
+  }
+
+  if (error) {
+    return <p className="text-red-400 text-xs py-2">{error}</p>;
+  }
+
+  if (!data) return null;
+
+  const o = data.outward_taxable;
+
+  const fields = [
+    { table: '3.1(a)', label: 'Outward taxable supplies (other than zero rated)', taxable: o.total_taxable_value, igst: o.integrated_tax, cgst: o.central_tax, sgst: o.state_ut_tax },
+  ];
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex items-center gap-2 mb-1">
+        <p className="text-zinc-300 text-xs font-semibold">GSTR-3B Summary</p>
+        <span className="text-[10px] text-zinc-600">Click any value to copy it</span>
+      </div>
+
+      {/* Header info */}
+      <div className="grid grid-cols-2 gap-2">
+        {[
+          { l: 'GSTIN', v: data.gstin || '—' },
+          { l: 'Legal Name', v: data.legal_name || '—' },
+          { l: 'Tax Rate', v: `${data.tax_rate}%` },
+          { l: 'Orders', v: String(data.order_count) },
+        ].map(({ l, v }) => (
+          <div key={l} className="rounded-lg bg-surface-raised border border-surface-border px-3 py-2">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-0.5">{l}</p>
+            <p className="text-white text-xs font-mono font-semibold">{v}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Table 3.1 */}
+      <div className="rounded-lg border border-surface-border overflow-hidden">
+        <div className="bg-surface-raised px-3 py-2 border-b border-surface-border">
+          <p className="text-zinc-300 text-xs font-semibold">Table 3.1 — Outward Taxable Supplies</p>
+          <p className="text-zinc-600 text-[10px]">Enter these values on the GST portal under GSTR-3B → 3.1(a)</p>
+        </div>
+        <div className="divide-y divide-surface-border">
+          {[
+            { label: 'Total Taxable Value (pre-tax)', value: o.total_taxable_value },
+            { label: 'Integrated Tax (IGST)', value: o.integrated_tax },
+            { label: 'Central Tax (CGST)', value: o.central_tax },
+            { label: 'State/UT Tax (SGST)', value: o.state_ut_tax },
+            { label: 'Cess', value: 0 },
+          ].map(({ label, value }) => (
+            <button
+              key={label}
+              className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-surface-raised transition-colors text-left group"
+              onClick={() => copyField(label, value.toFixed(2))}
+            >
+              <span className="text-zinc-400 text-xs">{label}</span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-white text-sm font-semibold">{sym}{value.toFixed(2)}</span>
+                <svg className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                </svg>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Table 4 — ITC */}
+      <div className="rounded-lg border border-surface-border overflow-hidden">
+        <div className="bg-surface-raised px-3 py-2 border-b border-surface-border">
+          <p className="text-zinc-300 text-xs font-semibold">Table 4 — Eligible ITC</p>
+        </div>
+        <div className="px-3 py-3">
+          <p className="text-zinc-500 text-xs leading-relaxed">{data.itc_claimed.note}</p>
+          <p className="text-zinc-600 text-[10px] mt-1.5">Enter ₹0 for all ITC fields in Table 4 on the portal.</p>
+        </div>
+      </div>
+
+      {/* Table 6.1 — Tax paid */}
+      <div className="rounded-lg border border-surface-border overflow-hidden">
+        <div className="bg-surface-raised px-3 py-2 border-b border-surface-border">
+          <p className="text-zinc-300 text-xs font-semibold">Table 6.1 — Tax Paid</p>
+          <p className="text-zinc-600 text-[10px]">Same as 3.1 amounts above — enter under "Tax paid through cash/ITC" on the portal.</p>
+        </div>
+        <div className="divide-y divide-surface-border">
+          {[
+            { label: 'Integrated Tax (IGST)', value: data.tax_paid.integrated_tax },
+            { label: 'Central Tax (CGST)', value: data.tax_paid.central_tax },
+            { label: 'State/UT Tax (SGST)', value: data.tax_paid.state_ut_tax },
+          ].map(({ label, value }) => (
+            <button
+              key={label}
+              className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-surface-raised transition-colors text-left group"
+              onClick={() => copyField(label, value.toFixed(2))}
+            >
+              <span className="text-zinc-400 text-xs">{label}</span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-white text-sm font-semibold">{sym}{value.toFixed(2)}</span>
+                <svg className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                </svg>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-lg bg-brand-500/8 border border-brand-500/20 px-3 py-2.5">
+        <p className="text-brand-400 text-xs font-semibold mb-0.5">How to use this</p>
+        <p className="text-zinc-500 text-xs leading-relaxed">
+          Log into <span className="text-zinc-300">gst.gov.in</span> → File Returns → GSTR-3B → enter the values above.
+          For GSTR-1, download the JSON below and upload it via <span className="text-zinc-300">File Returns → GSTR-1 → Upload JSON.</span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── GST Filing Section ─────────────────────────────────────────────────────
+
+function GstFilingSection() {
+  const today        = todayStr();
+  const [period,     setPeriod]  = useState<'month' | 'quarter'>('month');
+  const [from,       setFrom]    = useState(monthStartStr());
+  const [to,         setTo]      = useState(today);
+  const [loading,    setLoading] = useState(false);
+  const [show3b,     setShow3b]  = useState(false);
+  const { requirePin, config: lockConfig } = useAdminLock();
+  const toast    = useToast();
+  const settings = useSettings();
+  const gstin    = (settings as any).gstin as string;
+
+  const dateError = validateRange(from, to);
+
+  const setPeriodMonth = () => {
+    setPeriod('month');
+    setFrom(monthStartStr());
+    setTo(today);
+  };
+
+  const setPeriodQuarter = () => {
+    setPeriod('quarter');
+    setFrom(quarterStartStr());
+    setTo(today);
+  };
+
+  const doDownloadGstr1 = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to)   params.set('to',   to);
+      const filename = `GSTR1_${from}_to_${to}.json`;
+      await downloadFile(`${API_ORIGIN}/api/export/gst/gstr1?${params}`, filename);
+      toast(`GSTR-1 JSON downloaded — upload at gst.gov.in`, 'success');
     } catch (e: any) {
       toast(e.message || 'Export failed', 'error');
     } finally {
-      setLoading(null);
+      setLoading(false);
     }
   };
 
-  const run = (type: 'without' | 'with') => {
+  const handleDownloadGstr1 = () => {
     if (dateError) { toast(dateError, 'error'); return; }
-    if (!lockConfig.enabled) { doRun(type); return; }
-    requirePin(() => doRun(type), 'Download Vyapar Sales', 'Enter admin PIN to export sales');
+    if (!lockConfig.enabled) { doDownloadGstr1(); return; }
+    requirePin(doDownloadGstr1, 'Download GSTR-1', 'Enter admin PIN to export GST filing');
   };
 
   return (
     <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-      <h4 className="font-semibold text-white text-sm mb-1">Vyapar TaxOne — Sales Upload</h4>
-      <p className="text-zinc-500 text-xs mb-4">
-        Exports closed orders as an <span className="text-zinc-300">.xlsx</span> file ready
-        for <span className="text-zinc-300">Bulk Upload → Sales</span> in Vyapar TaxOne.
-        Choose <span className="text-zinc-300">Without Item</span> for a simple one-row-per-order
-        accounting invoice, or <span className="text-zinc-300">With Item</span> for full line-item detail.
-        Defaults to today.
+      <div className="flex items-center gap-2 mb-1">
+        <h4 className="font-semibold text-white text-sm">GST Filing</h4>
+        <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">GSTR-1 + GSTR-3B</span>
+      </div>
+      <p className="text-zinc-500 text-xs mb-4 leading-relaxed">
+        GSTR-1 JSON is ready to upload directly on <span className="text-zinc-300">gst.gov.in → File Returns → GSTR-1 → Upload JSON.</span>
+        GSTR-3B summary gives you the exact numbers to enter manually — click any value to copy it.
       </p>
 
-      <div className="flex items-end gap-3 flex-wrap mb-4">
-        <div>
-          <label className="label">From</label>
-          <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
-            value={from} max={today}
-            onChange={e => setFrom(e.target.value)} />
+      {!gstin && (
+        <div className="mb-4 flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25">
+          <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+          <p className="text-amber-400 text-xs leading-relaxed">
+            GSTIN not set — go to <span className="font-semibold">Admin → Restaurant → GST Settings</span> to add your GSTIN before filing.
+          </p>
         </div>
-        <div>
-          <label className="label">To</label>
-          <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
-            value={to} max={today}
-            onChange={e => setTo(e.target.value)} />
+      )}
+
+      {/* Period selector */}
+      <div className="mb-4">
+        <label className="label mb-2">Filing Period</label>
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={setPeriodMonth}
+            className={`px-4 py-2 rounded-lg border text-xs font-semibold transition-all ${
+              period === 'month'
+                ? 'bg-brand-500 border-brand-600 text-white'
+                : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'
+            }`}
+          >
+            This Month
+          </button>
+          <button
+            onClick={setPeriodQuarter}
+            className={`px-4 py-2 rounded-lg border text-xs font-semibold transition-all ${
+              period === 'quarter'
+                ? 'bg-brand-500 border-brand-600 text-white'
+                : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'
+            }`}
+          >
+            This Quarter
+          </button>
         </div>
-        {/* FIX: removed "Clear (all time)" */}
-        <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(today); setTo(today); }}>
-          Today
-        </button>
+
+        <div className="flex items-end gap-3 flex-wrap">
+          <div>
+            <label className="label">From</label>
+            <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60' : ''}`}
+              value={from} max={today} onChange={e => { setFrom(e.target.value); setPeriod('month'); }} />
+          </div>
+          <div>
+            <label className="label">To</label>
+            <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60' : ''}`}
+              value={to} max={today} onChange={e => { setTo(e.target.value); setPeriod('month'); }} />
+          </div>
+        </div>
+        <DateRangeError message={dateError} />
       </div>
 
-      <DateRangeError message={dateError} />
-
-      <div className="flex gap-2 flex-wrap mt-4">
+      {/* GSTR-1 download */}
+      <div className="rounded-lg bg-surface-raised border border-surface-border p-4 mb-3">
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div>
+            <p className="text-white text-xs font-semibold">GSTR-1 JSON</p>
+            <p className="text-zinc-500 text-[10px] mt-0.5 leading-relaxed">
+              Portal-uploadable JSON. Includes B2CS aggregate (all walk-in sales) and B2B invoices (customers with GSTIN).
+            </p>
+          </div>
+          <div className="text-[9px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
+            Upload to portal
+          </div>
+        </div>
         <button
-          className="btn btn-brand flex items-center gap-2"
-          onClick={() => run('without')}
-          disabled={loading !== null || !!dateError}
+          className="btn btn-brand btn-sm flex items-center gap-2"
+          onClick={handleDownloadGstr1}
+          disabled={loading || !!dateError}
         >
-          {loading === 'without'
+          {loading
             ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
-            : <><DownloadIcon />Without Item</>
+            : <><DownloadIcon />Download GSTR-1 JSON</>
           }
         </button>
-        <button
-          className="btn flex items-center gap-2 text-xs"
-          onClick={() => run('with')}
-          disabled={loading !== null || !!dateError}
-        >
-          {loading === 'with'
-            ? <><span className="w-3.5 h-3.5 border-2 border-zinc-400/40 border-t-zinc-400 rounded-full animate-spin" />Generating…</>
-            : <><DownloadIcon />With Item</>
-          }
-        </button>
-      </div>
+        {lockConfig.enabled && <PinLockNote />}
 
-      {lockConfig.enabled && <PinLockNote />}
-
-      <div className="mt-4 pt-4 border-t border-surface-border">
-        <p className="text-zinc-600 text-[10px] mb-2 uppercase tracking-wider font-semibold">Columns exported</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div className="mt-3 pt-3 border-t border-surface-border grid grid-cols-2 gap-2">
           {[
-            { label: 'Reference No (Order ID)',   ok: true              },
-            { label: 'Invoice Date (DD/MM/YYYY)', ok: true              },
-            { label: 'Party (Walk-in Customer)',  ok: true              },
-            { label: 'Place of Supply',           ok: true              },
-            { label: 'Amount (pre-tax)',           ok: true              },
-            { label: 'SGST / CGST / IGST',        ok: true              },
-            { label: 'Total Amount (incl. tax)',   ok: true              },
-            { label: 'Item name & qty',            ok: true,  note: 'With Item only' },
-            { label: 'Customer GSTIN',             ok: false             },
-            { label: 'Customer name / address',    ok: false             },
-          ].map(({ label, ok, note }) => (
-            <div key={label} className="flex items-start gap-1.5 text-[11px] text-zinc-500">
-              {ok ? (
-                <svg className="w-3 h-3 text-emerald-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                </svg>
-              ) : (
-                <svg className="w-3 h-3 text-zinc-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              )}
-              <span>{label}{note ? <span className="text-zinc-600 ml-1">({note})</span> : ''}</span>
+            'B2CS aggregate (walk-in)',
+            'B2B line items (GSTIN)',
+            'HSN/SAC summary',
+            'Document issue details',
+            'CGST + SGST split',
+            'Ready to upload on portal',
+          ].map(f => (
+            <div key={f} className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+              <svg className="w-3 h-3 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+              {f}
             </div>
           ))}
         </div>
+      </div>
+
+      {/* GSTR-3B summary toggle */}
+      <div className="rounded-lg bg-surface-raised border border-surface-border p-4">
+        <button
+          className="w-full flex items-center justify-between text-left"
+          onClick={() => setShow3b(v => !v)}
+        >
+          <div>
+            <p className="text-white text-xs font-semibold">GSTR-3B Summary</p>
+            <p className="text-zinc-500 text-[10px] mt-0.5">Click to expand — shows exact values to enter on the GST portal</p>
+          </div>
+          <svg
+            className={`w-4 h-4 text-zinc-500 transition-transform flex-shrink-0 ml-3 ${show3b ? 'rotate-180' : ''}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {show3b && <Gstr3bSummary from={from} to={to} />}
       </div>
     </div>
   );
@@ -331,7 +542,7 @@ export default function ExportTab() {
   return (
     <div className="space-y-5">
       <OurFormatSection />
-      <VyaparSalesSection />
+      <GstFilingSection />
     </div>
   );
 }

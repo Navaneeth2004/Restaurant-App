@@ -80,6 +80,7 @@ export const closeOrderWithPayment = (
     change_amount?: number;
     customer_name?: string;
     customer_phone?: string;
+    customer_gstin?: string;
     amount_paid?: number;
     order_type?: 'dine_in' | 'parcel';
   }
@@ -91,6 +92,9 @@ export const updateOrderPayment = (
     payment_method: string;
     payment_details?: any;
     change_amount?: number;
+    customer_name?: string;
+    customer_phone?: string;
+    customer_gstin?: string;
     amount_paid?: number;
     order_type?: 'dine_in' | 'parcel';
   }
@@ -101,16 +105,12 @@ export const createStaff       = (data: { name: string; pin: string; role: strin
 export const deleteStaff       = (id: number): Promise<void> => api.delete(`/staff/${id}`).then(r => r.data);
 export const verifyPin         = (pin: string): Promise<AuthUser> => api.post('/staff/verify', { pin }).then(r => r.data);
 
-// FIX: Always pass local timezone offset so "today" boundary matches the
-// user's calendar day on both the summary and the chart.
 export const getReportToday    = (): Promise<ReportSummary> =>
   api.get('/reports/today', { params: { tz_offset_min: -new Date().getTimezoneOffset() } }).then(r => r.data);
 
 export const getReportHistory  = (params?: Record<string, string>): Promise<Order[]> =>
   api.get('/reports/history', { params: { tz_offset_min: String(-new Date().getTimezoneOffset()), ...params } }).then(r => r.data);
 
-// FIX: Pass timezone offset to revenue chart so daily grouping is consistent
-// with the /today summary (both now use local date, not UTC date).
 export const getRevenueChart   = (): Promise<RevenueDay[]> =>
   api.get('/reports/revenue', { params: { tz_offset_min: -new Date().getTimezoneOffset() } }).then(r => r.data);
 
@@ -122,6 +122,7 @@ export const reorderMenuItems = (items: { id: number; sort_order: number }[]): P
 
 export const importMenu = (data: any): Promise<{ success: boolean; categories_added: number; items_added: number; items_skipped: number }> =>
   api.post('/export/menu/import', data).then(r => r.data);
+
 export const logoutStaff = (staffId: number, sessionToken: string): Promise<void> =>
   api.post('/staff/logout', { staffId, sessionToken }).then(r => r.data);
 

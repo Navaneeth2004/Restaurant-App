@@ -1,24 +1,6 @@
 /**
  * BillModal.tsx
- *
- * FIXES:
- * 1. Item deduplication: previously the itemMap key was `name||note||price` which
- *    is correct, but if the same item appeared across multiple Order objects with
- *    different order IDs (multi-round), the merging loop was correct but the
- *    cart merge loop below could overcount. Now both loops use the same keying
- *    strategy and the cart is only merged if it wasn't already committed.
- *
- * 2. cart-only flow: when WaiterView passes orderId='cart-only' it means there
- *    are no prior sent orders. In this case BillModal should show only the items
- *    from `orders` (which now include the direct-billed cart items after
- *    WaiterView committed them) and NOT try to merge cartItems again.
- *
- * 3. The cartItems prop is now always [] when called from WaiterView because
- *    handleBill commits the cart before opening BillModal. This prevents double-
- *    counting of items.
- *
- * 4. closeOrderWithPayment now correctly uses the session's last order ID which
- *    the server uses to close all orders in the session.
+ * Updated to support customer GSTIN for B2B invoicing.
  */
 
 import React, { useState } from 'react';
@@ -43,10 +25,6 @@ interface Props {
   onClose:    () => void;
   onClosed:   () => void;
   isHistory?: boolean;
-  /** 
-   * Items in the unsent cart — pass [] if they were already committed to the
-   * server before opening the modal (which is what WaiterView now does).
-   */
   cartItems?: { menu_item_id: number; name: string; price: number; quantity: number; note: string }[];
 }
 
@@ -58,8 +36,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
   const brand    = (settings.brand_color as string) || '#f97316';
   const logoUrl  = (settings as any).logo_url as string | undefined;
 
-  // Merge items from ALL orders in this session into a single item map.
-  // Key = name + note + price so same item with different notes stay separate.
   const itemMap = new Map<string, { name: string; price: number; quantity: number; note: string }>();
 
   for (const order of orders) {
@@ -71,8 +47,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
     }
   }
 
-  // Only merge cartItems if they haven't already been committed to orders.
-  // WaiterView now always passes [] here, but we keep this for safety / other callers.
   for (const item of cartItems) {
     const key = `${item.name}||${item.note || ''}||${item.price}`;
     const ex  = itemMap.get(key);
@@ -98,14 +72,15 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
   const [splits,         setSplits]         = useState<SplitEntry[]>([
     { method: 'cash', amount: '' }, { method: 'upi', amount: '' },
   ]);
-  const [customerName,  setCustomerName]  = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [paying,        setPaying]        = useState(false);
+  const [customerName,   setCustomerName]   = useState('');
+  const [customerPhone,  setCustomerPhone]  = useState('');
+  const [customerGstin,  setCustomerGstin]  = useState('');
+  const [paying,         setPaying]         = useState(false);
 
   const [showPaymentWarn, setShowPaymentWarn] = useState(false);
   const [warnModal,       setWarnModal]       = useState(false);
 
-  const splitTotal = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  const splitTotal   = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const splitBalance = total - splitTotal;
 
   const receivedNum = parseFloat(received) || 0;
@@ -115,7 +90,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
 
   const executePay = async () => {
     if (orderId === 'cart-only' && orders.length === 0) {
-      // Nothing to close — shouldn't reach here but guard anyway
       toast('No order to close', 'error');
       return;
     }
@@ -124,8 +98,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
     setWarnModal(false);
     setShowPaymentWarn(false);
     try {
-      // Use the most recent order ID in the session — the server closes
-      // all orders sharing the same session_id
       const closeId = orderId === 'cart-only'
         ? orders[orders.length - 1]?.id
         : orderId;
@@ -153,6 +125,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
         change_amount:   changeAmt,
         customer_name:   customerName.trim()  || undefined,
         customer_phone:  customerPhone.trim() || undefined,
+        customer_gstin:  customerGstin.trim() || undefined,
         amount_paid:     amountPaid,
         order_type:      orderType,
       } as any);
@@ -304,6 +277,8 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
               setCustomerName={setCustomerName}
               customerPhone={customerPhone}
               setCustomerPhone={setCustomerPhone}
+              customerGstin={customerGstin}
+              setCustomerGstin={setCustomerGstin}
             />
           )}
           <div className="no-print flex-shrink-0"

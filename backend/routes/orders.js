@@ -15,6 +15,7 @@ const db      = require('../db/database');
   try { db.exec(`ALTER TABLE orders ADD COLUMN session_id TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN amount_paid REAL DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'dine_in'`); } catch (_) {}
+  try { db.exec(`ALTER TABLE orders ADD COLUMN customer_gstin TEXT DEFAULT NULL`); } catch (_) {}
 })();
 
 // ── In-memory guards ──────────────────────────────────────────────────────
@@ -40,17 +41,6 @@ function getTaxPercent() {
   return parseFloat(row?.value ?? '5') / 100;
 }
 
-/**
- * Returns true if a 'delivered' order was created via /direct-bill — i.e. it
- * never went through the kitchen's 'active' state. The server sets
- * delivered_at = created_at atomically for these, so the two timestamps are
- * identical (or within a couple seconds, to be safe against clock/string
- * formatting differences).
- *
- * This is the single source of truth for "is this a kitchen round or a
- * direct-bill order" — used both for round counting and for amount_paid
- * bookkeeping, so the two can never disagree with each other again.
- */
 function isDirectBillOrder(order) {
   if (!order.delivered_at || !order.created_at) return false;
   const diff = Math.abs(new Date(order.delivered_at).getTime() - new Date(order.created_at).getTime());
@@ -65,14 +55,7 @@ router.get('/active', (req, res) => {
 });
 
 // ── GET /table/:tableId/all ───────────────────────────────────────────────
-// Returns ALL rounds for the CURRENT customer session at a table.
-//
-// Session lookup is strict — we only look for the current active/delivered
-// session. We never fall back to a closed session, which previously caused
-// old orders from a previous customer to appear when a new customer sat down
-// at the same table before the first socket refresh.
 router.get('/table/:tableId/all', (req, res) => {
-  // Find the session_id for any currently open order at this table
   const latest = db.prepare(
     "SELECT session_id FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at DESC LIMIT 1"
   ).get(req.params.tableId);
@@ -112,8 +95,6 @@ router.get('/:id', (req, res) => {
 });
 
 // ── POST / — Send to Kitchen ──────────────────────────────────────────────
-// IMPORTANT: This route creates an 'active' order that appears in the kitchen.
-// It is SEPARATE from /direct-bill which bypasses the kitchen entirely.
 router.post('/', (req, res) => {
   const { table_id, items } = req.body;
   if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
@@ -125,11 +106,9 @@ router.post('/', (req, res) => {
     let order, isNew, newItems = [];
 
     const saveOrder = db.transaction(() => {
-      // Look for an existing ACTIVE order to update (add items to)
       const existingActive = db.prepare("SELECT * FROM orders WHERE table_id = ? AND status = 'active'").get(table_id);
 
       if (existingActive) {
-        // Merge new items into the existing active order
         const prevItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(existingActive.id);
         const prevMap = {};
         for (const pi of prevItems) {
@@ -149,14 +128,6 @@ router.post('/', (req, res) => {
         return getOrderWithItems(existingActive.id);
       }
 
-      // No active order — create a new one.
-      // session_id rules:
-      // - If the table is currently occupied (has active/delivered rounds), reuse
-      //   that session_id so all rounds for the same customer are grouped together.
-      // - If the table is empty (new customer, or just cleared by a close), ALWAYS
-      //   start a fresh session — never reuse a session_id from a closed order, or
-      //   the new customer's order can get merged into the previous customer's
-      //   history (the "orders not registering separately" bug).
       const tableRow = db.prepare("SELECT status FROM tables WHERE id = ?").get(table_id);
       const tableIsOccupied = tableRow && tableRow.status !== 'empty';
 
@@ -202,23 +173,6 @@ router.post('/', (req, res) => {
 });
 
 // ── POST /direct-bill ─────────────────────────────────────────────────────
-// Creates an order in 'delivered' state — BYPASSES the kitchen display.
-// Used when a waiter wants to bill immediately without sending to kitchen,
-// e.g. for items already consumed that were never sent, or a quick parcel.
-//
-// session_id handling matches POST / above:
-//   - If the table already has active/delivered orders (same customer session),
-//     reuse their session_id so the bill groups correctly.
-//   - If the table was empty (new or just cleared), create a new session.
-//
-// delivered_at is set to the SAME value as created_at so isDirectBillOrder()
-// (and the matching frontend helpers) can detect this as a direct-bill order
-// and never show it as a "Round N — Delivered" kitchen round.
-//
-// After direct-bill, the table becomes 'waiting_bill', not 'occupied'.
-// This is intentional — the waiter is ready to collect payment. It does NOT
-// disable "Send to Kitchen" for this table, and does NOT mark anything as
-// kitchen-delivered; those are unrelated concerns living in the frontend.
 router.post('/direct-bill', (req, res) => {
   const { table_id, items } = req.body;
   if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
@@ -233,24 +187,20 @@ router.post('/direct-bill', (req, res) => {
 
       let sessionId;
       if (tableIsOccupied) {
-        // Reuse existing session (same customer, multiple rounds including kitchen rounds)
         const existingSession = db.prepare(
           "SELECT session_id FROM orders WHERE table_id = ? AND status IN ('active','delivered') ORDER BY created_at DESC LIMIT 1"
         ).get(table_id);
         sessionId = existingSession?.session_id ?? uuidv4();
       } else {
-        // New customer — fresh session, never inherited from a closed order
         sessionId = uuidv4();
       }
 
       const orderId = uuidv4();
       const now     = new Date().toISOString();
 
-      // delivered_at = created_at marks this as a direct-bill order (no kitchen delay)
       db.prepare('INSERT INTO orders (id, table_id, session_id, status, created_at, delivered_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(orderId, table_id, sessionId, 'delivered', now, now);
 
-      // Set table to waiting_bill so the waiter knows to collect payment
       db.prepare("UPDATE tables SET status = 'waiting_bill' WHERE id = ?").run(table_id);
 
       const ins = db.prepare('INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)');
@@ -260,7 +210,6 @@ router.post('/direct-bill', (req, res) => {
       return getOrderWithItems(orderId);
     })();
 
-    // Do NOT emit new_order — this bypasses the kitchen display intentionally
     req.io.emit('tables_updated');
     res.status(201).json(order);
   } catch (err) {
@@ -403,22 +352,6 @@ router.patch('/:id/deliver', (req, res) => {
 });
 
 // ── PATCH /:id/close ──────────────────────────────────────────────────────
-// Closes ALL orders in the session (active + delivered + direct-bill) so the
-// bill total correctly includes every round regardless of how it was created.
-//
-// FIX (amount_paid duplication bug): amount_paid represents the total amount
-// the customer paid for the WHOLE session, recorded ONCE. Previously this
-// value was written identically onto every order row in the session, so a
-// session with 3 orders (e.g. 1 direct-bill + 2 kitchen rounds) ended up with
-// amount_paid = 150 on all three rows. Any code that summed amount_paid across
-// a session's orders (as the History view's session grouping does) would then
-// report 150 × 3 = 450 — exactly the "Overpaid by ₹349.82" bug.
-//
-// The fix: amount_paid is now stored ONLY on the specific order row identified
-// by `orderId` (the one the close request was made against). Every other order
-// in the session gets amount_paid = NULL. The session-grouping logic on the
-// frontend takes the single non-null value instead of summing, so the total
-// is correct regardless of how many rounds the session has.
 router.patch('/:id/close', (req, res) => {
   const orderId = req.params.id;
 
@@ -432,14 +365,13 @@ router.patch('/:id/close', (req, res) => {
   }
   _closingOrders.add(lockKey);
 
-  const { payment_method, payment_details, change_amount, customer_name, customer_phone, amount_paid, order_type } = req.body || {};
+  const { payment_method, payment_details, change_amount, customer_name, customer_phone, customer_gstin, amount_paid, order_type } = req.body || {};
 
   try {
     const close = db.transaction(() => {
       const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
       if (!order) return { notFound: true };
 
-      // Check if ALL orders in this session are already closed
       const openCount = db.prepare(
         "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered')"
       ).get(order.table_id, order.session_id).c;
@@ -453,11 +385,11 @@ router.patch('/:id/close', (req, res) => {
       const change     = typeof change_amount === 'number' ? change_amount : 0;
       const custName   = customer_name  || null;
       const custPhone  = customer_phone || null;
+      const custGstin  = customer_gstin || null;
       const orderType  = (order_type === 'parcel') ? 'parcel' : 'dine_in';
 
       const taxPct = getTaxPercent();
 
-      // Compute the bill total from ALL orders in the session (kitchen + direct-bill)
       const allSessionOrders = db.prepare(
         "SELECT total FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered')"
       ).all(order.table_id, order.session_id);
@@ -468,22 +400,17 @@ router.patch('/:id/close', (req, res) => {
         ? amount_paid
         : billTotal;
 
-      // Close ALL open orders in this session atomically — but only the
-      // closing order itself records amount_paid/payment metadata. Every
-      // other order in the session gets the shared status/customer/order-type
-      // fields but amount_paid/payment_method/payment_details/change_amount
-      // are left untouched (NULL) on them so nothing downstream can double
-      // count payment info per-order.
       db.prepare(`
         UPDATE orders
         SET status = 'closed',
             customer_name   = ?,
             customer_phone  = ?,
+            customer_gstin  = ?,
             order_type      = ?
         WHERE table_id = ?
           AND session_id = ?
           AND status IN ('active','delivered')
-      `).run(custName, custPhone, orderType, order.table_id, order.session_id);
+      `).run(custName, custPhone, custGstin, orderType, order.table_id, order.session_id);
 
       db.prepare(`
         UPDATE orders
@@ -494,7 +421,6 @@ router.patch('/:id/close', (req, res) => {
         WHERE id = ?
       `).run(payMethod, payDetails, change, paidAmount, orderId);
 
-      // Always free the table after successful payment
       db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
 
       return { table_id: order.table_id };
@@ -523,18 +449,8 @@ router.patch('/:id/close', (req, res) => {
 });
 
 // ── PATCH /:id/payment ────────────────────────────────────────────────────
-// Edits payment info for an already-closed session (used by the History tab's
-// "Edit Payment" flow, which is called once per session, not once per order).
-//
-// FIX: previously this only updated the single order identified by :id. If a
-// session had multiple orders, edited amount_paid/payment_method only landed
-// on one row, leaving the others with stale (or NULL) values. Since the
-// session-level read (sessions.ts) now expects amount_paid/payment_method to
-// live on exactly one row per session, this route locates the SAME row the
-// close route wrote to (the most recent order in the session) and updates that
-// one — keeping a single source of truth per session.
 router.patch('/:id/payment', (req, res) => {
-  const { payment_method, payment_details, change_amount, customer_name, customer_phone, amount_paid, order_type } = req.body || {};
+  const { payment_method, payment_details, change_amount, customer_name, customer_phone, customer_gstin, amount_paid, order_type } = req.body || {};
   if (!payment_method) return res.status(400).json({ error: 'payment_method required' });
 
   try {
@@ -545,11 +461,8 @@ router.patch('/:id/payment', (req, res) => {
     const change     = typeof change_amount === 'number' ? change_amount : 0;
     const paidAmount = typeof amount_paid === 'number' && !Number.isNaN(amount_paid) ? amount_paid : null;
     const orderType  = order_type === 'parcel' || order_type === 'dine_in' ? order_type : null;
+    const custGstin  = customer_gstin || null;
 
-    // Find the canonical "payment row" for this session: the most recently
-    // created order sharing the same session_id. This matches which row the
-    // close route wrote amount_paid/payment_method to, so edits land on the
-    // same place reads expect to find them.
     const canonical = order.session_id
       ? db.prepare(
           "SELECT id FROM orders WHERE table_id = ? AND session_id = ? ORDER BY created_at DESC LIMIT 1"
@@ -562,18 +475,15 @@ router.patch('/:id/payment', (req, res) => {
       SET payment_method = ?, payment_details = ?, change_amount = ?,
           customer_name = COALESCE(?, customer_name),
           customer_phone = COALESCE(?, customer_phone),
+          customer_gstin = COALESCE(?, customer_gstin),
           amount_paid = ?,
           order_type = COALESCE(?, order_type)
       WHERE id = ?
     `).run(payment_method, payDetails, change,
-           customer_name || null, customer_phone || null,
+           customer_name || null, customer_phone || null, custGstin,
            paidAmount, orderType,
            targetId);
 
-    // If a different row was the previous canonical payment row (edge case:
-    // session_id changed, or stale duplicate from an old bug), make sure no
-    // other row in the session is left holding a stale amount_paid that would
-    // get summed/picked up incorrectly.
     if (order.session_id) {
       db.prepare(`
         UPDATE orders
