@@ -50,6 +50,26 @@ const INDIAN_STATES: { name: string; code: string }[] = [
   { name: 'West Bengal', code: '19' },
 ];
 
+// ── Shared section wrapper ───────────────────────────────────────────────
+function SectionCard({
+  title, badge, desc, children,
+}: { title: string; badge?: string; desc?: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-surface-border bg-surface-card p-5">
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="font-bold text-white text-sm">{title}</h3>
+        {badge && (
+          <span className="text-[10px] font-semibold text-zinc-500 bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded-full">
+            {badge}
+          </span>
+        )}
+      </div>
+      {desc && <p className="text-zinc-500 text-xs mb-4 leading-relaxed">{desc}</p>}
+      <div className={desc ? '' : 'mt-4'}>{children}</div>
+    </div>
+  );
+}
+
 export default function AdminRestaurant() {
   const liveSettings = useSettings();
 
@@ -84,6 +104,7 @@ export default function AdminRestaurant() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [removeFlag,  setRemoveFlag]  = useState(false);
   const [saving,      setSaving]      = useState(false);
+  const [saved,       setSaved]       = useState(false);
   const logoRef = useRef<HTMLInputElement>(null);
   const toast   = useToast();
 
@@ -107,7 +128,7 @@ export default function AdminRestaurant() {
     }).catch(() => {});
   }, []);
 
-  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k: string, v: string) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -115,12 +136,14 @@ export default function AdminRestaurant() {
     setPendingFile(file);
     setLogoPreview(URL.createObjectURL(file));
     setRemoveFlag(false);
+    setSaved(false);
   };
 
   const handleRemoveLogo = () => {
     setPendingFile(null);
     setLogoPreview('');
     setRemoveFlag(true);
+    setSaved(false);
     if (logoRef.current) logoRef.current.value = '';
   };
 
@@ -143,6 +166,7 @@ export default function AdminRestaurant() {
       }
       await updateSettings({ ...form, logo_url: finalLogoUrl } as any);
       toast('Settings saved', 'success');
+      setSaved(true);
     } catch {
       toast('Failed to save', 'error');
     } finally {
@@ -150,193 +174,108 @@ export default function AdminRestaurant() {
     }
   };
 
-  const brandColor  = (form.brand_color as string) || '#f97316';
-  const overdueMins = parseInt((form.kitchen_overdue_mins as string) || '20', 10) || 20;
-  const b2bEnabled  = form.b2b_enabled === 'true';
+  const brandColor    = (form.brand_color as string) || '#f97316';
+  const overdueMins   = parseInt((form.kitchen_overdue_mins as string) || '20', 10) || 20;
+  const b2bEnabled    = form.b2b_enabled === 'true';
   const selectedState = INDIAN_STATES.find(s => s.name === form.state_name);
+  const gstFilledIn   = !!(form.gstin as string)?.trim();
 
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* LEFT */}
-        <div className="space-y-4">
-          {/* Restaurant Details */}
-          <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-            <h3 className="font-bold text-white text-sm mb-4">Restaurant Details</h3>
-            <div className="space-y-3">
-              {([
-                ['restaurant_name', 'Restaurant Name', 'ABC Restaurant'],
-                ['address',         'Address',         '123 Main Street'],
-                ['phone',           'Phone Number',    '+91 98765 43210'],
-                ['bill_footer',     'Bill Footer',     'Thank you for dining with us!'],
-              ] as [string, string, string][]).map(([k, label, ph]) => (
-                <div key={k}>
-                  <label className="label">{label}</label>
-                  <input className="input" placeholder={ph} value={(form[k as keyof typeof form] as string) || ''} onChange={e => set(k, e.target.value)} />
-                </div>
-              ))}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Currency Symbol</label>
-                  <input className="input" value={(form.currency_symbol as string) || ''} onChange={e => set('currency_symbol', e.target.value)} />
-                </div>
-                <div>
-                  <label className="label">Tax %</label>
-                  <input className="input" type="number" min="0" max="30" step="0.5" value={(form.tax_percent as string) || ''} onChange={e => set('tax_percent', e.target.value)} />
-                </div>
-              </div>
-            </div>
-          </div>
+    <div className="space-y-5 pb-2">
 
+      {/* ── 1. Identity — name, logo, contact, bill footer ──────────── */}
+      <SectionCard title="Restaurant Identity" desc="Shown on bills, the navigation bar, and the login screen.">
+        <div className="grid grid-cols-1 lg:grid-cols-[auto,1fr] gap-5">
           {/* Logo */}
-          <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-            <h3 className="font-bold text-white text-sm mb-1">Restaurant Logo</h3>
-            <p className="text-zinc-500 text-xs mb-3">Shown next to your restaurant name in the navigation bar</p>
+          <div className="flex flex-col items-center gap-2 lg:w-28">
+            <div
+              className="w-24 h-24 rounded-xl border-2 border-dashed border-surface-border bg-surface-raised flex items-center justify-center cursor-pointer hover:border-brand-500/50 overflow-hidden transition-colors flex-shrink-0"
+              onClick={() => logoRef.current?.click()}
+            >
+              {logoPreview
+                ? <img src={logoPreview} alt="logo" className="w-full h-full object-cover" />
+                : <svg className="w-7 h-7 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+              }
+            </div>
+            <div className="flex flex-col gap-1.5 w-full">
+              <button className="btn btn-sm text-[11px] w-full" onClick={() => logoRef.current?.click()}>
+                {logoPreview ? 'Change' : 'Upload logo'}
+              </button>
+              {logoPreview && (
+                <button className="btn btn-sm btn-danger text-[11px] w-full" onClick={handleRemoveLogo}>Remove</button>
+              )}
+            </div>
+            <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
             {pendingFile && (
-              <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
-                <span className="text-amber-400 text-xs">Logo ready — click <strong>Save Settings</strong> to apply</span>
-              </div>
+              <p className="text-amber-400 text-[10px] text-center leading-snug">Save to apply</p>
             )}
-            <div className="flex items-center gap-4">
-              <div
-                className="w-16 h-16 rounded-xl border-2 border-dashed border-surface-border bg-surface-raised flex items-center justify-center cursor-pointer hover:border-brand-500/50 overflow-hidden transition-colors flex-shrink-0"
-                onClick={() => logoRef.current?.click()}
-              >
-                {logoPreview
-                  ? <img src={logoPreview} alt="logo" className="w-full h-full object-cover" />
-                  : <svg className="w-6 h-6 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
-                }
-              </div>
-              <div className="flex flex-col gap-2">
-                <button className="btn btn-sm text-xs" onClick={() => logoRef.current?.click()}>
-                  {logoPreview ? 'Change Logo' : 'Upload Logo'}
-                </button>
-                {logoPreview && (
-                  <button className="btn btn-sm btn-danger text-xs" onClick={handleRemoveLogo}>Remove</button>
-                )}
-              </div>
-              <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
-            </div>
           </div>
 
-          {/* Kitchen overdue threshold */}
-          <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-            <h3 className="font-bold text-white text-sm mb-1">Kitchen Overdue Threshold</h3>
-            <p className="text-zinc-500 text-xs mb-4">
-              How long an order can sit in the Kitchen Display before it's flagged as <span className="text-red-400 font-semibold">Overdue</span>
-            </p>
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
-              {OVERDUE_PRESETS.map(n => (
-                <button
-                  key={n}
-                  onClick={() => set('kitchen_overdue_mins', String(n))}
-                  className={`py-2 rounded-lg border text-xs font-semibold transition-all ${
-                    overdueMins === n
-                      ? 'bg-brand-500 border-brand-600 text-white'
-                      : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'
-                  }`}
-                >
-                  {n}m
-                </button>
-              ))}
+          {/* Fields */}
+          <div className="space-y-3 min-w-0">
+            <div>
+              <label className="label">Restaurant Name</label>
+              <input className="input" placeholder="ABC Restaurant" value={(form.restaurant_name as string) || ''} onChange={e => set('restaurant_name', e.target.value)} />
             </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-raised border border-surface-border">
-              <span className="text-zinc-500 text-xs flex-shrink-0">Custom</span>
-              <input
-                type="number" min={1} max={240}
-                className="input py-1.5 text-xs font-mono flex-1"
-                value={(form.kitchen_overdue_mins as string) || ''}
-                onChange={e => set('kitchen_overdue_mins', e.target.value)}
-              />
-              <span className="text-zinc-500 text-xs flex-shrink-0">minutes</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="label">Phone Number</label>
+                <input className="input" placeholder="+91 98765 43210" value={(form.phone as string) || ''} onChange={e => set('phone', e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Address</label>
+                <input className="input" placeholder="123 Main Street" value={(form.address as string) || ''} onChange={e => set('address', e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <label className="label">Bill Footer</label>
+              <input className="input" placeholder="Thank you for dining with us!" value={(form.bill_footer as string) || ''} onChange={e => set('bill_footer', e.target.value)} />
             </div>
           </div>
         </div>
+      </SectionCard>
 
-        {/* RIGHT */}
-        <div className="space-y-4">
-          {/* Brand Color */}
-          <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-            <h3 className="font-bold text-white text-sm mb-1">Brand Color</h3>
-            <p className="text-zinc-500 text-xs mb-4">Changes header, buttons, and accents across all screens</p>
-            <div className="flex items-center gap-2.5 flex-wrap mb-4">
-              {PRESETS.map(c => (
-                <button key={c} onClick={() => set('brand_color', c)} style={{ background: c }}
-                  className={`w-9 h-9 rounded-full transition-all hover:scale-110 ${brandColor === c ? 'ring-2 ring-white ring-offset-2 ring-offset-surface-card scale-110' : ''}`} />
-              ))}
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-raised border border-surface-border">
-              <span className="text-zinc-500 text-xs flex-shrink-0">Custom</span>
-              <input
-                type="color"
-                value={brandColor}
-                onChange={e => set('brand_color', e.target.value)}
-                className="w-9 h-9 rounded-lg cursor-pointer flex-shrink-0"
-                style={{ colorScheme: 'dark' }}
-              />
-              <input
-                type="text"
-                value={brandColor}
-                onChange={e => set('brand_color', e.target.value)}
-                className="input py-1.5 text-xs font-mono flex-1"
-                placeholder="#f97316"
-                maxLength={7}
-              />
-            </div>
-            <div className="mt-3 h-1 rounded-full" style={{ background: brandColor }} />
+      {/* ── 2. Money & Tax — the field that drives bills + filings ──── */}
+      <SectionCard
+        title="Currency & Tax"
+        desc="Controls every bill total, report figure, and tax filing export in this app."
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Currency Symbol</label>
+            <input className="input" value={(form.currency_symbol as string) || ''} onChange={e => set('currency_symbol', e.target.value)} />
           </div>
-
-          {/* Live Preview */}
-          <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-            <h3 className="font-bold text-white text-sm mb-3">Live Preview</h3>
-            <div className="rounded-xl overflow-hidden border border-surface-border">
-              <div
-                className="flex items-center px-2.5 gap-2 overflow-x-auto"
-                style={{ background: brandColor, height: 44, scrollbarWidth: 'none' }}
-              >
-                {logoPreview
-                  ? <img src={logoPreview} alt="logo" className="w-6 h-6 rounded object-cover flex-shrink-0" />
-                  : <div className="w-6 h-6 rounded bg-white/20 flex-shrink-0" />
-                }
-                <span className="text-white text-sm font-bold flex-shrink-0 max-w-[90px] truncate">
-                  {(form.restaurant_name as string) || 'Restaurant'}
-                </span>
-                <div className="flex gap-1 flex-shrink-0 ml-1">
-                  {['Waiter', 'Kitchen', 'Admin'].map(l => (
-                    <span key={l} className="px-2 py-0.5 rounded-md text-[11px] font-medium whitespace-nowrap"
-                      style={{ background: brandColor + '33', color: '#fff', border: `1px solid ${brandColor}55` }}>{l}</span>
-                  ))}
-                </div>
-              </div>
-              <div className="p-3 bg-surface text-zinc-500 text-xs space-y-1.5">
-                <div className="flex gap-2 items-center flex-wrap">
-                  <div className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white whitespace-nowrap" style={{ background: brandColor }}>Send to Kitchen</div>
-                  <div className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-500/30 text-emerald-400 bg-emerald-500/10 whitespace-nowrap">Generate Bill</div>
-                </div>
-              </div>
+          <div>
+            <label className="label">Tax % (GST)</label>
+            <div className="relative">
+              <input
+                className="input pr-9 font-mono"
+                type="number" min="0" max="30" step="0.5"
+                value={(form.tax_percent as string) || ''}
+                onChange={e => set('tax_percent', e.target.value)}
+              />
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-500 text-sm pointer-events-none">%</span>
             </div>
-          </div>
-
-          {/* Save button */}
-          <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-            <button className="btn btn-brand w-full py-3 text-sm font-semibold" onClick={save} disabled={saving}>
-              {saving ? 'Saving…' : 'Save Settings'}
-            </button>
-            <p className="text-zinc-600 text-xs text-center mt-2.5">All changes apply when you click Save Settings</p>
           </div>
         </div>
-      </div>
-
-      {/* GST Settings — full width */}
-      <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-        <div className="flex items-center gap-2 mb-1">
-          <h3 className="font-bold text-white text-sm">GST Settings</h3>
-          <span className="text-[10px] font-semibold text-zinc-500 bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded-full">For GST Filing</span>
+        <div className="mt-3 flex items-start gap-2 px-3 py-2.5 rounded-lg bg-brand-500/8 border border-brand-500/20">
+          <svg className="w-3.5 h-3.5 text-brand-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+          </svg>
+          <p className="text-zinc-400 text-[11px] leading-snug">
+            <span className="text-zinc-300 font-medium">Most standalone restaurants: 5%.</span>{' '}
+            Restaurants inside hotels with high room tariffs, or outdoor caterers, are usually 18%.
+            Check with your CA if you're unsure — this number also generates your GST filings below.
+          </p>
         </div>
-        <p className="text-zinc-500 text-xs mb-4 leading-relaxed">
-          Used to generate GSTR-1 JSON for portal upload. Leave blank if not GST registered.
-        </p>
+      </SectionCard>
+
+      {/* ── 3. GST Registration — identity + B2B behavior, together ── */}
+      <SectionCard
+        title="GST Registration"
+        badge={gstFilledIn ? 'Registered' : 'Optional'}
+        desc="Only needed if you're GST-registered. Used to generate GSTR-1 and GSTR-3B filings in Reports → Export. Leave blank otherwise."
+      >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="label">GSTIN</label>
@@ -371,7 +310,7 @@ export default function AdminRestaurant() {
               ))}
             </select>
             <p className="text-zinc-700 text-[10px] mt-1">
-              State code: <span className="font-mono text-zinc-500">{selectedState?.code || '32'}</span> — used in GSTR-1 JSON
+              State code <span className="font-mono text-zinc-500">{selectedState?.code || '32'}</span> — used in GSTR-1 JSON
             </p>
           </div>
           <div>
@@ -382,13 +321,12 @@ export default function AdminRestaurant() {
               value={(form.sac_code as string) || '9963'}
               onChange={e => set('sac_code', e.target.value)}
             />
-            <p className="text-zinc-700 text-[10px] mt-1">9963 = Restaurant services (default). Check with your CA if different.</p>
+            <p className="text-zinc-700 text-[10px] mt-1">9963 = Restaurant services (default)</p>
           </div>
         </div>
 
-        {/* B2B toggle */}
         <div className="mt-4 pt-4 border-t border-surface-border">
-          <label className="flex items-center gap-3 cursor-pointer select-none">
+          <label className="flex items-start gap-3 cursor-pointer select-none">
             <TogglePill
               enabled={b2bEnabled}
               onChange={() => set('b2b_enabled', b2bEnabled ? 'false' : 'true')}
@@ -396,19 +334,130 @@ export default function AdminRestaurant() {
             <div>
               <span className="text-sm font-medium text-white">Enable B2B Invoicing</span>
               <p className="text-zinc-600 text-xs leading-relaxed mt-0.5">
-                Shows a "Customer GSTIN" field at payment time. When filled, that invoice
-                goes into the B2B section of GSTR-1 instead of the B2CS aggregate.
-                Leave off for restaurants with 100% walk-in (B2C) customers.
+                Adds a "Customer GSTIN" field at payment time. Filled invoices go into the
+                B2B section of GSTR-1 instead of the B2CS aggregate. Leave off for 100% walk-in customers.
               </p>
             </div>
           </label>
         </div>
+      </SectionCard>
 
-        <div className="mt-4">
-          <button className="btn btn-brand btn-sm" onClick={save} disabled={saving}>
-            {saving ? 'Saving…' : 'Save GST Settings'}
-          </button>
-        </div>
+      {/* ── 4. Branding + 5. Operations, side by side on wide screens ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Branding */}
+        <SectionCard title="Brand Color" desc="Changes the header, buttons, and accents across every screen.">
+          <div className="flex items-center gap-2.5 flex-wrap mb-4">
+            {PRESETS.map(c => (
+              <button key={c} onClick={() => set('brand_color', c)} style={{ background: c }}
+                className={`w-8 h-8 rounded-full transition-all hover:scale-110 ${brandColor === c ? 'ring-2 ring-white ring-offset-2 ring-offset-surface-card scale-110' : ''}`} />
+            ))}
+          </div>
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-raised border border-surface-border mb-4">
+            <input
+              type="color"
+              value={brandColor}
+              onChange={e => set('brand_color', e.target.value)}
+              className="w-9 h-9 rounded-lg cursor-pointer flex-shrink-0"
+              style={{ colorScheme: 'dark' }}
+            />
+            <input
+              type="text"
+              value={brandColor}
+              onChange={e => set('brand_color', e.target.value)}
+              className="input py-1.5 text-xs font-mono flex-1"
+              placeholder="#f97316"
+              maxLength={7}
+            />
+          </div>
+
+          {/* Live preview, now living right under the color it previews */}
+          <div className="rounded-xl overflow-hidden border border-surface-border">
+            <div
+              className="flex items-center px-2.5 gap-2 overflow-x-auto"
+              style={{ background: brandColor, height: 40, scrollbarWidth: 'none' }}
+            >
+              {logoPreview
+                ? <img src={logoPreview} alt="logo" className="rounded object-cover flex-shrink-0" style={{ width: 22, height: 22 }} />
+                : <div className="rounded bg-white/20 flex-shrink-0" style={{ width: 22, height: 22 }} />
+              }
+              <span className="text-white text-xs font-bold flex-shrink-0 max-w-[80px] truncate">
+                {(form.restaurant_name as string) || 'Restaurant'}
+              </span>
+              <div className="flex gap-1 flex-shrink-0 ml-1">
+                {['Waiter', 'Kitchen', 'Admin'].map(l => (
+                  <span key={l} className="px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap"
+                    style={{ background: brandColor + '33', color: '#fff', border: `1px solid ${brandColor}55` }}>{l}</span>
+                ))}
+              </div>
+            </div>
+            <div className="p-2.5 bg-surface flex gap-2 items-center flex-wrap">
+              <div className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white whitespace-nowrap" style={{ background: brandColor }}>Send to Kitchen</div>
+              <div className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-emerald-500/30 text-emerald-400 bg-emerald-500/10 whitespace-nowrap">Generate Bill</div>
+            </div>
+          </div>
+        </SectionCard>
+
+        {/* Operations */}
+        <SectionCard
+          title="Kitchen Overdue Threshold"
+          desc="How long an order sits in the Kitchen Display before it's flagged as overdue."
+        >
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {OVERDUE_PRESETS.map(n => (
+              <button
+                key={n}
+                onClick={() => set('kitchen_overdue_mins', String(n))}
+                className={`py-2 rounded-lg border text-xs font-semibold transition-all ${
+                  overdueMins === n
+                    ? 'bg-brand-500 border-brand-600 text-white'
+                    : 'border-surface-border text-zinc-400 hover:text-white hover:border-zinc-600'
+                }`}
+              >
+                {n}m
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-raised border border-surface-border">
+            <span className="text-zinc-500 text-xs flex-shrink-0">Custom</span>
+            <input
+              type="number" min={1} max={240}
+              className="input py-1.5 text-xs font-mono flex-1"
+              value={(form.kitchen_overdue_mins as string) || ''}
+              onChange={e => set('kitchen_overdue_mins', e.target.value)}
+            />
+            <span className="text-zinc-500 text-xs flex-shrink-0">minutes</span>
+          </div>
+        </SectionCard>
+      </div>
+
+      {/* ── Single save action for the whole page ──────────────────── */}
+      <div className="sticky bottom-0 -mx-5 px-5 py-3 bg-surface/95 backdrop-blur border-t border-surface-border flex items-center gap-3">
+        <button className="btn btn-brand px-6 py-2.5 text-sm font-semibold flex items-center gap-2" onClick={save} disabled={saving}>
+          {saving ? (
+            <>
+              <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+              Saving…
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+              Save Settings
+            </>
+          )}
+        </button>
+        {saved && !saving && (
+          <span className="text-emerald-400 text-xs flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+            </svg>
+            All changes saved
+          </span>
+        )}
+        {!saved && !saving && (
+          <span className="text-zinc-600 text-xs">Saves everything above, including GST and branding</span>
+        )}
       </div>
 
       {/* Admin Lock Settings */}

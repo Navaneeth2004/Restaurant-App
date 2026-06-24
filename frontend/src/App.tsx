@@ -9,6 +9,8 @@ import WaiterView    from './views/WaiterView';
 import KitchenView   from './views/KitchenView';
 import AdminView     from './views/AdminView';
 import ReportsView   from './views/ReportsView';
+import ExportView    from './views/ExportView';
+import BackupView    from './views/BackupView';
 import BugReportView from './views/BugReportView';
 import type { ViewType, UserRole } from './types';
 import './index.css';
@@ -29,23 +31,23 @@ function Shell() {
     if (user) setView(DEFAULT_VIEW[user.role]);
   }, [user]);
 
-  // On refresh, if the lock is enabled and we were on admin, force back to waiter.
-  // This ensures a refreshed page cannot silently stay on admin without re-auth.
+  // On refresh, if the lock is enabled and we were on an admin view, force back to waiter.
   useEffect(() => {
-    if (config.enabled && view === 'admin') {
+    const adminViews: ViewType[] = ['admin', 'export', 'backup'];
+    if (config.enabled && adminViews.includes(view)) {
       setView('waiter');
-      // Mark as locked so the next admin visit requires a PIN
       lock();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!user) return <LoginScreen />;
 
+  const adminProtectedViews: ViewType[] = ['admin', 'export', 'backup'];
+
   const handleSetView = async (v: ViewType) => {
-    if (v === 'admin' && config.enabled && user.role === 'admin') {
+    if (adminProtectedViews.includes(v) && config.enabled && user.role === 'admin') {
       const now     = Date.now();
       const elapsed = (now - lastAdminVisit.current) / 60000;
-      // Require PIN if: currently locked, OR timeout has expired since last unlock
       const needPin = isLocked || lastAdminVisit.current === 0 ||
         (config.timeout_mins === 0 ? true : elapsed > config.timeout_mins);
 
@@ -60,7 +62,7 @@ function Shell() {
   };
 
   const handleViewChange = async (v: ViewType) => {
-    if (view === 'admin' && v !== 'admin') {
+    if (adminProtectedViews.includes(view) && !adminProtectedViews.includes(v)) {
       lastAdminVisit.current = Date.now();
     }
     await handleSetView(v);
@@ -71,6 +73,8 @@ function Shell() {
     kitchen:   <KitchenView />,
     admin:     <AdminView />,
     reports:   <ReportsView />,
+    export:    <ExportView />,
+    backup:    <BackupView />,
     bugreport: <BugReportView currentView={view} />,
   };
 
@@ -84,8 +88,6 @@ function Shell() {
   );
 }
 
-// Called by AdminLockProvider to verify the admin PIN.
-// Uses /staff/check-pin — does NOT create or touch login sessions.
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
 async function verifyPinFn(pin: string): Promise<boolean> {

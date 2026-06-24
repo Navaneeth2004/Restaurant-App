@@ -1,8 +1,7 @@
 /**
  * views/ReportsView.tsx
  *
- * Thin shell — tab switching and shared data fetching only.
- * Rendering lives in views/reports/.
+ * Analytics and History only. Export has moved to its own top-level tab.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -11,11 +10,10 @@ import { useSettings } from '../context/SettingsContext';
 
 import AnalyticsTab from './reports/AnalyticsTab';
 import HistoryTab   from './reports/HistoryTab';
-import ExportTab    from './reports/ExportTab';
 
 import type { ReportSummary, RevenueDay } from '../types';
 
-type Section = 'analytics' | 'history' | 'export';
+type Section = 'analytics' | 'history';
 
 export default function ReportsView() {
   const [section, setSection] = useState<Section>('analytics');
@@ -49,7 +47,6 @@ export default function ReportsView() {
           {([
             { key: 'analytics', label: 'Analytics' },
             { key: 'history',   label: 'History'   },
-            { key: 'export',    label: 'Export'     },
           ] as { key: Section; label: string }[]).map(({ key, label }) => (
             <button
               key={key}
@@ -77,9 +74,6 @@ export default function ReportsView() {
         )}
         {section === 'history' && (
           <HistoryTab sym={sym} taxPct={taxPct} brand={brand} />
-        )}
-        {section === 'export' && (
-          <ExportTab />
         )}
       </div>
     </div>

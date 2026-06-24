@@ -11,6 +11,8 @@ const NAV: NavItem[] = [
   { key: 'kitchen',   label: 'Kitchen', roles: ['admin','kitchen'] },
   { key: 'admin',     label: 'Admin',   roles: ['admin'] },
   { key: 'reports',   label: 'Reports', roles: ['admin'] },
+  { key: 'export',    label: 'Export',  roles: ['admin'] },
+  { key: 'backup',    label: 'Backup',  roles: ['admin'] },
   { key: 'bugreport', label: 'Ticket',  roles: ['admin','waiter','kitchen'] },
 ];
 
@@ -31,6 +33,8 @@ export default function TopBar({ view, setView }: Props) {
     setShowLogoutConfirm(false);
     await logout();
   };
+
+  const adminProtectedViews: ViewType[] = ['admin', 'export', 'backup'];
 
   return (
     <>
@@ -61,7 +65,7 @@ export default function TopBar({ view, setView }: Props) {
         {/* Nav */}
         <nav className="flex items-center gap-1 overflow-x-auto no-scrollbar">
           {allowed.map(n => {
-            const isAdminLocked = n.key === 'admin' && config.enabled && isLocked;
+            const isAdminLocked = adminProtectedViews.includes(n.key) && config.enabled && isLocked;
             return (
               <button
                 key={n.key}
@@ -85,8 +89,8 @@ export default function TopBar({ view, setView }: Props) {
 
         {/* Right side */}
         <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-          {/* Lock button */}
-          {user?.role === 'admin' && config.enabled && view === 'admin' && !isLocked && (
+          {/* Lock button — shown when on any admin-protected view */}
+          {user?.role === 'admin' && config.enabled && adminProtectedViews.includes(view) && !isLocked && (
             <button
               onClick={() => { lock(); setView('waiter'); }}
               title="Lock admin panel"

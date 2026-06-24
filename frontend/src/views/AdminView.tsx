@@ -6,7 +6,6 @@ import MenuExportImport from './admin/MenuExportImport';
 import AdminCategories  from './admin/AdminCategories';
 import AdminStaff       from './admin/AdminStaff';
 import AdminFloor       from './admin/AdminFloor';
-import AdminBackup      from './admin/AdminBackup';
 
 const TABS = [
   { key: 'floor',      label: 'Floor'       },
@@ -15,7 +14,6 @@ const TABS = [
   { key: 'menu',       label: 'Menu Items'  },
   { key: 'categories', label: 'Categories'  },
   { key: 'staff',      label: 'Staff'       },
-  { key: 'backup',     label: 'Backup'      },
 ] as const;
 
 type AdminTab = typeof TABS[number]['key'];
@@ -35,7 +33,6 @@ export default function AdminView() {
     ),
     categories: <AdminCategories />,
     staff:      <AdminStaff />,
-    backup:     <AdminBackup />,
   };
 
   return (
