@@ -32,9 +32,22 @@ export default function AdminStaff() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Returns a promise so StaffModal can catch the 409 and show inline error
   const handleAdd = async (f: { name: string; pin: string; role: string }) => {
-    try { await createStaff(f); toast('Staff added', 'success'); setModal(false); load(); }
-    catch (e: any) { toast(e.response?.data?.error || 'Failed', 'error'); }
+    const res = await authedFetch(`${API_BASE}/api/staff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(f),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data?.error || 'Failed to add staff';
+      toast(msg, 'error');
+      throw new Error(msg);   // bubble up so StaffModal shows inline error
+    }
+    toast('Staff added', 'success');
+    setModal(false);
+    load();
   };
 
   const handleDelete = (s: Staff) => {
@@ -54,23 +67,22 @@ export default function AdminStaff() {
     }
   };
 
+  // Returns a promise so ChangePinModal can catch the 409 and show inline error
   const handleChangePin = async (newPin: string) => {
     if (!changePinFor) return;
-    try {
-      const res = await authedFetch(`${API_BASE}/api/staff/${changePinFor.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: newPin }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error((data as any).error || 'Failed');
-      }
-      toast(`PIN updated for ${changePinFor.name}`, 'success');
-      setChangePinFor(null);
-    } catch (e: any) {
-      toast(e.message || 'Failed to update PIN', 'error');
+    const res = await authedFetch(`${API_BASE}/api/staff/${changePinFor.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: newPin }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = (data as any).error || 'Failed to update PIN';
+      toast(msg, 'error');
+      throw new Error(msg);   // bubble up so ChangePinModal shows inline error
     }
+    toast(`PIN updated for ${changePinFor.name}`, 'success');
+    setChangePinFor(null);
   };
 
   const adminCount = staff.filter(s => s.role === 'admin' && s.active).length;

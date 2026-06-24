@@ -16,10 +16,6 @@ try {
 const SALT_ROUNDS = 10;
 
 // ── DB-backed session store ───────────────────────────────────────────────
-// Sessions are stored in the DB so server restarts don't leave ghost sessions.
-// Table is created in db/_initSchema (database.js) — already ready by the time
-// any route handler runs.
-
 function getSession(staffId) {
   try {
     return db.prepare('SELECT token FROM staff_sessions WHERE staff_id = ?').get(staffId);
@@ -52,6 +48,19 @@ async function verifyPin(raw, stored) {
   return String(raw) === String(stored);
 }
 
+// ── PIN duplicate check ───────────────────────────────────────────────────
+// Checks all active staff (excluding the one being updated) to see if the
+// given raw PIN already matches any existing hashed/plain PIN.
+async function isPinTaken(rawPin, excludeId = null) {
+  const allStaff = db.prepare('SELECT id, pin FROM staff WHERE active = 1').all();
+  for (const s of allStaff) {
+    if (excludeId !== null && s.id === excludeId) continue;
+    const match = await verifyPin(rawPin, s.pin);
+    if (match) return true;
+  }
+  return false;
+}
+
 // GET all staff (never return the PIN)
 router.get('/', (req, res) => {
   const staff = db.prepare('SELECT id, name, role, active FROM staff ORDER BY name').all();
@@ -62,6 +71,13 @@ router.get('/', (req, res) => {
 router.post('/', async (req, res) => {
   const { name, pin, role } = req.body;
   if (!name || !pin || !role) return res.status(400).json({ error: 'name, pin, role required' });
+
+  if (await isPinTaken(pin)) {
+    return res.status(409).json({
+      error: 'This PIN is already in use by another staff member. Please choose a different PIN.'
+    });
+  }
+
   const hashed = await hashPin(pin);
   const info = db.prepare('INSERT INTO staff (name, pin, role) VALUES (?, ?, ?)').run(name.trim(), hashed, role);
   const staff = db.prepare('SELECT id, name, role, active FROM staff WHERE id = ?').get(info.lastInsertRowid);
@@ -72,7 +88,16 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   const { name, pin, role, active } = req.body;
   let hashedPin = null;
-  if (pin) hashedPin = await hashPin(pin);
+
+  if (pin) {
+    const excludeId = parseInt(req.params.id, 10);
+    if (await isPinTaken(pin, excludeId)) {
+      return res.status(409).json({
+        error: 'This PIN is already in use by another staff member. Please choose a different PIN.'
+      });
+    }
+    hashedPin = await hashPin(pin);
+  }
 
   db.prepare(`
     UPDATE staff SET
@@ -130,7 +155,6 @@ router.post('/verify', async (req, res) => {
             staffName: s.name,
           });
         }
-        // Same device OR client lost its token (browser restart/cleared storage) — allow re-login
       }
       const sessionToken = crypto.randomBytes(24).toString('hex');
       setSession(s.id, sessionToken);
@@ -146,7 +170,6 @@ router.post('/logout', (req, res) => {
   if (!staffId) return res.status(400).json({ error: 'staffId required' });
   const id = Number(staffId);
   const stored = getSession(id);
-  // Only clear if token matches — prevents a different device clearing someone else's slot
   if (stored && stored.token === sessionToken) {
     deleteSession(id);
   }

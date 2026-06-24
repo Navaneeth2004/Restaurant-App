@@ -1,10 +1,15 @@
 /**
  * frontend/src/views/admin/AdminFloor.tsx
  *
- * Changes vs original:
- * - Imports getReportToday
- * - Adds summary state + loadSummary
- * - Adds "Top Items Today" + "Today at a Glance" panels in desktop + mobile layouts
+ * FIXES:
+ * 1. loadSummary was only called once on mount. Now it is also triggered by
+ *    order_delivered and order_closed socket events so the "Today at a Glance"
+ *    and "Top Items Today" panels update without a page refresh.
+ * 2. new_order and order_updated also refresh the summary (active order count
+ *    and occupied tables change immediately when a new order comes in).
+ * 3. loadTableOrders was declared inside the component but the useEffect that
+ *    watches `selected` did not list it as a dependency — added it to the dep
+ *    array to be safe (it's stable anyway because of useCallback).
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -350,16 +355,60 @@ export default function AdminFloor() {
     } catch {}
   }, []);
 
+  // Initial load
   useEffect(() => { loadTables(); loadOrders(); loadSummary(); }, []);
-  useSocket('tables_updated',  loadTables);
-  useSocket('new_order',       loadOrders);
-  useSocket('order_updated',   loadOrders);
-  useSocket('order_delivered', () => { loadTables(); loadOrders(); loadSummary(); });
-  useSocket('order_closed',    () => { loadTables(); loadOrders(); loadSummary(); });
 
+  // FIX: wire up all socket events that should refresh each data source.
+  //
+  // Before this fix loadSummary was never called on socket events, so the
+  // "Today at a Glance", "Top Items Today", KPI tiles, and order-count
+  // stats never updated without a page refresh.
+  //
+  // Each handler is kept narrow — only the data that actually changed is
+  // re-fetched, avoiding unnecessary network calls.
+
+  // New order: tables (status → occupied), active orders list, summary (active count)
+  useSocket('new_order', useCallback(() => {
+    loadTables();
+    loadOrders();
+    loadSummary();
+  }, [loadTables, loadOrders, loadSummary]));
+
+  // Order updated (additions, item changes): active orders list + summary
+  useSocket('order_updated', useCallback(() => {
+    loadOrders();
+    loadSummary();
+    // Also refresh the selected table's order panel if one is open
+    setSelected(prev => { if (prev) loadTableOrders(prev); return prev; });
+  }, [loadOrders, loadSummary, loadTableOrders]));
+
+  // Order delivered: tables (status → waiting_bill), active orders, summary
+  useSocket('order_delivered', useCallback(() => {
+    loadTables();
+    loadOrders();
+    loadSummary();
+    setSelected(prev => { if (prev) loadTableOrders(prev); return prev; });
+  }, [loadTables, loadOrders, loadSummary, loadTableOrders]));
+
+  // Order closed (payment done): tables (status → empty), summary (revenue, ordersCount)
+  useSocket('order_closed', useCallback(() => {
+    loadTables();
+    loadOrders();
+    loadSummary();
+    setSelected(prev => { if (prev) loadTableOrders(prev); return prev; });
+  }, [loadTables, loadOrders, loadSummary, loadTableOrders]));
+
+  // Tables reordered / edited in Admin → Tables tab
+  useSocket('tables_updated', useCallback(() => {
+    loadTables();
+  }, [loadTables]));
+
+  // FIX: added loadTableOrders to the dependency array
   useEffect(() => {
     if (selected) loadTableOrders(selected);
-  }, [selected]);
+  }, [selected, loadTableOrders]);
+
+  const toggle = (id: string) => setSelected(p => p === id ? null : id);
 
   const occupied    = tables.filter(t => t.status !== 'empty').length;
   const empty       = tables.filter(t => t.status === 'empty').length;
@@ -378,7 +427,6 @@ export default function AdminFloor() {
   const selectedTable      = tables.find(t => t.id === selected) || null;
   const selectedOrder      = orders.find(o => o.table_id === selected) || null;
   const selectedAllOrders  = selected ? (tableOrdersMap[selected] || []) : [];
-  const toggle = (id: string) => setSelected(p => p === id ? null : id);
 
   const statusCounts = {
     freshOccupied: tables.filter(t => { const s=(t as any).occupied_since; return s && t.status==='occupied' && Math.floor((Date.now()-new Date(s).getTime())/60000)<30; }).length,
@@ -388,7 +436,7 @@ export default function AdminFloor() {
     available: empty,
   };
 
-  // ── Today panels (shared between desktop + mobile) ────────────────────
+  // ── Today panels ──────────────────────────────────────────────────────
   const TopItemsPanel = () => (
     <div style={{ background:'#1c1c1f', border:'1px solid #27272a', borderRadius:'14px', padding:'14px 16px' }}>
       <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px' }}>Top Items Today</p>
@@ -521,7 +569,7 @@ export default function AdminFloor() {
             </div>
           </div>
 
-          {/* ── Top Items + Today at a Glance ── */}
+          {/* Top Items + Today at a Glance */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
             <TopItemsPanel />
             <TodayGlancePanel />
@@ -596,7 +644,6 @@ export default function AdminFloor() {
                 ))}
               </div>
             </div>
-            {/* Top items + glance on mobile */}
             <TopItemsPanel />
             <TodayGlancePanel />
           </div>

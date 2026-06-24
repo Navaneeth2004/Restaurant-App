@@ -4,20 +4,19 @@
  * Auto-collects device/browser/app context for bug reports.
  * Also captures console errors globally (call startErrorCapture() once on app boot).
  * Extracted from BugReportView.tsx.
+ *
+ * FIX: Restored console.error monkey-patching, but in a way that avoids the
+ * React StrictMode double-invocation problem. The old removal left users with
+ * no captured errors in bug reports because window 'error' and 'unhandledrejection'
+ * only fire for uncaught exceptions — deliberate console.error() calls (which is
+ * what almost all caught/handled errors use) were silently dropped.
+ *
+ * The fix wraps console.error so entries ARE captured, but uses a deduplication
+ * check to avoid duplicate entries from React StrictMode's double-render. We also
+ * still keep the window-level listeners for truly uncaught throws.
  */
 
 // ── Console error capture ─────────────────────────────────────────────────
-//
-// FIX: previously this monkey-patched console.error directly:
-//   console.error = (...args) => { ...; origError(...args); };
-// That permanently replaces console.error for the whole app session, which
-// in React StrictMode causes double-invocations and can interfere with
-// React's own error overlay/logging. We now rely solely on the window-level
-// 'error' and 'unhandledrejection' listeners below, which already capture
-// uncaught exceptions and unhandled promise rejections without touching any
-// global. This intentionally means console.error() calls that are caught
-// and logged deliberately (not thrown) won't appear in the bug report —
-// that's a reasonable trade-off for not patching a global console method.
 
 const _capturedErrors: string[] = [];
 let _capturing = false;
@@ -30,18 +29,53 @@ export function startErrorCapture(): void {
   if (_capturing) return;
   _capturing = true;
 
+  // ── Patch console.error ──────────────────────────────────────────────
+  // This is the primary capture path: almost all app errors go through
+  // console.error (axios interceptors, caught promise rejections that are
+  // deliberately logged, React error boundaries, etc.).
+  //
+  // React StrictMode calls renders twice in dev, but it does NOT double-call
+  // console.error for the same error — the duplicate guard below is just
+  // extra safety for edge cases.
+  const origError = console.error.bind(console);
+  console.error = (...args: any[]) => {
+    // Build a string representation of the error
+    const msg = args.map(a => {
+      if (a instanceof Error) return `${a.name}: ${a.message}`;
+      if (typeof a === 'object') {
+        try { return JSON.stringify(a); } catch { return String(a); }
+      }
+      return String(a);
+    }).join(' ');
+
+    const entry = `[${new Date().toISOString()}] console.error: ${msg}`;
+
+    // Dedup: skip if the last captured entry is identical (StrictMode guard)
+    if (_capturedErrors.length === 0 || _capturedErrors[_capturedErrors.length - 1] !== entry) {
+      _capturedErrors.push(entry);
+      if (_capturedErrors.length > 30) _capturedErrors.shift();
+    }
+
+    // Always call the original so DevTools still shows the error
+    origError(...args);
+  };
+
+  // ── window 'error' ── uncaught exceptions (throws that escape all try/catch)
   window.addEventListener('error', e => {
-    _capturedErrors.push(
-      `[${new Date().toISOString()}] Uncaught: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`
-    );
-    if (_capturedErrors.length > 30) _capturedErrors.shift();
+    const entry = `[${new Date().toISOString()}] Uncaught: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`;
+    if (_capturedErrors.length === 0 || _capturedErrors[_capturedErrors.length - 1] !== entry) {
+      _capturedErrors.push(entry);
+      if (_capturedErrors.length > 30) _capturedErrors.shift();
+    }
   });
 
+  // ── window 'unhandledrejection' ── promise rejections with no .catch()
   window.addEventListener('unhandledrejection', e => {
-    _capturedErrors.push(
-      `[${new Date().toISOString()}] UnhandledPromise: ${e.reason}`
-    );
-    if (_capturedErrors.length > 30) _capturedErrors.shift();
+    const entry = `[${new Date().toISOString()}] UnhandledPromise: ${e.reason}`;
+    if (_capturedErrors.length === 0 || _capturedErrors[_capturedErrors.length - 1] !== entry) {
+      _capturedErrors.push(entry);
+      if (_capturedErrors.length > 30) _capturedErrors.shift();
+    }
   });
 }
 

@@ -2,10 +2,27 @@
  * views/ReportsView.tsx
  *
  * Analytics and History only. Export has moved to its own top-level tab.
+ *
+ * FIX: Analytics data (KPI cards, revenue chart) never refreshed after the
+ * initial mount because there were no socket listeners. Orders being placed,
+ * delivered, or closed would not update the view without a page reload.
+ *
+ * Now wires up the same socket events used by WaiterView / KitchenView so
+ * the Analytics tab stays live:
+ *   - new_order       → active order count changes
+ *   - order_updated   → active order details change
+ *   - order_delivered → table status + active count changes
+ *   - order_closed    → revenue, ordersCount, occupiedTables all change
+ *   - tables_updated  → occupiedTables count may change
+ *
+ * The History tab is date-filtered and intentionally NOT auto-refreshed —
+ * auto-inserting new rows while the user is reading would be disorienting.
+ * The user can click "Search" or "Today" to reload it manually.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { getReportToday, getRevenueChart } from '../services/api';
+import { useSocket } from '../hooks/useSocket';
 import { useSettings } from '../context/SettingsContext';
 
 import AnalyticsTab from './reports/AnalyticsTab';
@@ -33,7 +50,31 @@ export default function ReportsView() {
     } catch {}
   }, []);
 
+  // Initial load
   useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
+
+  // FIX: refresh analytics on every event that changes today's numbers.
+  // We batch all of them into a single loadAnalytics call — it fetches
+  // both /reports/today and /reports/revenue in parallel so it's fast.
+  //
+  // We only refresh when on the analytics section to avoid unnecessary
+  // network calls when the user is reading the History tab. The summary
+  // will be stale while on History, but it refreshes immediately when
+  // the user switches back to Analytics.
+  const handleOrderEvent = useCallback(() => {
+    if (section === 'analytics') loadAnalytics();
+  }, [section, loadAnalytics]);
+
+  // Keep a stable ref version that also triggers when switching back to analytics
+  useEffect(() => {
+    if (section === 'analytics') loadAnalytics();
+  }, [section]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useSocket('new_order',       handleOrderEvent);
+  useSocket('order_updated',   handleOrderEvent);
+  useSocket('order_delivered', handleOrderEvent);
+  useSocket('order_closed',    handleOrderEvent);
+  useSocket('tables_updated',  handleOrderEvent);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
