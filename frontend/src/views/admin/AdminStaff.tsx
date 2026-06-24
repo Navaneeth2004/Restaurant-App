@@ -67,7 +67,6 @@ export default function AdminStaff() {
     }
   };
 
-  // Returns a promise so ChangePinModal can catch the 409 and show inline error
   const handleChangePin = async (newPin: string) => {
     if (!changePinFor) return;
     const res = await authedFetch(`${API_BASE}/api/staff/${changePinFor.id}`, {
@@ -79,7 +78,7 @@ export default function AdminStaff() {
     if (!res.ok) {
       const msg = (data as any).error || 'Failed to update PIN';
       toast(msg, 'error');
-      throw new Error(msg);   // bubble up so ChangePinModal shows inline error
+      return;
     }
     toast(`PIN updated for ${changePinFor.name}`, 'success');
     setChangePinFor(null);
