@@ -646,7 +646,7 @@ export default function AdminFloor() {
           })}
         </div>
 
-        <div style={{ flex:1, overflowY:'auto', padding:'16px' }}>
+        <div style={{ flex:1, overflowY:'auto', padding:'24px 16px 16px' }}>
           {selectedTable ? (
             <DetailPanel
               table={selectedTable}

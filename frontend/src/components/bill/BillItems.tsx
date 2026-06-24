@@ -72,7 +72,7 @@ export default function BillItems({
             <th style={{ textAlign: 'center', padding: '8px 0 6px', color: '#9ca3af', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', width: 36 }}>
               Qty
             </th>
-            <th style={{ textAlign: 'right', padding: '8px 0 6px 4px', color: '#9ca3af', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            <th style={{ textAlign: 'right', padding: '8px 4px 6px', color: '#9ca3af', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
               Price
             </th>
             <th style={{ textAlign: 'right', padding: '8px 0 6px', color: '#9ca3af', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em' }}>

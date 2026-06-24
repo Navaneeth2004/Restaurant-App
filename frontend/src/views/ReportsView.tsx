@@ -38,12 +38,14 @@ export default function ReportsView() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex-shrink-0 flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-surface-border bg-surface-card/50">
-        <h2 className="font-bold text-white text-sm">Reports</h2>
-        <span className="text-zinc-500 text-xs hidden sm:block">
-          {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
-        </span>
-        <div className="ml-auto flex items-center gap-1 bg-surface-raised border border-surface-border rounded-lg p-0.5">
+      <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 border-b border-surface-border bg-surface-card/50">
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <h2 className="font-bold text-white text-sm hidden sm:block">Reports</h2>
+          <span className="text-zinc-500 text-xs hidden sm:block">
+            {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+          </span>
+        </div>
+        <div className="sm:ml-auto self-start flex items-center gap-1 bg-surface-raised border border-surface-border rounded-lg p-0.5 overflow-x-auto no-scrollbar max-w-full">
           {([
             { key: 'analytics', label: 'Analytics' },
             { key: 'history',   label: 'History'   },
@@ -51,7 +53,7 @@ export default function ReportsView() {
             <button
               key={key}
               onClick={() => setSection(key)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
                 section === key ? 'bg-brand-500 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
               }`}
             >

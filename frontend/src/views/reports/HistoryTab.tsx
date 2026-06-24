@@ -180,109 +180,112 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
 
   return (
     <div>
-      {/* ── Filters ──────────────────────────────────────────────────── */}
-      <div className="mb-4 space-y-3">
-        <div className="flex items-end gap-2.5 flex-wrap">
-          <div className="flex-1 min-w-[140px] sm:flex-none sm:w-44">
-            <label className="label">From</label>
-            <input
-              type="date"
-              className={`input h-10 w-full ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
-              value={dateFrom}
-              onChange={e => handleFromChange(e.target.value)}
-            />
-          </div>
-          <div className="flex-1 min-w-[140px] sm:flex-none sm:w-44">
-            <label className="label">To</label>
-            <input
-              type="date"
-              className={`input h-10 w-full ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
-              value={dateTo}
-              onChange={e => handleToChange(e.target.value)}
-            />
-          </div>
-
-          {/* Search + Today — identical height (h-10). Today is now a plain
-              neutral button (no conditional orange highlight), matching the
-              Today button in the Export tab. */}
-          <div className="flex items-stretch gap-2 flex-1 sm:flex-none">
-            <button
-              className="btn btn-brand h-10 px-5 min-w-[104px] flex-1 sm:flex-none justify-center"
-              onClick={handleSearch}
-              disabled={loading || !!dateError}
-            >
-              {loading ? 'Loading…' : 'Search'}
-            </button>
-            <button
-              className="btn h-10 px-4 min-w-[88px] justify-center flex-1 sm:flex-none"
-              onClick={handleResetToday}
-            >
-              Today
-            </button>
-          </div>
+    {/* ── Date range + search action ──────────────────────────────── */}
+    <div className="mb-4">
+    <div className="flex items-end gap-2.5 flex-wrap">
+        <div className="flex-1 min-w-[140px] sm:flex-none sm:w-44">
+        <label className="label">From</label>
+        <input
+            type="date"
+            className={`input h-10 w-full ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
+            value={dateFrom}
+            onChange={e => handleFromChange(e.target.value)}
+        />
+        </div>
+        <div className="flex-1 min-w-[140px] sm:flex-none sm:w-44">
+        <label className="label">To</label>
+        <input
+            type="date"
+            className={`input h-10 w-full ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
+            value={dateTo}
+            onChange={e => handleToChange(e.target.value)}
+        />
         </div>
 
-        {dateError && (
-          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/25 text-red-400 text-xs">
-            <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        {/* Search + Today — identical height (h-10). Today is now a plain
+            neutral button (no conditional orange highlight), matching the
+            Today button in the Export tab. */}
+        <div className="flex items-stretch gap-2 flex-1 sm:flex-none">
+        <button
+            className="btn btn-brand h-10 px-5 min-w-[104px] flex-1 sm:flex-none justify-center"
+            onClick={handleSearch}
+            disabled={loading || !!dateError}
+        >
+            {loading ? 'Loading…' : 'Search'}
+        </button>
+        <button
+            className="btn h-10 px-4 min-w-[88px] justify-center flex-1 sm:flex-none"
+            onClick={handleResetToday}
+        >
+            Today
+        </button>
+        </div>
+    </div>
+
+    {dateError && (
+        <div className="flex items-start gap-2 px-3 py-2 mt-3 rounded-lg bg-red-500/10 border border-red-500/25 text-red-400 text-xs">
+        <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
+        {dateError}
+        </div>
+    )}
+    </div>
+
+    {/* ── Results: search-within-results + count, grouped together ─── */}
+    <div className="mb-4 p-3 rounded-xl bg-surface-card/60 border border-surface-border space-y-2.5">
+    <div className="relative">
+        <svg
+        className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+        >
+        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+        </svg>
+        <input
+        type="text"
+        className="input h-10 w-full pl-9 pr-9 bg-surface-raised"
+        placeholder="Search by name, phone, GSTIN, item, or amount…"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        />
+        {search && (
+        <button
+            onClick={() => setSearch('')}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-card transition-colors"
+            title="Clear search"
+        >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
-            {dateError}
-          </div>
+        </button>
         )}
+    </div>
 
-        {/* Search box — filters within the loaded date range */}
-        <div className="relative">
-          <svg
-            className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-          </svg>
-          <input
-            type="text"
-            className="input h-10 w-full pl-9 pr-9"
-            placeholder="Search by name, phone, GSTIN, item, or amount…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-          {search && (
-            <button
-              onClick={() => setSearch('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-raised transition-colors"
-              title="Clear search"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-        </div>
-
-        {search.trim() && (
-          <p className="text-zinc-600 text-[10px]">
-            Searching within {dateFrom === dateTo ? dateFrom : `${dateFrom} – ${dateTo}`} only.
-            Change the date range above to search a different period.
-          </p>
-        )}
-
-        {sessions.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-300 bg-surface-card border border-surface-border px-2.5 py-1 rounded-full">
-              <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <div className="flex items-center justify-between gap-2 flex-wrap">
+        {sessions.length > 0 ? (
+        <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-300 bg-surface-raised border border-surface-border px-2.5 py-1 rounded-full">
+            <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-              </svg>
-              {sessions.length} visit{sessions.length !== 1 ? 's' : ''}
-              {search.trim() && allSessions.length !== sessions.length && (
+            </svg>
+            {sessions.length} visit{sessions.length !== 1 ? 's' : ''}
+            {search.trim() && allSessions.length !== sessions.length && (
                 <span className="text-zinc-600"> of {allSessions.length}</span>
-              )}
+            )}
             </span>
             <span className="inline-flex items-center gap-1.5 text-xs font-bold text-brand-400 bg-brand-500/10 border border-brand-500/25 px-2.5 py-1 rounded-full font-mono">
-              {sym}{histTotal.toFixed(2)}
+            {sym}{histTotal.toFixed(2)}
             </span>
-          </div>
+        </div>
+        ) : <span />}
+
+        {search.trim() && (
+        <p className="text-zinc-600 text-[10px] leading-snug">
+            Within {dateFrom === dateTo ? dateFrom : `${dateFrom} – ${dateTo}`} — change dates above to widen
+        </p>
         )}
-      </div>
+    </div>
+    </div>
 
       {/* ── Results ──────────────────────────────────────────────────── */}
       {sessions.length === 0 ? (

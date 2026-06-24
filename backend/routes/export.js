@@ -658,6 +658,34 @@ router.get('/gst/gstr3b', (req, res) => {
 
   function round2(n) { return Math.round(n * 100) / 100; }
 
+  // ── Table 4 — ITC note ───────────────────────────────────────────────────
+  // Restaurants filing at the 5% rate (Notification 11/2017-CT(R), as
+  // amended) are explicitly barred from claiming Input Tax Credit — for
+  // them, ITC = ₹0 in every field is the correct and complete answer.
+  //
+  // Restaurants filing at any other rate (most commonly 18%, e.g. hotel
+  // restaurants above the declared-tariff threshold, or those who've opted
+  // into the regular scheme) ARE eligible to claim ITC on their inputs
+  // (ingredients, packaging, rent, utilities, etc). This app has no record
+  // of purchase invoices, so we can't compute that figure — telling them to
+  // enter ₹0 would be wrong and could cause them to overpay tax. Instead we
+  // point them to their own purchase records.
+  const itcClaimed = taxPct === 5
+    ? {
+        note: 'ITC not applicable — restaurants filing at 5% GST cannot claim input tax credit.',
+        integrated_tax: 0,
+        central_tax:    0,
+        state_ut_tax:   0,
+        cess:           0,
+      }
+    : {
+        note: `You're filing at ${taxPct}% GST, which is eligible for Input Tax Credit. This app doesn't track your purchase invoices, so enter your eligible ITC here from your own purchase records — do not enter ₹0 by default.`,
+        integrated_tax: null,
+        central_tax:    null,
+        state_ut_tax:   null,
+        cess:           null,
+      };
+
   res.json({
     period:       { from: dateFrom, to: dateTo },
     gstin:        S.gstin || '',
@@ -686,14 +714,8 @@ router.get('/gst/gstr3b', (req, res) => {
       state_ut_tax:  round2(orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0) * sgstRate / 100),
       invoice_count: b2bCount,
     },
-    // Table 4 — ITC (most small restaurants don't claim ITC at 5%)
-    itc_claimed: {
-      note: 'ITC not applicable for restaurants filing at 5% GST without ITC.',
-      integrated_tax: 0,
-      central_tax:    0,
-      state_ut_tax:   0,
-      cess:           0,
-    },
+    // Table 4 — ITC (branches based on tax rate — see itcClaimed above)
+    itc_claimed: itcClaimed,
     // Table 6.1 — Tax paid
     tax_paid: {
       integrated_tax: round2(totalIgst),

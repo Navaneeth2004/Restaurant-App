@@ -2,9 +2,9 @@
  * views/ExportView.tsx
  *
  * Standalone Export tab (admin-only) with a pill switcher between:
- *   - Detailed Report (CSV / JSON)
- *   - GSTR-1 (portal-upload JSON)
- *   - GSTR-3B (on-screen summary with copy fields)
+ * - Detailed Report (CSV / JSON)
+ * - GSTR-1 (portal-upload JSON)
+ * - GSTR-3B (on-screen summary with copy fields)
  *
  * Content is lifted directly from the old ExportTab sections.
  */
@@ -523,13 +523,15 @@ export default function ExportView() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex-shrink-0 flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-surface-border bg-surface-card/50">
-        <h2 className="font-bold text-white text-sm">Export</h2>
-        <span className="text-zinc-500 text-xs hidden sm:block">
-          {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
-        </span>
-        {/* Pill switcher */}
-        <div className="ml-auto flex items-center gap-1 bg-surface-raised border border-surface-border rounded-lg p-0.5">
+      <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 border-b border-surface-border bg-surface-card/50">
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <h2 className="font-bold text-white text-sm hidden sm:block">Export</h2>
+          <span className="text-zinc-500 text-xs hidden sm:block">
+            {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+          </span>
+        </div>
+        {/* Pill switcher — scrolls horizontally if it ever doesn't fit */}
+        <div className="sm:ml-auto flex items-center gap-1 bg-surface-raised border border-surface-border rounded-lg p-0.5 overflow-x-auto no-scrollbar max-w-full">
           {tabs.map(({ key, label, badge }) => (
             <button
               key={key}

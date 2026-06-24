@@ -2,9 +2,9 @@
  * views/BackupView.tsx
  *
  * Standalone Backup tab (admin-only) with a pill switcher between:
- *   - Download / Restore (manual backup + factory reset)
- *   - Local Auto-Backup
- *   - Google Drive
+ * - Download / Restore (manual backup + factory reset)
+ * - Local Auto-Backup
+ * - Google Drive
  *
  * Content lifted from AdminBackup.tsx and its sub-sections.
  */
@@ -401,10 +401,10 @@ export default function BackupView() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex-shrink-0 flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-surface-border bg-surface-card/50">
-        <h2 className="font-bold text-white text-sm">Backup</h2>
-        {/* Pill switcher */}
-        <div className="ml-auto flex items-center gap-1 bg-surface-raised border border-surface-border rounded-lg p-0.5">
+      <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 border-b border-surface-border bg-surface-card/50">
+        <h2 className="font-bold text-white text-sm flex-shrink-0 hidden sm:block">Backup</h2>
+        {/* Pill switcher — scrolls horizontally if it ever doesn't fit, and the      buttons get whitespace-nowrap below so labels like "Local Auto-Backup"      never wrap mid-word inside the pill. */}
+        <div className="sm:ml-auto flex items-center gap-1 bg-surface-raised border border-surface-border rounded-lg p-0.5 overflow-x-auto no-scrollbar max-w-full">
           {tabs.map(({ key, label }) => (
             <button
               key={key}
