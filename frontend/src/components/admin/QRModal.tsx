@@ -1,9 +1,17 @@
 /**
  * components/admin/QRModal.tsx
  *
- * Shows a QR code for a table's kiosk URL.
- * Uses Google Charts QR API (no key, reliable, no dependency).
- * Restaurant can screenshot, download, or print the QR to place on the table.
+ * FIXES:
+ * 1. QR code: now rendered server-side via GET /api/kiosk/:token/qr.svg
+ *    (the old chart.googleapis.com QR image API was shut down years ago,
+ *    which is why it always fell back to "QR image unavailable offline").
+ * 2. "Site can't be reached" on phones: the kiosk URL used to be built from
+ *    window.location.origin, which is http://localhost:4000 on the host PC —
+ *    only that PC can ever reach its own localhost. We now fetch the
+ *    server's real LAN IP from /api/network-info and build the URL from
+ *    that, so the QR/link actually works from any phone on the same WiFi.
+ *    If no LAN IP can be detected, we fall back to window.location.origin
+ *    and show a clear warning instead of a silently broken link.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -18,28 +26,40 @@ interface Props {
 }
 
 export default function QRModal({ table, onClose }: Props) {
-  const [token,   setToken]   = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState<string | null>(null);
-  const [copied,  setCopied]  = useState(false);
-
-  // Use window.location.origin so the URL works on any device on the LAN.
-  // When customers scan the QR their phone hits the same server.
-  const kioskUrl = token ? `${window.location.origin}/kiosk/${token}` : null;
-
-  // QR image from Google Charts (no API key, 200×200 px, UTF-8 encoded)
-  const qrImgSrc = kioskUrl
-    ? `https://chart.googleapis.com/chart?cht=qr&chs=256x256&chl=${encodeURIComponent(kioskUrl)}&choe=UTF-8&chld=M|2`
-    : null;
+  const [token,    setToken]    = useState<string | null>(null);
+  const [lanUrl,   setLanUrl]   = useState<string | null>(null);
+  const [lanKnown, setLanKnown] = useState(true);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState<string | null>(null);
+  const [copied,   setCopied]   = useState(false);
+  const [qrError,  setQrError]  = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const data = await authedJson<{ token: string }>(
-          `${API_BASE}/api/kiosk/ensure-token`,
-          { method: 'POST', body: JSON.stringify({ table_id: table.id }) }
-        );
-        setToken(data.token);
+        const [tokenData, netInfo] = await Promise.all([
+          authedJson<{ token: string }>(
+            `${API_BASE}/api/kiosk/ensure-token`,
+            { method: 'POST', body: JSON.stringify({ table_id: table.id }) }
+          ),
+          fetch(`${API_BASE}/api/network-info`).then(r => r.json()).catch(() => null),
+        ]);
+
+        setToken(tokenData.token);
+
+        const lanIp = netInfo?.lan_ip as string | undefined;
+        const port  = netInfo?.port ?? window.location.port;
+
+        if (lanIp) {
+          setLanUrl(`http://${lanIp}${port ? `:${port}` : ''}/kiosk/${tokenData.token}`);
+          setLanKnown(true);
+        } else {
+          // Could not detect a LAN IP — fall back to current origin, but
+          // flag it so the UI can warn rather than silently produce a
+          // localhost link that won't work on other devices.
+          setLanUrl(`${window.location.origin}/kiosk/${tokenData.token}`);
+          setLanKnown(false);
+        }
       } catch (e: any) {
         setError(e.message || 'Failed to generate QR code');
       } finally {
@@ -48,36 +68,35 @@ export default function QRModal({ table, onClose }: Props) {
     })();
   }, [table.id]);
 
+  const qrSrc = token && lanUrl
+    ? `${API_BASE}/api/kiosk/${token}/qr.svg?url=${encodeURIComponent(lanUrl)}`
+    : null;
+
   const copyUrl = () => {
-    if (!kioskUrl) return;
-    navigator.clipboard.writeText(kioskUrl).then(() => {
+    if (!lanUrl) return;
+    navigator.clipboard.writeText(lanUrl).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
   };
 
   const downloadQR = () => {
-    if (!qrImgSrc) return;
-    // Fetch the image and trigger download
-    fetch(qrImgSrc)
+    if (!qrSrc) return;
+    fetch(qrSrc)
       .then(r => r.blob())
       .then(blob => {
         const url = URL.createObjectURL(blob);
         const a   = document.createElement('a');
         a.href     = url;
-        a.download = `qr-${table.label.replace(/\s+/g, '-').toLowerCase()}.png`;
+        a.download = `qr-${table.label.replace(/\s+/g, '-').toLowerCase()}.svg`;
         a.click();
         URL.revokeObjectURL(url);
-      })
-      .catch(() => {
-        // Fallback: open in new tab
-        window.open(qrImgSrc, '_blank');
       });
   };
 
   const printQR = () => {
-    if (!qrImgSrc || !kioskUrl) return;
-    const win = window.open('', '_blank', 'width=420,height=560');
+    if (!qrSrc || !lanUrl) return;
+    const win = window.open('', '_blank', 'width=420,height=580');
     if (!win) return;
     win.document.write(`<!DOCTYPE html>
 <html>
@@ -100,15 +119,12 @@ export default function QRModal({ table, onClose }: Props) {
     .divider { border: none; border-top: 1px solid #f3f4f6; margin: 20px 0; }
     .hint { font-size: 12px; color: #9ca3af; }
     .seats { display: inline-block; background: #f3f4f6; border-radius: 99px; padding: 3px 10px; font-size: 12px; color: #6b7280; margin-top: 4px; }
-    @media print {
-      body { padding: 0; }
-      .card { border: none; }
-    }
+    @media print { body { padding: 0; } .card { border: none; } }
   </style>
 </head>
 <body>
   <div class="card">
-    <img src="${qrImgSrc}" alt="QR Code" />
+    <img src="${qrSrc}" alt="QR Code" />
     <h2>${table.label}</h2>
     <p class="sub">Scan to order &amp; pay</p>
     <span class="seats">${table.seats} seats · Dine in</span>
@@ -117,10 +133,8 @@ export default function QRModal({ table, onClose }: Props) {
   </div>
   <script>
     window.onload = function() {
-      // Wait for image to load before printing
-      var img = document.querySelector('img');
-      img.onload = function() { window.print(); window.onafterprint = function() { window.close(); }; };
-      img.onerror = function() { window.print(); };
+      window.print();
+      window.onafterprint = function() { window.close(); };
     };
   <\/script>
 </body>
@@ -155,7 +169,6 @@ export default function QRModal({ table, onClose }: Props) {
           </button>
         </div>
 
-        {/* Loading */}
         {loading && (
           <div className="flex flex-col items-center justify-center py-12 gap-3">
             <div className="w-8 h-8 border-2 border-zinc-700 border-t-brand-500 rounded-full animate-spin" />
@@ -163,38 +176,46 @@ export default function QRModal({ table, onClose }: Props) {
           </div>
         )}
 
-        {/* Error */}
         {error && (
           <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-4 text-center">
             <p className="text-red-400 text-sm">{error}</p>
           </div>
         )}
 
-        {/* QR + actions */}
-        {!loading && !error && token && kioskUrl && qrImgSrc && (
+        {!loading && !error && token && lanUrl && qrSrc && (
           <>
+            {/* Network warning — shown only if we couldn't resolve a LAN IP */}
+            {!lanKnown && (
+              <div className="mb-4 flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25">
+                <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                <p className="text-amber-400 text-xs leading-relaxed">
+                  Couldn't detect this computer's network address. This QR may only work on this PC.
+                  Make sure it's connected to the same WiFi as your customers' phones, then reopen this dialog.
+                </p>
+              </div>
+            )}
+
             {/* QR image */}
             <div className="flex flex-col items-center mb-4">
               <div className="bg-white p-4 rounded-2xl shadow-sm border border-zinc-100 mb-3">
-                <img
-                  src={qrImgSrc}
-                  alt={`QR code for ${table.label}`}
-                  width={200}
-                  height={200}
-                  style={{ display: 'block' }}
-                  onError={e => {
-                    // If Google Charts is unreachable (offline), show a fallback message
-                    const el = e.target as HTMLImageElement;
-                    el.style.display = 'none';
-                    const fallback = document.createElement('div');
-                    fallback.style.cssText = 'width:200px;height:200px;display:flex;align-items:center;justify-content:center;text-align:center;color:#6b7280;font-size:12px;font-family:system-ui,sans-serif;padding:16px;';
-                    fallback.textContent = 'QR image unavailable offline. Copy the URL below and use a QR generator.';
-                    el.parentNode?.insertBefore(fallback, el.nextSibling);
-                  }}
-                />
+                {qrError ? (
+                  <div className="w-[200px] h-[200px] flex items-center justify-center text-center text-zinc-500 text-xs px-4">
+                    QR couldn't load. Copy the link below instead.
+                  </div>
+                ) : (
+                  <img
+                    src={qrSrc}
+                    alt={`QR code for ${table.label}`}
+                    width={200}
+                    height={200}
+                    style={{ display: 'block' }}
+                    onError={() => setQrError(true)}
+                  />
+                )}
               </div>
 
-              {/* Table badge */}
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface-raised border border-surface-border">
                 <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M3 6h18m-9 8h9m-9 4h9M3 14h.01M3 18h.01" />
@@ -210,7 +231,7 @@ export default function QRModal({ table, onClose }: Props) {
               <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-wider mb-1.5">Kiosk URL</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 text-zinc-300 text-[11px] break-all font-mono leading-relaxed select-all">
-                  {kioskUrl}
+                  {lanUrl}
                 </code>
                 <button
                   onClick={copyUrl}

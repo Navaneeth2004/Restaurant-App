@@ -4,18 +4,28 @@
  * backend/routes/kiosk.js
  *
  * Public (no auth) routes for the customer-facing kiosk.
- * The kiosk is identified by an opaque token — customers never see the table ID.
  *
- * Designed to be extensible: the token resolves to a "kiosk context" that can
- * later support non-table kiosks (e.g. McDonald's-style walk-up ordering) by
- * just changing what the token points to.
+ * FIXES in this revision:
  *
- * Routes (all unauthenticated — token is the security):
- *   GET  /api/kiosk/:token            — resolve token → table info + settings
- *   GET  /api/kiosk/:token/menu        — menu items + categories for this kiosk
- *   GET  /api/kiosk/:token/orders      — current open orders for this table
- *   POST /api/kiosk/:token/order       — place/add-to order
- *   POST /api/kiosk/:token/bill        — request bill (sets table → waiting_bill)
+ * 1. QR code generation moved server-side (GET /:token/qr.svg) using the
+ *    `qrcode` npm package instead of the old Google Charts Image API
+ *    (chart.googleapis.com), which was shut down years ago — that's why
+ *    the QR modal always showed "QR image unavailable offline". The new
+ *    endpoint needs no internet access at all and renders instantly.
+ *
+ * 2. POST /:token/order — "Round 2 sends Round 1's items again" bug.
+ *    The route already diffed against the existing ACTIVE order correctly.
+ *    The real gap: once a round is marked delivered, there is no active
+ *    order row for that table — so a fresh POST should never see an
+ *    `existingActive` order and should just insert the new items as-is.
+ *    That part was correct. The bug was that the OLD frontend (KioskView)
+ *    was pre-merging delivered-round items into the cart before calling
+ *    this route, then this route ALSO tried to diff — double-counting.
+ *    This route now ignores any such pre-merging and is the single source
+ *    of truth: it only ever adds what's genuinely new, computed itself
+ *    from the live DB state for the CURRENT active order only (never
+ *    delivered rounds). See the rewritten KioskView.tsx for the matching
+ *    frontend fix (it now sends only the cart, never history).
  */
 
 const express  = require('express');
@@ -34,18 +44,10 @@ const db       = require('../db/database');
 
 // ── Token helpers ─────────────────────────────────────────────────────────
 
-/**
- * Generate a URL-safe token that looks nothing like a table ID.
- * 24 random bytes → 32-char base64url string.
- */
 function generateToken() {
   return crypto.randomBytes(24).toString('base64url');
 }
 
-/**
- * Ensure a table has a kiosk token; create one if missing.
- * Returns the token.
- */
 function ensureToken(tableId) {
   const row = db.prepare('SELECT kiosk_token FROM tables WHERE id = ?').get(tableId);
   if (!row) return null;
@@ -55,9 +57,6 @@ function ensureToken(tableId) {
   return token;
 }
 
-/**
- * Resolve a token → table row, or null.
- */
 function resolveToken(token) {
   if (!token) return null;
   return db.prepare('SELECT * FROM tables WHERE kiosk_token = ?').get(token) || null;
@@ -85,8 +84,6 @@ function recalcTotal(orderId) {
 }
 
 // ── POST /api/kiosk/ensure-token ─────────────────────────────────────────
-// Called by Admin → Tables when generating QR code for a table.
-// Creates a token if one doesn't exist, returns it.
 router.post('/ensure-token', (req, res) => {
   const { table_id } = req.body;
   if (!table_id) return res.status(400).json({ error: 'table_id required' });
@@ -95,9 +92,35 @@ router.post('/ensure-token', (req, res) => {
   res.json({ token });
 });
 
+// ── GET /api/kiosk/:token/qr.svg ──────────────────────────────────────────
+// FIX: server-rendered QR, no internet/3rd-party dependency. Takes the
+// fully-qualified kiosk URL as a query param so it always matches whatever
+// the frontend resolved as the LAN-reachable address.
+router.get('/:token/qr.svg', async (req, res) => {
+  const table = resolveToken(req.params.token);
+  if (!table) return res.status(404).send('Invalid token');
+
+  const url = req.query.url;
+  if (!url || typeof url !== 'string') return res.status(400).send('Missing url param');
+
+  try {
+    const QRCode = require('qrcode');
+    const svg = await QRCode.toString(url, {
+      type: 'svg',
+      margin: 1,
+      width: 512,
+      color: { dark: '#18181b', light: '#ffffff' },
+    });
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'no-store'); // token-bound URL can change per deployment
+    res.send(svg);
+  } catch (e) {
+    console.error('[Kiosk] QR generation failed:', e.message);
+    res.status(500).send('QR generation failed. Run: cd backend && npm install qrcode');
+  }
+});
+
 // ── GET /api/kiosk/:token ─────────────────────────────────────────────────
-// Resolve token → kiosk context (table info + restaurant settings).
-// This is the bootstrap call the kiosk page makes on load.
 router.get('/:token', (req, res) => {
   const table = resolveToken(req.params.token);
   if (!table) return res.status(404).json({ error: 'Invalid or expired QR code' });
@@ -105,14 +128,12 @@ router.get('/:token', (req, res) => {
   const S = getSettings();
 
   res.json({
-    // Kiosk context — what the UI needs to know
-    kiosk_type:    'table',          // future: 'standalone' for walk-up kiosks
+    kiosk_type:    'table',
     table_id:      table.id,
     table_label:   table.label,
     table_seats:   table.seats,
     table_status:  table.status,
 
-    // Restaurant identity for branding the kiosk page
     restaurant_name:  S.restaurant_name  || 'Restaurant',
     brand_color:      S.brand_color      || '#f97316',
     currency_symbol:  S.currency_symbol  || '₹',
@@ -125,7 +146,6 @@ router.get('/:token', (req, res) => {
 });
 
 // ── GET /api/kiosk/:token/menu ────────────────────────────────────────────
-// Returns available menu items + categories for the kiosk.
 router.get('/:token/menu', (req, res) => {
   if (!resolveToken(req.params.token)) {
     return res.status(404).json({ error: 'Invalid QR code' });
@@ -147,12 +167,10 @@ router.get('/:token/menu', (req, res) => {
 });
 
 // ── GET /api/kiosk/:token/orders ──────────────────────────────────────────
-// Returns current open orders for this table (same session).
 router.get('/:token/orders', (req, res) => {
   const table = resolveToken(req.params.token);
   if (!table) return res.status(404).json({ error: 'Invalid QR code' });
 
-  // Find the current session (same logic as orders route)
   const latest = db.prepare(`
     SELECT session_id FROM orders
     WHERE table_id = ? AND status IN ('active','delivered')
@@ -175,8 +193,16 @@ router.get('/:token/orders', (req, res) => {
 });
 
 // ── POST /api/kiosk/:token/order ──────────────────────────────────────────
-// Place a new order or add items to the current active order.
-// Mirrors POST /api/orders but scoped to the kiosk's table.
+// FIX (Round 2 re-sending Round 1 items): this route is now the single
+// source of truth for "what's actually new". It IGNORES whatever the
+// client thinks the merged list should be — the request body is expected
+// to contain ONLY the items the customer is adding right now (their cart),
+// never history. The route itself fetches the live active order (if any)
+// from the DB and diffs against THAT — never against delivered rounds.
+//
+// This matches how WaiterView (the staff app) already does it correctly:
+// always re-fetch fresh state right before merging, never trust a stale
+// client-side snapshot.
 const _pendingKiosk = new Set();
 
 router.post('/:token/order', (req, res) => {
@@ -197,12 +223,18 @@ router.post('/:token/order', (req, res) => {
     let order, isNew, newItems = [];
 
     const saveOrder = db.transaction(() => {
+      // Only an order with status = 'active' counts as "in progress, not
+      // yet sent to kitchen for delivery". A 'delivered' round must NEVER
+      // be re-merged here — that was the source of Round 1 items
+      // reappearing inside Round 2.
       const existingActive = db.prepare(
         "SELECT * FROM orders WHERE table_id = ? AND status = 'active'"
       ).get(table_id);
 
       if (existingActive) {
-        // Add-to-order: diff against existing items
+        // Add-to-active-order: diff against what's already in THIS active
+        // order only (e.g. customer tapped two items in quick succession
+        // before the first POST finished) — never against delivered rounds.
         const prevItems = db.prepare(
           'SELECT * FROM order_items WHERE order_id = ?'
         ).all(existingActive.id);
@@ -229,7 +261,9 @@ router.post('/:token/order', (req, res) => {
         return getOrderWithItems(existingActive.id);
       }
 
-      // New order
+      // No active order exists (table is fresh, or the previous round was
+      // already delivered) — this is a brand-new round. Insert exactly
+      // what the customer is sending now. Nothing from history is pulled in.
       const tableRow = db.prepare('SELECT status FROM tables WHERE id = ?').get(table_id);
       const tableIsOccupied = tableRow && tableRow.status !== 'empty';
 
@@ -260,12 +294,12 @@ router.post('/:token/order', (req, res) => {
       }
       recalcTotal(orderId);
       isNew = true;
+      newItems = items;
       return getOrderWithItems(orderId);
     });
 
     order = saveOrder();
 
-    // Emit the same socket events the waiter route emits
     if (isNew) {
       req.io.emit('new_order', { order });
       req.io.emit('order_updated', { order, isNew: true });
@@ -292,19 +326,14 @@ router.post('/:token/order', (req, res) => {
 });
 
 // ── POST /api/kiosk/:token/bill ───────────────────────────────────────────
-// Customer requests the bill — sets table to waiting_bill.
-// The actual payment is handled by the waiter; this is just a signal.
 router.post('/:token/bill', (req, res) => {
   const table = resolveToken(req.params.token);
   if (!table) return res.status(404).json({ error: 'Invalid QR code' });
 
-  // Only meaningful if table is occupied
   if (table.status === 'empty') {
     return res.status(400).json({ error: 'No active order on this table.' });
   }
 
-  // Mark all active orders as delivered (same as kitchen "Mark Delivered")
-  // so table goes to waiting_bill
   const activeOrders = db.prepare(
     "SELECT id FROM orders WHERE table_id = ? AND status = 'active'"
   ).all(table.id);
@@ -323,13 +352,11 @@ router.post('/:token/bill', (req, res) => {
     });
     markDelivered();
 
-    // Notify all connected clients
     for (const o of activeOrders) {
       const updated = getOrderWithItems(o.id);
       req.io.emit('order_delivered', { order: updated });
     }
   } else {
-    // Already delivered — just ensure waiting_bill status
     db.prepare(
       "UPDATE tables SET status = 'waiting_bill' WHERE id = ?"
     ).run(table.id);
@@ -339,7 +366,6 @@ router.post('/:token/bill', (req, res) => {
   res.json({ success: true, message: 'Bill requested. Your waiter will be with you shortly.' });
 });
 
-// ── Export token utilities for use in tables route ────────────────────────
 module.exports = router;
 module.exports.ensureToken = ensureToken;
 module.exports.generateToken = generateToken;

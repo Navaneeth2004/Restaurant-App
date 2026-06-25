@@ -25,6 +25,33 @@ const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
+// ── LAN IP helper (also used at startup banner + by /api/network-info) ────
+function getLanIp() {
+  const { networkInterfaces } = require('os');
+  const candidates = [];
+  for (const iface of Object.values(networkInterfaces())) {
+    for (const net of iface) {
+      if (net.family !== 'IPv4' || net.internal) continue;
+      const ip = net.address;
+      if (ip.startsWith('192.168.') || ip.startsWith('10.') || /^172\.(1[6-9]|2\d|3[01])\./.test(ip))
+        candidates.push(ip);
+    }
+  }
+  return candidates.find(ip => ip.startsWith('192.168.')) || candidates.find(ip => ip.startsWith('10.')) || candidates[0] || null;
+}
+
+// FIX (kiosk QR / "site can't be reached" on phone):
+// The admin UI previously built the kiosk URL from window.location.origin,
+// which is http://localhost:4000 when viewed on the host PC. "localhost"
+// only ever means "this device" — a phone on the same WiFi can never reach
+// someone else's localhost, so the QR code (and the copied link) pointed
+// nowhere from any other device. This endpoint reports the LAN IP the
+// server is actually bound to (0.0.0.0), so the frontend can build a URL
+// that works from any device on the network, not just the host PC.
+app.get('/api/network-info', (req, res) => {
+  res.json({ lan_ip: getLanIp(), port: PORT });
+});
+
 app.use('/api/auth',                require('./middleware/auth').tokenRouter());
 app.use('/api/settings',            require('./routes/settings'));
 app.use('/api/categories',          require('./routes/categories'));
@@ -39,20 +66,12 @@ app.use('/api/reset',               require('./routes/reset'));
 app.use('/api/bug-report',          require('./routes/bug-report'));
 
 // ── Kiosk routes (public — no auth middleware applied) ────────────────────
-// These must be registered AFTER auth.middleware so the middleware runs first,
-// but the kiosk route itself opts out via the auth middleware's path check.
-// The auth middleware already skips /uploads; kiosk paths are unauthenticated
-// by design (the token IS the security).
 app.use('/api/kiosk',               require('./routes/kiosk'));
 
 const buildDir = path.join(__dirname, '..', 'frontend', 'build');
 if (fs.existsSync(buildDir)) {
   app.use(express.static(buildDir));
 
-  // ── SPA routing ───────────────────────────────────────────────────────
-  // All non-API, non-upload paths serve index.html so React Router
-  // (or our manual pathname check in App.tsx) handles them.
-  // This includes /kiosk/:token paths — React handles them client-side.
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads'))
       res.sendFile(path.join(buildDir, 'index.html'));
@@ -75,20 +94,6 @@ function startMdns() {
     console.log('  \x1b[92m\x1b[1m[+]\x1b[0m \x1b[97mmDNS        \x1b[0m \x1b[96madvertising as restaurant.local\x1b[0m');
     process.on('exit', () => bonjour.destroy());
   } catch (_) {}
-}
-
-function getLanIp() {
-  const { networkInterfaces } = require('os');
-  const candidates = [];
-  for (const iface of Object.values(networkInterfaces())) {
-    for (const net of iface) {
-      if (net.family !== 'IPv4' || net.internal) continue;
-      const ip = net.address;
-      if (ip.startsWith('192.168.') || ip.startsWith('10.') || /^172\.(1[6-9]|2\d|3[01])\./.test(ip))
-        candidates.push(ip);
-    }
-  }
-  return candidates.find(ip => ip.startsWith('192.168.')) || candidates.find(ip => ip.startsWith('10.')) || candidates[0] || null;
 }
 
 async function start() {
