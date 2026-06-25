@@ -12,8 +12,31 @@ import ReportsView   from './views/ReportsView';
 import ExportView    from './views/ExportView';
 import BackupView    from './views/BackupView';
 import BugReportView from './views/BugReportView';
+import KioskView     from './views/KioskView';
 import type { ViewType, UserRole } from './types';
 import './index.css';
+
+// ── Kiosk URL detection ───────────────────────────────────────────────────
+// /kiosk/:token — rendered completely outside the auth shell.
+// We check the pathname on first render only. The token is extracted
+// server-side; the client just needs to know it's a kiosk URL.
+
+function getKioskToken(): string | null {
+  const match = window.location.pathname.match(/^\/kiosk\/([A-Za-z0-9_-]{10,})$/);
+  return match ? match[1] : null;
+}
+
+// ── Kiosk shell — no auth, no nav, completely isolated ───────────────────
+
+function KioskShell({ token }: { token: string }) {
+  return (
+    <div style={{ height: '100dvh', overflow: 'hidden', background: '#18181b' }}>
+      <KioskView token={token} />
+    </div>
+  );
+}
+
+// ── Main app shell ────────────────────────────────────────────────────────
 
 const DEFAULT_VIEW: Record<UserRole, ViewType> = {
   admin:   'waiter',
@@ -108,6 +131,15 @@ async function verifyPinFn(pin: string): Promise<boolean> {
 }
 
 export default function App() {
+  // Check if this is a kiosk URL — if so, bypass the entire auth system
+  const kioskToken = getKioskToken();
+
+  if (kioskToken) {
+    // Kiosk pages get NO providers except what they strictly need.
+    // No auth, no admin lock, no settings context (they fetch their own).
+    return <KioskShell token={kioskToken} />;
+  }
+
   return (
     <AuthProvider>
       <SettingsProvider>

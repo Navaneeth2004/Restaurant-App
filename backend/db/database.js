@@ -5,12 +5,12 @@
  * Works on Node.js v18, v20, v22 — any version, no C++ build tools needed.
  *
  * API mirrors better-sqlite3 (synchronous):
- *   db.prepare(sql).get(...params)
- *   db.prepare(sql).all(...params)
- *   db.prepare(sql).run(...params)
- *   db.exec(sql)
- *   db.pragma(str)
- *   db.transaction(fn)
+ * db.prepare(sql).get(...params)
+ * db.prepare(sql).all(...params)
+ * db.prepare(sql).run(...params)
+ * db.exec(sql)
+ * db.pragma(str)
+ * db.transaction(fn)
  *
  * Call `await db.init()` once in server.js before app.listen().
  */
@@ -50,10 +50,10 @@ function execToRows(results) {
 // ── Param helper ──────────────────────────────────────────────────────────
 /**
  * Normalise variadic args into what sql.js expects:
- *   .get(1, 2, 3)  → [1, 2, 3]
- *   .get([1, 2])   → [1, 2]
- *   .get({a: 1})   → {a: 1}   (named params)
- *   .get(null)     → [null]
+ * .get(1, 2, 3)  → [1, 2, 3]
+ * .get([1, 2])   → [1, 2]
+ * .get({a: 1})   → {a: 1}   (named params)
+ * .get(null)     → [null]
  *
  * Also sanitises undefined → null because sql.js throws on undefined values.
  */
@@ -210,16 +210,17 @@ function _initSchema() {
     )
   `);
 
-  // sort_order is included in schema so tables.js migration block is not needed
+  // Added kiosk_token directly to the primary schema layout
   _raw.run(`
     CREATE TABLE IF NOT EXISTS tables (
-      id         TEXT    PRIMARY KEY,
-      label      TEXT    NOT NULL,
-      seats      INTEGER DEFAULT 4,
-      status     TEXT    DEFAULT 'empty'
-                         CHECK(status IN ('empty','occupied','waiting_bill')),
-      sort_order INTEGER DEFAULT 0,
-      session_id TEXT    DEFAULT NULL
+      id          TEXT    PRIMARY KEY,
+      label       TEXT    NOT NULL,
+      seats       INTEGER DEFAULT 4,
+      status      TEXT    DEFAULT 'empty'
+                          CHECK(status IN ('empty','occupied','waiting_bill')),
+      sort_order  INTEGER DEFAULT 0,
+      session_id  TEXT    DEFAULT NULL,
+      kiosk_token TEXT    DEFAULT NULL
     )
   `);
 
@@ -229,7 +230,13 @@ function _initSchema() {
     console.log('[DB] Migrated tables: added session_id column');
   } catch (_) { /* column already exists — safe to ignore */ }
 
-_raw.run(`
+  // Migration: add kiosk_token to tables if it doesn't exist yet
+  try {
+    _raw.run(`ALTER TABLE tables ADD COLUMN kiosk_token TEXT DEFAULT NULL`);
+    console.log('[DB] Migrated tables: added kiosk_token column');
+  } catch (_) { /* column already exists — safe to ignore */ }
+
+  _raw.run(`
     CREATE TABLE IF NOT EXISTS orders (
       id               TEXT    PRIMARY KEY,
       table_id         TEXT    NOT NULL,

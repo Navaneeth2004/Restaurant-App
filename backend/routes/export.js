@@ -727,4 +727,178 @@ router.get('/gst/gstr3b', (req, res) => {
   });
 });
 
+// ── GST GSTR-9 Annual Return Summary ─────────────────────────────────────
+// Aggregates a full Indian financial year (April 1 – March 31) into the
+// tables needed to manually file GSTR-9 on the GST portal.
+//
+// Key tables produced:
+//   Table 4  — details of advances, inward/outward supplies on which tax is payable
+//   Table 5  — outward supplies on which tax is not payable (nil/exempt) — N/A here
+//   Table 9  — details of tax paid as declared in returns filed during the year
+//   Table 17 — HSN-wise summary of outward supplies
+//
+// Query param:
+//   ?fy=2024-25  (defaults to current Indian financial year)
+router.get('/gst/gstr9', (req, res) => {
+  const now = new Date();
+  // Indian financial year starts April 1. If current month < April, FY started last year.
+  const currentFyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+
+  let fyStart = currentFyStart;
+  if (req.query.fy) {
+    const m = req.query.fy.match(/^(\d{4})-\d{2}$/);
+    if (m) fyStart = parseInt(m[1], 10);
+  }
+
+  const fyEnd    = fyStart + 1;
+  const dateFrom = `${fyStart}-04-01`;
+  const dateTo   = `${fyEnd}-03-31`;
+  const fyLabel  = `${fyStart}-${String(fyEnd).slice(2)}`; // e.g. "2024-25"
+
+  const settingsRows = db.prepare('SELECT key, value FROM settings').all();
+  const S = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
+
+  const taxPct   = parseFloat(S.tax_percent || '5');
+  const cgstRate = taxPct / 2;
+  const sgstRate = taxPct / 2;
+  const sacCode  = S.sac_code || '9963';
+
+  function round2(n) { return Math.round(n * 100) / 100; }
+
+  const orders = db.prepare(`
+    SELECT o.id, o.total, o.customer_gstin, o.order_type,
+           o.session_id, o.created_at,
+           substr(o.created_at, 1, 7) as month_key
+    FROM orders o
+    WHERE o.status = 'closed'
+      AND substr(o.created_at, 1, 10) >= ?
+      AND substr(o.created_at, 1, 10) <= ?
+    ORDER BY o.created_at ASC
+  `).all(dateFrom, dateTo);
+
+  // Outward supply totals
+  const totalTaxable  = round2(orders.reduce((s, o) => s + (o.total || 0), 0));
+  const b2bTaxable    = round2(orders.filter(o => o.customer_gstin?.trim()).reduce((s, o) => s + (o.total || 0), 0));
+  const b2cTaxable    = round2(totalTaxable - b2bTaxable);
+  const parcelTaxable = round2(orders.filter(o => o.order_type === 'parcel').reduce((s, o) => s + (o.total || 0), 0));
+  const dineInTaxable = round2(totalTaxable - parcelTaxable);
+
+  const totalCgst     = round2(totalTaxable * cgstRate / 100);
+  const totalSgst     = round2(totalTaxable * sgstRate / 100);
+  const totalTax      = round2(totalCgst + totalSgst);
+  const totalInclTax  = round2(totalTaxable + totalTax);
+
+  // Unique dining sessions (visits)
+  const uniqueSessions = new Set(orders.map(o => o.session_id || o.id)).size;
+
+  // Monthly breakdown — used by Table 9 (verify each GSTR-3B month sums correctly)
+  const monthMap = {};
+  for (const o of orders) {
+    const mk = o.month_key;
+    if (!monthMap[mk]) monthMap[mk] = { month: mk, taxable: 0, cgst: 0, sgst: 0, orders: 0, sessions: new Set() };
+    monthMap[mk].taxable = round2(monthMap[mk].taxable + (o.total || 0));
+    monthMap[mk].cgst    = round2(monthMap[mk].cgst    + (o.total || 0) * cgstRate / 100);
+    monthMap[mk].sgst    = round2(monthMap[mk].sgst    + (o.total || 0) * sgstRate / 100);
+    monthMap[mk].orders++;
+    monthMap[mk].sessions.add(o.session_id || o.id);
+  }
+  const monthlyBreakdown = Object.values(monthMap)
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .map(m => ({
+      month:    m.month,
+      taxable:  m.taxable,
+      cgst:     m.cgst,
+      sgst:     m.sgst,
+      tax:      round2(m.cgst + m.sgst),
+      orders:   m.orders,
+      sessions: m.sessions.size,
+    }));
+
+  // Table 17 — HSN/SAC summary
+  // Fetch all items for these orders to get item-level quantities
+  let itemQty = 0;
+  if (orders.length > 0) {
+    const ids = orders.map(o => `'${o.id.replace(/'/g,"''")}'`).join(',');
+    const itemRows = db.prepare(
+      `SELECT SUM(quantity) as q FROM order_items WHERE order_id IN (${ids})`
+    ).get();
+    itemQty = itemRows?.q || 0;
+  }
+
+  const hsnSummary = [{
+    num:     1,
+    hsn_sc:  sacCode,
+    desc:    'Restaurant Services',
+    uqc:     'OTH',
+    qty:     itemQty,
+    taxable: totalTaxable,
+    igst:    0,
+    cgst:    totalCgst,
+    sgst:    totalSgst,
+    cess:    0,
+  }];
+
+  // ITC applicability note (same logic as GSTR-3B)
+  const itcNote = taxPct === 5
+    ? 'ITC not applicable — restaurants filing at 5% GST (Notification 11/2017-CT(R)) cannot claim input tax credit. Enter ₹0 in all ITC fields (Part II, Table 6).'
+    : `Filing at ${taxPct}% GST — ITC may be claimable on your inputs. Enter eligible amounts from your purchase records in Table 6. This app does not track purchase invoices.`;
+
+  res.json({
+    fy:            fyLabel,
+    period:        { from: dateFrom, to: dateTo },
+    gstin:         S.gstin      || '',
+    legal_name:    S.legal_name || S.restaurant_name || '',
+    state_name:    S.state_name || 'Kerala',
+    sac_code:      sacCode,
+    tax_rate:      taxPct,
+    order_count:   orders.length,
+    session_count: uniqueSessions,
+
+    // Part II — Table 4 & 5: Outward taxable supplies
+    outward: {
+      // Table 4A — supplies made to registered persons (B2B)
+      b2b_taxable:     b2bTaxable,
+      b2b_cgst:        round2(b2bTaxable * cgstRate / 100),
+      b2b_sgst:        round2(b2bTaxable * sgstRate / 100),
+      // Table 4C — supplies made to unregistered persons (B2C)
+      b2c_taxable:     b2cTaxable,
+      b2c_cgst:        round2(b2cTaxable * cgstRate / 100),
+      b2c_sgst:        round2(b2cTaxable * sgstRate / 100),
+      // Totals
+      total_taxable:   totalTaxable,
+      total_cgst:      totalCgst,
+      total_sgst:      totalSgst,
+      total_igst:      0,
+      total_cess:      0,
+      total_incl_tax:  totalInclTax,
+      // Breakdown by order type (informational, not a GSTR-9 field)
+      dine_in_taxable: dineInTaxable,
+      parcel_taxable:  parcelTaxable,
+    },
+
+    // Part II — Table 9: Tax paid as declared in GSTR-3B filings
+    // GSTR-9 asks you to enter what you declared and paid each month.
+    // This is the annual sum — cross-check each row against your GSTR-3B filings.
+    tax_paid: {
+      integrated_tax: 0,
+      central_tax:    totalCgst,
+      state_ut_tax:   totalSgst,
+      cess:           0,
+      total:          totalTax,
+    },
+
+    // Part II — Table 6: ITC availed (as declared in GSTR-3B)
+    itc_note: itcNote,
+    itc: taxPct === 5
+      ? { integrated_tax: 0, central_tax: 0, state_ut_tax: 0, cess: 0 }
+      : null,  // null = user must enter from their own purchase records
+
+    // Part V — Table 17: HSN-wise outward summary
+    hsn_summary: hsnSummary,
+
+    // Monthly breakdown — cross-check Table 9 against each month's GSTR-3B
+    monthly_breakdown: monthlyBreakdown,
+  });
+});
+
 module.exports = router;

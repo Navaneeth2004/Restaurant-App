@@ -4,6 +4,7 @@ import { useSortable } from '../../hooks/useSortable';
 import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
 import ConfirmModal from '../../components/ConfirmModal';
+import QRModal from '../../components/admin/QRModal';
 import type { Table } from '../../types';
 
 const STATUS_STYLE: Record<string, string> = {
@@ -52,6 +53,7 @@ export default function AdminTables() {
   const [tables,  setTables]  = useState<Table[]>([]);
   const [modal,   setModal]   = useState<{ type: 'add' | 'edit'; table?: Table } | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const [qrTable, setQrTable] = useState<Table | null>(null);
   const isSaving = useRef(false);
   const toast = useToast();
 
@@ -133,6 +135,14 @@ export default function AdminTables() {
         />
       )}
 
+      {/* QR Modal */}
+      {qrTable && (
+        <QRModal
+          table={qrTable}
+          onClose={() => setQrTable(null)}
+        />
+      )}
+
       <div className="mb-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -143,8 +153,8 @@ export default function AdminTables() {
         </div>
         <p className="text-zinc-600 text-[10px] mb-2">
           {window.matchMedia('(pointer: coarse)').matches
-            ? 'Long-press and drag to reorder'
-            : 'Drag to reorder'}
+            ? 'Long-press and drag to reorder · tap QR to get customer ordering link'
+            : 'Drag to reorder · click QR to get customer ordering link'}
         </p>
         <div className="flex items-center gap-2 flex-wrap">
           {Object.entries(counts).map(([k, v]) => v > 0 && (
@@ -174,6 +184,18 @@ export default function AdminTables() {
                     {t.id}
                   </div>
                   <div className="flex gap-1">
+                    {/* QR button */}
+                    <button
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-brand-400 hover:bg-brand-500/10 transition-colors"
+                      title="Get QR code for customer ordering"
+                      onClick={e => { e.stopPropagation(); setQrTable(t); }}
+                    >
+                      {/* QR icon */}
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75v-.75zM16.5 6.75h.75v.75h-.75v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 18.75h.75v.75h-.75v-.75zM18.75 13.5h.75v.75h-.75v-.75zM18.75 18.75h.75v.75h-.75v-.75zM16.5 16.5h.75v.75h-.75v-.75z" />
+                      </svg>
+                    </button>
                     <button className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-raised transition-colors"
                       onClick={e => { e.stopPropagation(); setModal({ type: 'edit', table: t }); }}>
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>

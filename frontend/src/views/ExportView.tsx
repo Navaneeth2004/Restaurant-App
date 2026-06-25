@@ -5,8 +5,7 @@
  * - Detailed Report (CSV / JSON)
  * - GSTR-1 (portal-upload JSON)
  * - GSTR-3B (on-screen summary with copy fields)
- *
- * Content is lifted directly from the old ExportTab sections.
+ * - GSTR-9  (annual return summary)
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -17,7 +16,7 @@ import { authedJson } from '../utils/authedFetch';
 
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 
-type Section = 'detailed' | 'gstr1' | 'gstr3b';
+type Section = 'detailed' | 'gstr1' | 'gstr3b' | 'gstr9';
 
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -36,6 +35,24 @@ function quarterStartStr(): string {
   const m = d.getMonth();
   const qm = Math.floor(m / 3) * 3;
   return `${d.getFullYear()}-${String(qm+1).padStart(2,'0')}-01`;
+}
+
+/** Returns the current Indian financial year label, e.g. "2024-25" */
+function currentFyLabel(): string {
+  const now = new Date();
+  const fyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${fyStart}-${String(fyStart + 1).slice(2)}`;
+}
+
+/** Generates a list of financial years from 2023-24 up to the current one */
+function fyOptions(): string[] {
+  const now = new Date();
+  const currentFyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  const years: string[] = [];
+  for (let y = 2023; y <= currentFyStart; y++) {
+    years.push(`${y}-${String(y + 1).slice(2)}`);
+  }
+  return years.reverse(); // most recent first
 }
 
 function validateRange(from: string, to: string): string {
@@ -368,7 +385,6 @@ function Gstr3bSection() {
         </p>
       </div>
 
-      {/* Period selector */}
       <div className="rounded-xl border border-surface-border bg-surface-card p-5">
         <h4 className="font-semibold text-zinc-500 text-xs uppercase tracking-widest mb-4">Filing Period</h4>
         <div className="flex gap-2 mb-4">
@@ -413,7 +429,6 @@ function Gstr3bSection() {
         const o = data.outward_taxable;
         return (
           <div className="space-y-4">
-            {/* Header info */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { l: 'GSTIN',      v: data.gstin      || '—' },
@@ -428,11 +443,10 @@ function Gstr3bSection() {
               ))}
             </div>
 
-            {/* Table 3.1 */}
             <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
               <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
                 <p className="text-zinc-300 text-xs font-semibold">Table 3.1 — Outward Taxable Supplies</p>
-                <p className="text-zinc-600 text-[10px] mt-0.5">Enter under GSTR-3B → 3.1(a) on the GST portal. Click a value to copy.</p>
+                <p className="text-zinc-600 text-[10px] mt-0.5">Enter under GSTR-3B → 3.1(a). Click a value to copy.</p>
               </div>
               <div className="divide-y divide-surface-border">
                 {[
@@ -457,7 +471,6 @@ function Gstr3bSection() {
               </div>
             </div>
 
-            {/* Table 4 — ITC */}
             <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
               <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
                 <p className="text-zinc-300 text-xs font-semibold">Table 4 — Eligible ITC</p>
@@ -468,7 +481,6 @@ function Gstr3bSection() {
               </div>
             </div>
 
-            {/* Table 6.1 — Tax paid */}
             <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
               <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
                 <p className="text-zinc-300 text-xs font-semibold">Table 6.1 — Tax Paid</p>
@@ -498,13 +510,329 @@ function Gstr3bSection() {
             <div className="rounded-xl bg-brand-500/8 border border-brand-500/20 px-4 py-3">
               <p className="text-brand-400 text-xs font-semibold mb-1">How to use this</p>
               <p className="text-zinc-500 text-xs leading-relaxed">
-                Log into <span className="text-zinc-300">gst.gov.in</span> → File Returns → GSTR-3B → enter the values above in the corresponding tables.
+                Log into <span className="text-zinc-300">gst.gov.in</span> → File Returns → GSTR-3B → enter the values above.
                 For GSTR-1, switch to the GSTR-1 tab and download the JSON to upload directly.
               </p>
             </div>
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ── GSTR-9 section ─────────────────────────────────────────────────────────
+
+function CopyButton({ label, value, sym }: { label: string; value: number; sym: string }) {
+  const toast = useToast();
+  return (
+    <button
+      className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-raised transition-colors text-left group"
+      onClick={() => {
+        navigator.clipboard.writeText(value.toFixed(2)).then(() => toast(`Copied: ${label}`, 'success'));
+      }}
+    >
+      <span className="text-zinc-400 text-sm">{label}</span>
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-white text-sm font-semibold">{sym}{value.toFixed(2)}</span>
+        <svg className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+        </svg>
+      </div>
+    </button>
+  );
+}
+
+function Gstr9Section() {
+  const [fy,      setFy]      = useState(currentFyLabel());
+  const [data,    setData]    = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState('');
+  const [showMonthly, setShowMonthly] = useState(false);
+  const settings = useSettings();
+  const sym      = settings.currency_symbol || '₹';
+  const gstin    = (settings as any).gstin as string;
+  const fyList   = fyOptions();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const d = await authedJson(`${API_ORIGIN}/api/export/gst/gstr9?fy=${fy}`);
+      setData(d);
+    } catch (e: any) {
+      setError(e.message || 'Failed to load GSTR-9 summary');
+    } finally {
+      setLoading(false);
+    }
+  }, [fy]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Format month key "2024-06" → "Jun 2024"
+  const fmtMonth = (mk: string) => {
+    const [y, m] = mk.split('-');
+    return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div>
+        <div className="flex items-center gap-2 mb-1">
+          <h3 className="font-bold text-white text-sm">GSTR-9 Annual Return</h3>
+          <span className="text-[10px] font-semibold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full">
+            Annual · Manual filing
+          </span>
+        </div>
+        <p className="text-zinc-500 text-xs leading-relaxed">
+          Consolidates the full financial year (April–March) for your GSTR-9 filing.
+          Due by <span className="text-zinc-300">31 December</span> following the financial year.
+          Click any value to copy it directly into the GST portal.
+        </p>
+      </div>
+
+      {/* Eligibility note */}
+      <div className="rounded-xl border border-zinc-700/60 bg-surface-card px-4 py-3">
+        <p className="text-zinc-300 text-xs font-semibold mb-1.5">Who needs to file GSTR-9?</p>
+        <div className="space-y-1">
+          {[
+            { text: 'Turnover above ₹2 crore → mandatory filing', color: 'text-red-400' },
+            { text: 'Turnover ₹2 crore or below → optional (but recommended)', color: 'text-amber-400' },
+            { text: 'GSTR-9C (audit reconciliation) required only above ₹5 crore', color: 'text-zinc-500' },
+          ].map(({ text, color }) => (
+            <div key={text} className={`flex items-start gap-2 text-[11px] ${color}`}>
+              <span className="mt-0.5 flex-shrink-0">·</span>
+              <span>{text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {!gstin && (
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25">
+          <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+          <p className="text-amber-400 text-xs leading-relaxed">
+            GSTIN not set — go to <span className="font-semibold">Admin → Restaurant → GST Settings</span> to add your GSTIN before filing.
+          </p>
+        </div>
+      )}
+
+      {/* FY selector */}
+      <div className="rounded-xl border border-surface-border bg-surface-card p-5">
+        <h4 className="font-semibold text-zinc-500 text-xs uppercase tracking-widest mb-3">Financial Year</h4>
+        <div className="flex items-center gap-3 flex-wrap">
+          <select
+            className="input w-44"
+            value={fy}
+            onChange={e => setFy(e.target.value)}
+          >
+            {fyList.map(y => (
+              <option key={y} value={y}>FY {y}</option>
+            ))}
+          </select>
+          <button className="btn btn-sm" onClick={load} disabled={loading}>
+            {loading ? 'Loading…' : 'Refresh'}
+          </button>
+          {data && (
+            <span className="text-zinc-600 text-[10px]">
+              {data.period.from} → {data.period.to}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/25 text-red-400 text-xs">
+          <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+          {error}
+        </div>
+      )}
+
+      {loading && !data && (
+        <div className="flex items-center gap-2 text-zinc-500 text-xs py-4">
+          <span className="w-3.5 h-3.5 border-2 border-zinc-600 border-t-zinc-400 rounded-full animate-spin" />
+          Loading GSTR-9 summary…
+        </div>
+      )}
+
+      {data && (
+        <div className="space-y-4">
+          {/* Summary tiles */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { l: 'GSTIN',        v: data.gstin        || '—' },
+              { l: 'Legal Name',   v: data.legal_name   || '—' },
+              { l: 'Tax Rate',     v: `${data.tax_rate}%` },
+              { l: 'Dining visits', v: String(data.session_count) },
+            ].map(({ l, v }) => (
+              <div key={l} className="rounded-xl border border-surface-border bg-surface-card px-3 py-2.5">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-0.5">{l}</p>
+                <p className="text-white text-xs font-mono font-semibold truncate">{v}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Part II — Table 4: Outward taxable supplies */}
+          <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
+            <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
+              <p className="text-zinc-300 text-xs font-semibold">Part II — Table 4: Outward Taxable Supplies</p>
+              <p className="text-zinc-600 text-[10px] mt-0.5">
+                Enter under GSTR-9 → Table 4 on the GST portal. Click any value to copy.
+              </p>
+            </div>
+            <div className="divide-y divide-surface-border">
+              <CopyButton label="4A — Supplies to registered persons (B2B)" value={data.outward.b2b_taxable}   sym={sym} />
+              <CopyButton label="4C — Supplies to unregistered persons (B2C)" value={data.outward.b2c_taxable} sym={sym} />
+              <CopyButton label="Total taxable value (pre-tax)"              value={data.outward.total_taxable} sym={sym} />
+              <CopyButton label="Integrated Tax (IGST)"                      value={0}                          sym={sym} />
+              <CopyButton label="Central Tax (CGST)"                         value={data.outward.total_cgst}    sym={sym} />
+              <CopyButton label="State/UT Tax (SGST)"                        value={data.outward.total_sgst}    sym={sym} />
+              <CopyButton label="Cess"                                        value={0}                          sym={sym} />
+            </div>
+            {/* Total incl. tax — informational only */}
+            <div className="px-4 py-3 bg-surface-raised/40 flex items-center justify-between border-t border-surface-border">
+              <span className="text-zinc-500 text-xs">Total incl. tax (for your reference)</span>
+              <span className="font-mono text-zinc-300 text-sm font-semibold">{sym}{data.outward.total_incl_tax.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* Part II — Table 6: ITC */}
+          <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
+            <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
+              <p className="text-zinc-300 text-xs font-semibold">Part II — Table 6: ITC Availed</p>
+            </div>
+            <div className="px-4 py-3">
+              <p className="text-zinc-500 text-xs leading-relaxed">{data.itc_note}</p>
+              {data.itc !== null && (
+                <p className="text-zinc-600 text-[10px] mt-1.5">Enter ₹0 in all ITC fields in Table 6 on the portal.</p>
+              )}
+            </div>
+          </div>
+
+          {/* Part II — Table 9: Tax paid */}
+          <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
+            <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
+              <p className="text-zinc-300 text-xs font-semibold">Part II — Table 9: Tax Payable &amp; Paid</p>
+              <p className="text-zinc-600 text-[10px] mt-0.5">
+                Enter the annual tax amounts declared and paid across all your GSTR-3B filings for FY {data.fy}.
+              </p>
+            </div>
+            <div className="divide-y divide-surface-border">
+              <CopyButton label="Integrated Tax (IGST)" value={data.tax_paid.integrated_tax} sym={sym} />
+              <CopyButton label="Central Tax (CGST)"    value={data.tax_paid.central_tax}    sym={sym} />
+              <CopyButton label="State/UT Tax (SGST)"   value={data.tax_paid.state_ut_tax}   sym={sym} />
+              <CopyButton label="Cess"                  value={0}                             sym={sym} />
+            </div>
+          </div>
+
+          {/* Part V — Table 17: HSN summary */}
+          <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
+            <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
+              <p className="text-zinc-300 text-xs font-semibold">Part V — Table 17: HSN/SAC-wise Outward Summary</p>
+              <p className="text-zinc-600 text-[10px] mt-0.5">Summary of all outward supplies grouped by SAC code.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-surface-border">
+                    {['HSN/SAC', 'Description', 'UQC', 'Total Qty', `Taxable Value`, 'IGST', 'CGST', 'SGST'].map(h => (
+                      <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-zinc-600 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.hsn_summary.map((row: any, i: number) => (
+                    <tr key={i} className="border-b border-surface-border/50 hover:bg-surface-raised/40 transition-colors">
+                      <td className="px-4 py-3 font-mono text-zinc-300 font-semibold">{row.hsn_sc}</td>
+                      <td className="px-4 py-3 text-zinc-400">{row.desc}</td>
+                      <td className="px-4 py-3 text-zinc-500">{row.uqc}</td>
+                      <td className="px-4 py-3 font-mono text-zinc-300">{row.qty}</td>
+                      <td className="px-4 py-3 font-mono text-white font-semibold">{sym}{row.taxable.toFixed(2)}</td>
+                      <td className="px-4 py-3 font-mono text-zinc-400">{sym}0.00</td>
+                      <td className="px-4 py-3 font-mono text-zinc-300">{sym}{row.cgst.toFixed(2)}</td>
+                      <td className="px-4 py-3 font-mono text-zinc-300">{sym}{row.sgst.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Monthly cross-check breakdown */}
+          <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
+            <button
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-raised/40 transition-colors"
+              onClick={() => setShowMonthly(v => !v)}
+            >
+              <div>
+                <p className="text-zinc-300 text-xs font-semibold text-left">Monthly Cross-Check — GSTR-3B Reconciliation</p>
+                <p className="text-zinc-600 text-[10px] mt-0.5 text-left">
+                  Verify each month's figures match what you declared in your GSTR-3B filings
+                </p>
+              </div>
+              <svg className={`w-4 h-4 text-zinc-500 transition-transform flex-shrink-0 ml-4 ${showMonthly ? 'rotate-180' : ''}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showMonthly && (
+              <div className="border-t border-surface-border overflow-x-auto">
+                {data.monthly_breakdown.length === 0 ? (
+                  <p className="px-4 py-4 text-zinc-600 text-xs">No orders in this financial year.</p>
+                ) : (
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-surface-border">
+                        {['Month', 'Visits', `Taxable (${sym})`, `CGST (${sym})`, `SGST (${sym})`, `Total Tax (${sym})`].map(h => (
+                          <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-zinc-600 whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.monthly_breakdown.map((row: any) => (
+                        <tr key={row.month} className="border-b border-surface-border/50 hover:bg-surface-raised/40 transition-colors">
+                          <td className="px-4 py-3 text-zinc-300 font-medium whitespace-nowrap">{fmtMonth(row.month)}</td>
+                          <td className="px-4 py-3 font-mono text-zinc-400">{row.sessions}</td>
+                          <td className="px-4 py-3 font-mono text-white">{row.taxable.toFixed(2)}</td>
+                          <td className="px-4 py-3 font-mono text-zinc-300">{row.cgst.toFixed(2)}</td>
+                          <td className="px-4 py-3 font-mono text-zinc-300">{row.sgst.toFixed(2)}</td>
+                          <td className="px-4 py-3 font-mono text-zinc-300">{row.tax.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                      {/* Totals row */}
+                      <tr className="bg-surface-raised/60 font-semibold">
+                        <td className="px-4 py-3 text-zinc-300">Total FY {data.fy}</td>
+                        <td className="px-4 py-3 font-mono text-zinc-300">{data.session_count}</td>
+                        <td className="px-4 py-3 font-mono text-white">{data.outward.total_taxable.toFixed(2)}</td>
+                        <td className="px-4 py-3 font-mono text-zinc-300">{data.outward.total_cgst.toFixed(2)}</td>
+                        <td className="px-4 py-3 font-mono text-zinc-300">{data.outward.total_sgst.toFixed(2)}</td>
+                        <td className="px-4 py-3 font-mono text-white">{data.tax_paid.total.toFixed(2)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* How-to callout */}
+          <div className="rounded-xl bg-purple-500/8 border border-purple-500/20 px-4 py-3">
+            <p className="text-purple-400 text-xs font-semibold mb-1">How to file GSTR-9</p>
+            <p className="text-zinc-500 text-xs leading-relaxed">
+              Log into <span className="text-zinc-300">gst.gov.in</span> → File Returns → Annual Return → GSTR-9 →
+              select FY {data.fy} → enter the values from the tables above.
+              The portal auto-populates many fields from your GSTR-1 and GSTR-3B filings —
+              use this summary to verify and fill in any missing amounts.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -516,8 +844,9 @@ export default function ExportView() {
 
   const tabs: { key: Section; label: string; badge?: string }[] = [
     { key: 'detailed', label: 'Detailed Report' },
-    { key: 'gstr1',    label: 'GSTR-1',    badge: 'JSON' },
-    { key: 'gstr3b',   label: 'GSTR-3B',   badge: 'Guide' },
+    { key: 'gstr1',    label: 'GSTR-1',    badge: 'JSON'   },
+    { key: 'gstr3b',   label: 'GSTR-3B',   badge: 'Guide'  },
+    { key: 'gstr9',    label: 'GSTR-9',    badge: 'Annual' },
   ];
 
   return (
@@ -530,7 +859,6 @@ export default function ExportView() {
             {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
           </span>
         </div>
-        {/* Pill switcher — scrolls horizontally if it ever doesn't fit */}
         <div className="sm:ml-auto flex items-center gap-1 bg-surface-raised border border-surface-border rounded-lg p-0.5 overflow-x-auto no-scrollbar max-w-full">
           {tabs.map(({ key, label, badge }) => (
             <button
@@ -558,6 +886,7 @@ export default function ExportView() {
         {section === 'detailed' && <DetailedSection />}
         {section === 'gstr1'    && <Gstr1Section />}
         {section === 'gstr3b'   && <Gstr3bSection />}
+        {section === 'gstr9'    && <Gstr9Section />}
       </div>
     </div>
   );

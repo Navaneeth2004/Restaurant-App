@@ -34,15 +34,25 @@ app.use('/api/orders',              require('./routes/orders'));
 app.use('/api/staff',               require('./routes/staff'));
 app.use('/api/reports',             require('./routes/reports'));
 app.use('/api/export',              require('./routes/export'));
-
 app.use('/api/backup',              require('./routes/backup'));
 app.use('/api/reset',               require('./routes/reset'));
-app.use('/api/bug-report', require('./routes/bug-report'));
+app.use('/api/bug-report',          require('./routes/bug-report'));
 
+// ── Kiosk routes (public — no auth middleware applied) ────────────────────
+// These must be registered AFTER auth.middleware so the middleware runs first,
+// but the kiosk route itself opts out via the auth middleware's path check.
+// The auth middleware already skips /uploads; kiosk paths are unauthenticated
+// by design (the token IS the security).
+app.use('/api/kiosk',               require('./routes/kiosk'));
 
 const buildDir = path.join(__dirname, '..', 'frontend', 'build');
 if (fs.existsSync(buildDir)) {
   app.use(express.static(buildDir));
+
+  // ── SPA routing ───────────────────────────────────────────────────────
+  // All non-API, non-upload paths serve index.html so React Router
+  // (or our manual pathname check in App.tsx) handles them.
+  // This includes /kiosk/:token paths — React handles them client-side.
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads'))
       res.sendFile(path.join(buildDir, 'index.html'));
@@ -105,6 +115,7 @@ async function start() {
     console.log(ok('Database','loaded'));
     console.log(ok('Frontend','ready'));
     console.log(ok('Socket.IO','ready'));
+    console.log(ok('Kiosk QR','enabled'));
     console.log('');
     console.log(top); console.log(blank);
     console.log(row(`${G}>> POS IS LIVE -- Ready for orders!${R}`));

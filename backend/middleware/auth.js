@@ -10,6 +10,12 @@
  *   - If AUTH_DISABLED=true in environment, the middleware is a no-op
  *     (useful for dev or if you're 100% sure you're on a private LAN)
  *
+ * Exempt paths (no auth required):
+ *   - /api/auth/token    — bootstrap endpoint so browser can fetch the token
+ *   - /api/kiosk/*       — customer kiosk routes; secured by opaque QR token instead
+ *   - /uploads/*         — static file serving
+ *   - everything else non-/api — serves the React SPA
+ *
  * To disable auth entirely: set AUTH_DISABLED=true in your environment or
  * create backend/data/auth_disabled.txt
  */
@@ -52,15 +58,26 @@ function init() {
   console.log('');
 }
 
+/** Returns true if this path is exempt from auth */
+function isExempt(reqPath) {
+  // Token bootstrap — always allow
+  if (reqPath === '/api/auth/token') return true;
+  // Static uploads — always allow
+  if (reqPath.startsWith('/uploads')) return true;
+  // Kiosk routes — secured by opaque QR token, not staff auth token
+  // This covers GET /api/kiosk/:token, GET /api/kiosk/:token/menu, etc.
+  // AND POST /api/kiosk/ensure-token (called from admin, has staff auth)
+  // We exempt all /api/kiosk/* here; the kiosk route itself validates the QR token.
+  if (reqPath.startsWith('/api/kiosk')) return true;
+  // Non-API paths — serve the SPA
+  if (!reqPath.startsWith('/api')) return true;
+  return false;
+}
+
 /** Express middleware — rejects requests without valid token */
 function middleware(req, res, next) {
   if (_disabled) return next();
-
-  // Always allow the token endpoint itself (unauthenticated bootstrap)
-  if (req.path === '/api/auth/token' || req.path.startsWith('/uploads')) return next();
-
-  // Static frontend files — no auth needed
-  if (!req.path.startsWith('/api')) return next();
+  if (isExempt(req.path)) return next();
 
   const header = req.headers['authorization'] || '';
   const token  = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
