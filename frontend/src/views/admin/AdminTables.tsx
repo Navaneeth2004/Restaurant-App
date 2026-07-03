@@ -57,9 +57,13 @@ export default function AdminTables() {
   const isSaving = useRef(false);
   const toast = useToast();
 
-  const load = useCallback(async () => {
+ const load = useCallback(async () => {
     if (isSaving.current) return;
-    try { setTables(await getTables()); } catch {}
+      try {
+        const all = await getTables();
+        // Hide parcel slots — they are managed by the waiter, not admin
+        setTables(all.filter(t => !/^P\d+$/.test(t.id)));
+      } catch {}
   }, []);
 
   useEffect(() => { load(); }, [load]);

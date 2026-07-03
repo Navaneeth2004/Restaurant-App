@@ -118,7 +118,29 @@ router.get('/today', (req, res) => {
   }
 
   const activeOrders   = db.prepare("SELECT COUNT(*) as count FROM orders WHERE status = 'active'").get();
-  const occupiedTables = db.prepare("SELECT COUNT(*) as count FROM tables WHERE status != 'empty'").get();
+  const occupiedTables = db.prepare(`
+    SELECT COUNT(*) as count FROM tables
+    WHERE status IN ('occupied','waiting_bill')
+      AND (is_parcel = 0 OR is_parcel IS NULL)
+      AND (is_archived = 0 OR is_archived IS NULL)
+  `).get();
+  const dineInSeatsTotal = db.prepare(`
+    SELECT SUM(seats) as total FROM tables
+    WHERE (is_parcel = 0 OR is_parcel IS NULL)
+      AND (is_archived = 0 OR is_archived IS NULL)
+  `).get();
+  const dineInSeatsFilled = db.prepare(`
+    SELECT SUM(seats) as filled FROM tables
+    WHERE status IN ('occupied','waiting_bill')
+      AND (is_parcel = 0 OR is_parcel IS NULL)
+      AND (is_archived = 0 OR is_archived IS NULL)
+  `).get();
+  const parcelsActive = db.prepare(`
+    SELECT COUNT(*) as c FROM tables
+    WHERE is_parcel = 1
+      AND (is_archived = 0 OR is_archived IS NULL)
+      AND status IN ('occupied','waiting_bill')
+  `).get();
 
   // FIX: use aliased date expression to avoid column ambiguity in the JOIN
   const topItems = db.prepare(`
@@ -146,6 +168,9 @@ router.get('/today', (req, res) => {
     ordersCount:      revenueAndCount.session_count,  // FIX: sessions, not rows
     activeOrders:     activeOrders.count,
     occupiedTables:   occupiedTables.count,
+    dineInSeatsTotal: dineInSeatsTotal.total ?? 0,
+    dineInSeatsFilled: dineInSeatsFilled.filled ?? 0,
+    parcelsActive:    parcelsActive.c ?? 0,
     topItems,
     paymentBreakdown,
     billTotalInclTax: parseFloat(billTotalInclTax.toFixed(2)),

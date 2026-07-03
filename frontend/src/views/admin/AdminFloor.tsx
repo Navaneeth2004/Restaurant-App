@@ -410,17 +410,20 @@ export default function AdminFloor() {
 
   const toggle = (id: string) => setSelected(p => p === id ? null : id);
 
-  const occupied    = tables.filter(t => t.status !== 'empty').length;
-  const empty       = tables.filter(t => t.status === 'empty').length;
-  const billPending = tables.filter(t => t.status === 'waiting_bill').length;
-  const overdue     = tables.filter(t => {
+  const dineInTables   = tables.filter(t => !t.is_parcel);
+  const parcelTables   = tables.filter(t => t.is_parcel);
+  const occupied       = dineInTables.filter(t => t.status !== 'empty').length;
+  const empty          = dineInTables.filter(t => t.status === 'empty').length;
+  const billPending    = dineInTables.filter(t => t.status === 'waiting_bill').length;
+  const parcelActive   = parcelTables.filter(t => t.status !== 'empty').length;
+  const overdue        = dineInTables.filter(t => {
     const s = (t as any).occupied_since as string | null;
     return s ? Math.floor((Date.now() - new Date(s).getTime()) / 60000) >= 60 : false;
   }).length;
   const liveRevenue    = orders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0);
   const liveItems      = orders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.quantity, 0), 0);
-  const totalSeats     = tables.reduce((s, t) => s + t.seats, 0);
-  const occupiedSeats  = tables.filter(t => t.status !== 'empty').reduce((s, t) => s + t.seats, 0);
+  const totalSeats     = dineInTables.reduce((s, t) => s + t.seats, 0);
+  const occupiedSeats  = dineInTables.filter(t => t.status !== 'empty').reduce((s, t) => s + t.seats, 0);
   const seatPct        = totalSeats > 0 ? Math.round((occupiedSeats / totalSeats) * 100) : 0;
   const avgPerTable    = occupied > 0 ? liveRevenue / occupied : 0;
 
@@ -535,9 +538,10 @@ export default function AdminFloor() {
       <div className="hidden md:flex" style={{ flex:1, overflow:'hidden' }}>
         <div style={{ flex:1, overflowY:'auto', padding:'20px', display:'flex', flexDirection:'column', gap:'16px' }}>
           {/* 6-tile stat row */}
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'10px' }}>
-            <Tile label="Tables occupied" value={`${occupied}/${tables.length}`} sub={`${empty} free right now`} color="var(--brand,#f97316)" />
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))', gap:'10px' }}>
+            <Tile label="Tables occupied" value={`${occupied}/${dineInTables.length}`} sub={`${empty} free right now`} color="var(--brand,#f97316)" />
             <Tile label="Seat fill rate"  value={`${seatPct}%`}                 sub={`${occupiedSeats} of ${totalSeats} seats`} color={seatPct > 70 ? '#ef4444' : seatPct > 40 ? '#f59e0b' : '#10b981'} />
+            <Tile label="Parcels active"  value={String(parcelActive)}            sub="parcel / takeaway slots" color="#818cf8" />
             <Tile label="Live revenue"    value={`${sym}${liveRevenue.toFixed(2)}`} sub="from active orders" color="#818cf8" />
             <Tile label="Avg per table"   value={occupied > 0 ? `${sym}${avgPerTable.toFixed(2)}` : '—'} sub="active tables only" />
             <Tile label="Items in flight" value={String(liveItems)}              sub="across all tables" />
@@ -578,13 +582,25 @@ export default function AdminFloor() {
           {/* Table grid */}
           <div>
             <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 10px' }}>
-              All tables — tap to view order &amp; today's stats
+              Dine-in tables — tap to view order &amp; today's stats
             </p>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(150px, 1fr))', gap:'10px' }}>
-              {tables.map(t => (
+              {dineInTables.map(t => (
                 <TableCard key={t.id} table={t} order={orders.find(o => o.table_id===t.id)||null} sym={sym} selected={selected===t.id} onClick={() => toggle(t.id)} />
               ))}
             </div>
+            {parcelTables.length > 0 && (
+              <>
+                <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'18px 0 10px' }}>
+                  Parcel / Takeaway slots
+                </p>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(150px, 1fr))', gap:'10px' }}>
+                  {parcelTables.map(t => (
+                    <TableCard key={t.id} table={t} order={orders.find(o => o.table_id===t.id)||null} sym={sym} selected={selected===t.id} onClick={() => toggle(t.id)} />
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 

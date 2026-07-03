@@ -2,10 +2,16 @@
  * views/ExportView.tsx
  *
  * Standalone Export tab (admin-only) with a pill switcher between:
- * - Detailed Report (CSV / JSON)
- * - GSTR-1 (portal-upload JSON)
+ * - GSTR-1 (preview table + portal-upload JSON)
  * - GSTR-3B (on-screen summary with copy fields)
  * - GSTR-9  (annual return summary)
+ *
+ * NOTE: The "Detailed Report" (CSV/JSON revenue export) section has been
+ * removed from this tab's UI per request. The underlying backend route
+ * (GET /api/export/revenue) is untouched and still works — only the
+ * frontend entry point here was removed. To bring it back, reintroduce a
+ * "Detailed Report" section/tab that calls GET /api/export/revenue with
+ * format=csv|json (see backend/routes/export.js — unchanged).
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -16,7 +22,7 @@ import { authedJson } from '../utils/authedFetch';
 
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 
-type Section = 'detailed' | 'gstr1' | 'gstr3b' | 'gstr9';
+type Section = 'gstr1' | 'gstr3b' | 'gstr9';
 
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -117,123 +123,145 @@ function DateRangeError({ message }: { message: string }) {
   );
 }
 
-// ── Detailed Report section ────────────────────────────────────────────────
+// ── Generic preview table — used by GSTR-1, kept visually consistent
+//    with how GSTR-3B/GSTR-9 already present copyable rows. Renders as a
+//    real <table> on wider screens and as stacked label/value cards on
+//    narrow (mobile) screens, all from the same row data. ────────────────
 
-function DetailedSection() {
-  const today = todayStr();
-  const [from,    setFrom]    = useState(today);
-  const [to,      setTo]      = useState(today);
-  const [loading, setLoading] = useState<'csv' | 'json' | null>(null);
-  const { requirePin, config: lockConfig } = useAdminLock();
-  const toast = useToast();
+interface PreviewRow {
+  label: string;
+  value: string;
+  copyValue?: string;   // raw numeric string to copy; defaults to value
+  emphasis?: boolean;    // bold/total row styling
+}
 
-  const dateError = validateRange(from, to);
-
-  const label = () => {
-    if (from && to) return `${from}_to_${to}`;
-    if (from)       return `from_${from}`;
-    if (to)         return `to_${to}`;
-    return 'all';
-  };
-
-  const doRun = async (fmt: 'csv' | 'json') => {
-    setLoading(fmt);
-    try {
-      const params = new URLSearchParams({ format: fmt });
-      if (from) params.set('from', from);
-      if (to)   params.set('to',   to);
-      const filename = `sales_${label()}.${fmt}`;
-      await downloadFile(`${API_ORIGIN}/api/export/revenue?${params}`, filename);
-      toast(`Downloaded ${filename}`, 'success');
-    } catch (e: any) {
-      toast(e.message || 'Export failed', 'error');
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  const run = (fmt: 'csv' | 'json') => {
-    if (dateError) { toast(dateError, 'error'); return; }
-    if (!lockConfig.enabled) { doRun(fmt); return; }
-    requirePin(() => doRun(fmt), 'Download Report', 'Enter admin PIN to export report');
-  };
-
+function PreviewTable({
+  title, subtitle, rows, onCopy,
+}: {
+  title: string;
+  subtitle?: string;
+  rows: PreviewRow[];
+  onCopy?: (label: string, value: string) => void;
+}) {
   return (
-    <div className="space-y-5">
-      <div>
-        <h3 className="font-bold text-white text-sm mb-1">Detailed Revenue Report</h3>
-        <p className="text-zinc-500 text-xs leading-relaxed">
-          Full breakdown — daily totals, top items, tax, payment methods, and every order. Export as CSV for spreadsheets or JSON for integrations.
-        </p>
+    <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
+      <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
+        <p className="text-zinc-300 text-xs font-semibold">{title}</p>
+        {subtitle && <p className="text-zinc-600 text-[10px] mt-0.5">{subtitle}</p>}
       </div>
 
-      <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-        <h4 className="font-semibold text-white text-xs uppercase tracking-widest mb-4 text-zinc-500">Date Range</h4>
-        <div className="flex items-end gap-3 flex-wrap">
-          <div>
-            <label className="label">From</label>
-            <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
-              value={from} max={today} onChange={e => setFrom(e.target.value)} />
-          </div>
-          <div>
-            <label className="label">To</label>
-            <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60 focus:border-red-500' : ''}`}
-              value={to} max={today} onChange={e => setTo(e.target.value)} />
-          </div>
-          <button className="btn btn-sm text-xs mb-0.5" onClick={() => { setFrom(today); setTo(today); }}>Today</button>
-        </div>
-        <DateRangeError message={dateError} />
-
-        <div className="flex gap-3 mt-5 flex-wrap">
-          <button className="btn btn-brand flex items-center gap-2"
-            onClick={() => run('csv')} disabled={loading !== null || !!dateError}>
-            {loading === 'csv'
-              ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
-              : <><DownloadIcon />Export CSV</>}
-          </button>
-          <button className="btn flex items-center gap-2 text-xs"
-            onClick={() => run('json')} disabled={loading !== null || !!dateError}>
-            {loading === 'json'
-              ? <><span className="w-3.5 h-3.5 border-2 border-zinc-400/40 border-t-zinc-400 rounded-full animate-spin" />Generating…</>
-              : <><DownloadIcon />Export JSON</>}
-          </button>
-        </div>
-        {lockConfig.enabled && <PinLockNote />}
+      {/* Desktop / tablet: table layout */}
+      <div className="hidden sm:block">
+        <table className="w-full text-sm">
+          <tbody className="divide-y divide-surface-border">
+            {rows.map((r, i) => (
+              <tr key={i} className={r.emphasis ? 'bg-surface-raised/50' : undefined}>
+                <td className={`px-4 py-2.5 ${r.emphasis ? 'text-zinc-200 font-semibold' : 'text-zinc-400'}`}>
+                  {r.label}
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <button
+                    type="button"
+                    onClick={() => onCopy?.(r.label, r.copyValue ?? r.value)}
+                    className={`font-mono text-sm transition-colors ${
+                      r.emphasis ? 'text-white font-bold' : 'text-zinc-200 hover:text-brand-400'
+                    } ${onCopy ? 'cursor-pointer' : 'cursor-default'}`}
+                  >
+                    {r.value}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-        <p className="text-zinc-500 text-xs font-semibold mb-3 uppercase tracking-widest">What's included</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {['Summary block','Tax collected','Avg order value','Items sold',
-            'Revenue excl. tax','Daily breakdown','Top items ranking','Full order detail',
-            'Payment methods','Order type split','Change amounts','Session IDs'].map(f => (
-            <div key={f} className="flex items-center gap-1.5 text-[11px] text-zinc-500">
-              <svg className="w-3 h-3 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-              </svg>
-              {f}
-            </div>
-          ))}
-        </div>
+      {/* Mobile: stacked rows */}
+      <div className="sm:hidden divide-y divide-surface-border">
+        {rows.map((r, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onCopy?.(r.label, r.copyValue ?? r.value)}
+            className={`w-full flex items-center justify-between gap-3 px-4 py-3 text-left ${
+              r.emphasis ? 'bg-surface-raised/50' : ''
+            }`}
+          >
+            <span className={`text-xs ${r.emphasis ? 'text-zinc-200 font-semibold' : 'text-zinc-500'}`}>
+              {r.label}
+            </span>
+            <span className={`font-mono text-sm flex-shrink-0 ${r.emphasis ? 'text-white font-bold' : 'text-zinc-200'}`}>
+              {r.value}
+            </span>
+          </button>
+        ))}
       </div>
     </div>
   );
 }
 
 // ── GSTR-1 section ─────────────────────────────────────────────────────────
+// Shows a clean preview (B2CS / B2B / totals / HSN) of what the JSON export
+// will contain, presented the same way GSTR-3B and GSTR-9 already do —
+// so the user knows what they're downloading before they download it.
+
+interface Gstr1Preview {
+  period: { from: string; to: string };
+  return_period: string;
+  gstin: string;
+  legal_name: string;
+  state_name: string;
+  state_code: string;
+  sac_code: string;
+  tax_rate: number;
+  order_count: number;
+  item_qty: number;
+  b2cs: { invoice_count: number; taxable_value: number; central_tax: number; state_ut_tax: number };
+  b2b:  { gstin_count: number; invoice_count: number; taxable_value: number; central_tax: number; state_ut_tax: number };
+  totals: { taxable_value: number; central_tax: number; state_ut_tax: number; total_tax: number; total_incl_tax: number };
+  hsn_summary: { hsn_sc: string; desc: string; uqc: string; qty: number; taxable: number; central_tax: number; state_ut_tax: number }[];
+  doc_issued: number;
+}
 
 function Gstr1Section() {
   const today   = todayStr();
   const [period, setPeriod] = useState<'month' | 'quarter'>('month');
   const [from,   setFrom]   = useState(monthStartStr());
   const [to,     setTo]     = useState(today);
+  const [data,    setData]    = useState<Gstr1Preview | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [error,   setError]   = useState('');
   const { requirePin, config: lockConfig } = useAdminLock();
   const toast    = useToast();
   const settings = useSettings();
+  const sym      = settings.currency_symbol || '₹';
   const gstin    = (settings as any).gstin as string;
 
   const dateError = validateRange(from, to);
+
+  const loadPreview = useCallback(async () => {
+    if (dateError) return;
+    setLoadingPreview(true);
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to)   params.set('to',   to);
+      const d = await authedJson(`${API_ORIGIN}/api/export/gst/gstr1/preview?${params}`);
+      setData(d);
+    } catch (e: any) {
+      setError(e.message || 'Failed to load preview');
+    } finally {
+      setLoadingPreview(false);
+    }
+  }, [from, to, dateError]);
+
+  useEffect(() => { loadPreview(); }, [loadPreview]);
+
+  const copyField = (label: string, value: string) => {
+    navigator.clipboard.writeText(value).then(() => toast(`Copied: ${label}`, 'success'));
+  };
 
   const doDownload = async () => {
     setLoading(true);
@@ -264,8 +292,8 @@ function Gstr1Section() {
           <span className="text-[10px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full">Upload to portal</span>
         </div>
         <p className="text-zinc-500 text-xs leading-relaxed">
-          Portal-uploadable JSON. Includes B2CS aggregate (all walk-in sales) and B2B invoices (customers with GSTIN).
-          Upload at <span className="text-zinc-300">gst.gov.in → File Returns → GSTR-1 → Upload JSON.</span>
+          Portal-uploadable JSON. Preview the breakdown below, then download and upload at{' '}
+          <span className="text-zinc-300">gst.gov.in → File Returns → GSTR-1 → Upload JSON.</span>
         </p>
       </div>
 
@@ -280,6 +308,7 @@ function Gstr1Section() {
         </div>
       )}
 
+      {/* Filing period */}
       <div className="rounded-xl border border-surface-border bg-surface-card p-5">
         <h4 className="font-semibold text-zinc-500 text-xs uppercase tracking-widest mb-4">Filing Period</h4>
         <div className="flex gap-2 mb-4">
@@ -293,7 +322,7 @@ function Gstr1Section() {
               }`}>{p.label}</button>
           ))}
         </div>
-        <div className="flex items-end gap-3 flex-wrap mb-4">
+        <div className="flex items-end gap-3 flex-wrap mb-1">
           <div>
             <label className="label">From</label>
             <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60' : ''}`}
@@ -304,32 +333,117 @@ function Gstr1Section() {
             <input type="date" className={`input w-44 ${dateError ? 'border-red-500/60' : ''}`}
               value={to} max={today} onChange={e => { setTo(e.target.value); setPeriod('month'); }} />
           </div>
+          <button className="btn btn-sm mb-0.5" onClick={loadPreview} disabled={loadingPreview || !!dateError}>
+            {loadingPreview ? 'Loading…' : 'Refresh preview'}
+          </button>
         </div>
         <DateRangeError message={dateError} />
-
-        <button className="btn btn-brand flex items-center gap-2 mt-4"
-          onClick={handle} disabled={loading || !!dateError}>
-          {loading
-            ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
-            : <><DownloadIcon />Download GSTR-1 JSON</>}
-        </button>
-        {lockConfig.enabled && <PinLockNote />}
       </div>
 
-      <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-        <p className="text-zinc-500 text-xs font-semibold mb-3 uppercase tracking-widest">What's included</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {['B2CS aggregate (walk-in)','B2B line items (GSTIN)','HSN/SAC summary',
-            'Document issue details','CGST + SGST split','Ready to upload on portal'].map(f => (
-            <div key={f} className="flex items-center gap-1.5 text-[11px] text-zinc-500">
-              <svg className="w-3 h-3 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-              </svg>
-              {f}
-            </div>
-          ))}
+      {error && <p className="text-red-400 text-xs">{error}</p>}
+
+      {loadingPreview && !data && (
+        <div className="flex items-center gap-2 text-zinc-500 text-xs py-4">
+          <span className="w-3.5 h-3.5 border-2 border-zinc-600 border-t-zinc-400 rounded-full animate-spin" />
+          Loading GSTR-1 preview…
         </div>
-      </div>
+      )}
+
+      {data && (
+        <div className="space-y-4">
+          {/* Header tiles */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { l: 'GSTIN',       v: data.gstin || '—' },
+              { l: 'Legal Name',  v: data.legal_name || '—' },
+              { l: 'Tax Rate',    v: `${data.tax_rate}%` },
+              { l: 'Invoices',    v: String(data.order_count) },
+            ].map(({ l, v }) => (
+              <div key={l} className="rounded-xl border border-surface-border bg-surface-card px-3 py-2.5">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-0.5">{l}</p>
+                <p className="text-white text-xs font-mono font-semibold truncate">{v}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* B2CS — walk-in aggregate */}
+          <PreviewTable
+            title="B2CS — Walk-in Sales (Aggregate)"
+            subtitle={`${data.b2cs.invoice_count} invoice${data.b2cs.invoice_count !== 1 ? 's' : ''} without customer GSTIN, grouped into one entry`}
+            onCopy={copyField}
+            rows={[
+              { label: 'Taxable Value', value: `${sym}${data.b2cs.taxable_value.toFixed(2)}` },
+              { label: 'Central Tax (CGST)', value: `${sym}${data.b2cs.central_tax.toFixed(2)}` },
+              { label: 'State/UT Tax (SGST)', value: `${sym}${data.b2cs.state_ut_tax.toFixed(2)}` },
+            ]}
+          />
+
+          {/* B2B — registered customers */}
+          <PreviewTable
+            title="B2B — Registered Customers (with GSTIN)"
+            subtitle={`${data.b2b.invoice_count} invoice${data.b2b.invoice_count !== 1 ? 's' : ''} across ${data.b2b.gstin_count} customer GSTIN${data.b2b.gstin_count !== 1 ? 's' : ''}`}
+            onCopy={copyField}
+            rows={[
+              { label: 'Taxable Value', value: `${sym}${data.b2b.taxable_value.toFixed(2)}` },
+              { label: 'Central Tax (CGST)', value: `${sym}${data.b2b.central_tax.toFixed(2)}` },
+              { label: 'State/UT Tax (SGST)', value: `${sym}${data.b2b.state_ut_tax.toFixed(2)}` },
+            ]}
+          />
+
+          {/* HSN/SAC summary */}
+          <PreviewTable
+            title="HSN/SAC Summary"
+            subtitle={`SAC ${data.hsn_summary[0]?.hsn_sc} — Restaurant Services`}
+            onCopy={copyField}
+            rows={[
+              { label: 'Total Quantity', value: String(data.item_qty), copyValue: String(data.item_qty) },
+              { label: 'Taxable Value', value: `${sym}${data.hsn_summary[0]?.taxable.toFixed(2)}` },
+              { label: 'Central Tax (CGST)', value: `${sym}${data.hsn_summary[0]?.central_tax.toFixed(2)}` },
+              { label: 'State/UT Tax (SGST)', value: `${sym}${data.hsn_summary[0]?.state_ut_tax.toFixed(2)}` },
+            ]}
+          />
+
+          {/* Totals */}
+          <PreviewTable
+            title="Totals — B2CS + B2B Combined"
+            subtitle="This is what gets bundled into the GSTR-1 JSON below"
+            onCopy={copyField}
+            rows={[
+              { label: 'Total Taxable Value', value: `${sym}${data.totals.taxable_value.toFixed(2)}` },
+              { label: 'Total Central Tax (CGST)', value: `${sym}${data.totals.central_tax.toFixed(2)}` },
+              { label: 'Total State/UT Tax (SGST)', value: `${sym}${data.totals.state_ut_tax.toFixed(2)}` },
+              { label: 'Total Tax', value: `${sym}${data.totals.total_tax.toFixed(2)}` },
+              { label: 'Grand Total (incl. tax)', value: `${sym}${data.totals.total_incl_tax.toFixed(2)}`, emphasis: true },
+            ]}
+          />
+
+          {/* Download */}
+          <div className="rounded-xl border border-surface-border bg-surface-card p-5">
+            <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+              <div>
+                <p className="text-white text-xs font-semibold">Ready to download</p>
+                <p className="text-zinc-500 text-[11px] mt-0.5">
+                  Period: <span className="text-zinc-300">{data.period.from} → {data.period.to}</span>
+                  {' · '}Return period: <span className="text-zinc-300 font-mono">{data.return_period}</span>
+                </p>
+              </div>
+              <div className="text-[9px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full whitespace-nowrap">
+                Upload to portal
+              </div>
+            </div>
+            <button
+              className="btn btn-brand flex items-center gap-2"
+              onClick={handle}
+              disabled={loading || !!dateError}
+            >
+              {loading
+                ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
+                : <><DownloadIcon />Download GSTR-1 JSON</>}
+            </button>
+            {lockConfig.enabled && <PinLockNote />}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -443,33 +557,18 @@ function Gstr3bSection() {
               ))}
             </div>
 
-            <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
-              <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
-                <p className="text-zinc-300 text-xs font-semibold">Table 3.1 — Outward Taxable Supplies</p>
-                <p className="text-zinc-600 text-[10px] mt-0.5">Enter under GSTR-3B → 3.1(a). Click a value to copy.</p>
-              </div>
-              <div className="divide-y divide-surface-border">
-                {[
-                  { label: 'Total Taxable Value (pre-tax)', value: o.total_taxable_value },
-                  { label: 'Integrated Tax (IGST)',         value: o.integrated_tax },
-                  { label: 'Central Tax (CGST)',            value: o.central_tax },
-                  { label: 'State/UT Tax (SGST)',           value: o.state_ut_tax },
-                  { label: 'Cess',                          value: 0 },
-                ].map(({ label, value }) => (
-                  <button key={label}
-                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-raised transition-colors text-left group"
-                    onClick={() => copyField(label, value.toFixed(2))}>
-                    <span className="text-zinc-400 text-sm">{label}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-white text-sm font-semibold">{sym}{value.toFixed(2)}</span>
-                      <svg className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
-                      </svg>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
+            <PreviewTable
+              title="Table 3.1 — Outward Taxable Supplies"
+              subtitle="Enter under GSTR-3B → 3.1(a). Click a value to copy."
+              onCopy={copyField}
+              rows={[
+                { label: 'Total Taxable Value (pre-tax)', value: `${sym}${o.total_taxable_value.toFixed(2)}` },
+                { label: 'Integrated Tax (IGST)',         value: `${sym}${o.integrated_tax.toFixed(2)}` },
+                { label: 'Central Tax (CGST)',            value: `${sym}${o.central_tax.toFixed(2)}` },
+                { label: 'State/UT Tax (SGST)',           value: `${sym}${o.state_ut_tax.toFixed(2)}` },
+                { label: 'Cess',                          value: `${sym}0.00` },
+              ]}
+            />
 
             <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
               <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
@@ -481,31 +580,16 @@ function Gstr3bSection() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
-              <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
-                <p className="text-zinc-300 text-xs font-semibold">Table 6.1 — Tax Paid</p>
-                <p className="text-zinc-600 text-[10px] mt-0.5">Same as 3.1 amounts — enter under "Tax paid through cash/ITC" on the portal.</p>
-              </div>
-              <div className="divide-y divide-surface-border">
-                {[
-                  { label: 'Integrated Tax (IGST)', value: data.tax_paid.integrated_tax },
-                  { label: 'Central Tax (CGST)',    value: data.tax_paid.central_tax },
-                  { label: 'State/UT Tax (SGST)',   value: data.tax_paid.state_ut_tax },
-                ].map(({ label, value }) => (
-                  <button key={label}
-                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-raised transition-colors text-left group"
-                    onClick={() => copyField(label, value.toFixed(2))}>
-                    <span className="text-zinc-400 text-sm">{label}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-white text-sm font-semibold">{sym}{value.toFixed(2)}</span>
-                      <svg className="w-3 h-3 text-zinc-600 group-hover:text-zinc-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
-                      </svg>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
+            <PreviewTable
+              title="Table 6.1 — Tax Paid"
+              subtitle='Same as 3.1 amounts — enter under "Tax paid through cash/ITC" on the portal.'
+              onCopy={copyField}
+              rows={[
+                { label: 'Integrated Tax (IGST)', value: `${sym}${data.tax_paid.integrated_tax.toFixed(2)}` },
+                { label: 'Central Tax (CGST)',    value: `${sym}${data.tax_paid.central_tax.toFixed(2)}` },
+                { label: 'State/UT Tax (SGST)',   value: `${sym}${data.tax_paid.state_ut_tax.toFixed(2)}` },
+              ]}
+            />
 
             <div className="rounded-xl bg-brand-500/8 border border-brand-500/20 px-4 py-3">
               <p className="text-brand-400 text-xs font-semibold mb-1">How to use this</p>
@@ -840,10 +924,9 @@ function Gstr9Section() {
 // ── Main ExportView ────────────────────────────────────────────────────────
 
 export default function ExportView() {
-  const [section, setSection] = useState<Section>('detailed');
+  const [section, setSection] = useState<Section>('gstr1');
 
   const tabs: { key: Section; label: string; badge?: string }[] = [
-    { key: 'detailed', label: 'Detailed Report' },
     { key: 'gstr1',    label: 'GSTR-1',    badge: 'JSON'   },
     { key: 'gstr3b',   label: 'GSTR-3B',   badge: 'Guide'  },
     { key: 'gstr9',    label: 'GSTR-9',    badge: 'Annual' },
@@ -883,11 +966,10 @@ export default function ExportView() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-        {section === 'detailed' && <DetailedSection />}
-        {section === 'gstr1'    && <Gstr1Section />}
-        {section === 'gstr3b'   && <Gstr3bSection />}
-        {section === 'gstr9'    && <Gstr9Section />}
-      </div>
+        {section === 'gstr1'  && <Gstr1Section />}
+        {section === 'gstr3b' && <Gstr3bSection />}
+        {section === 'gstr9'  && <Gstr9Section />}
+      </div> t
     </div>
   );
 }

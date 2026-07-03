@@ -21,6 +21,7 @@ router.get('/', (req, res) => {
         WHERE o2.table_id = t.id
           AND o2.status IN ('active', 'delivered', 'billed_direct')
       )
+    WHERE (t.is_archived IS NULL OR t.is_archived = 0)
     ORDER BY t.sort_order ASC, t.id ASC
   `).all();
   res.json(tables);

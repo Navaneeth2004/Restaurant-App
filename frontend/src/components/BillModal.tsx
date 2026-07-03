@@ -1,11 +1,9 @@
 /**
  * BillModal.tsx
- * 
- * FIXES:
- * 1. Pass customerGstin to PaymentTab (was missing, causing TS error).
- * 2. Print always shows BillItems regardless of active tab — the payment
- *    tab has no-print class so only the bill content prints.
- * 3. BillItems now receives customerGstin for B2B invoice display on print.
+ *
+ * CHANGE: Added `defaultOrderType` prop so WaiterView can pre-select
+ * 'parcel' when billing a parcel slot. The toggle still works — the
+ * waiter can switch it if needed.
  */
 
 import React, { useState } from 'react';
@@ -24,16 +22,21 @@ import type { Order, Table } from '../types';
 const sans = 'system-ui,-apple-system,sans-serif';
 
 interface Props {
-  orders:     Order[];
-  orderId:    string;
-  table:      Table | null;
-  onClose:    () => void;
-  onClosed:   () => void;
-  isHistory?: boolean;
-  cartItems?: { menu_item_id: number; name: string; price: number; quantity: number; note: string }[];
+  orders:           Order[];
+  orderId:          string;
+  table:            Table | null;
+  onClose:          () => void;
+  onClosed:         () => void;
+  isHistory?:       boolean;
+  cartItems?:       { menu_item_id: number; name: string; price: number; quantity: number; note: string }[];
+  defaultOrderType?: 'dine_in' | 'parcel';   // NEW — pre-selects order type
 }
 
-export default function BillModal({ orders, orderId, table, onClose, onClosed, isHistory = false, cartItems = [] }: Props) {
+export default function BillModal({
+  orders, orderId, table, onClose, onClosed,
+  isHistory = false, cartItems = [],
+  defaultOrderType = 'dine_in',              // default stays dine_in for normal tables
+}: Props) {
   const settings = useSettings();
   const toast    = useToast();
   const sym      = settings.currency_symbol || '₹';
@@ -71,7 +74,8 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
 
   const [activeTab,      setActiveTab]      = useState<'bill' | 'payment'>('bill');
   const [paymentVisited, setPaymentVisited] = useState(false);
-  const [orderType,      setOrderType]      = useState<'dine_in' | 'parcel'>('dine_in');
+  // NEW: initialise from defaultOrderType prop
+  const [orderType,      setOrderType]      = useState<'dine_in' | 'parcel'>(defaultOrderType);
   const [payMethod,      setPayMethod]      = useState('cash');
   const [received,       setReceived]       = useState('');
   const [splits,         setSplits]         = useState<SplitEntry[]>([
@@ -86,10 +90,8 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
   const [warnModal,       setWarnModal]       = useState(false);
 
   const splitTotal   = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
-  const splitBalance = total - splitTotal;
-
-  const receivedNum = parseFloat(received) || 0;
-  const amountPaid  = payMethod === 'split' ? splitTotal : (received ? receivedNum : total);
+  const receivedNum  = parseFloat(received) || 0;
+  const amountPaid   = payMethod === 'split' ? splitTotal : (received ? receivedNum : total);
 
   const switchToPayment = () => { setActiveTab('payment'); setPaymentVisited(true); };
 
@@ -107,11 +109,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
         ? orders[orders.length - 1]?.id
         : orderId;
 
-      if (!closeId) {
-        toast('No order to close', 'error');
-        setPaying(false);
-        return;
-      }
+      if (!closeId) { toast('No order to close', 'error'); setPaying(false); return; }
 
       let paymentDetails: any = null;
       let changeAmt = 0;
@@ -134,7 +132,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
         amount_paid:     amountPaid,
         order_type:      orderType,
       } as any);
-      toast('Table cleared!', 'success');
+      toast('Order closed!', 'success');
       onClosed();
     } catch (err: any) {
       toast(err?.response?.data?.error || 'Failed to close order', 'error');
@@ -146,10 +144,9 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
   const handleMarkPaid = async () => {
     if (!paymentVisited) { setShowPaymentWarn(true); return; }
     if (payMethod === 'split') {
-      const diff = Math.abs(splitBalance);
-      if ((diff > total * WARN_THRESHOLD_PCT || diff > WARN_THRESHOLD_ABS) && splitBalance > 0) {
-        setWarnModal(true);
-        return;
+      const diff = Math.abs(total - splitTotal);
+      if ((diff > total * WARN_THRESHOLD_PCT || diff > WARN_THRESHOLD_ABS) && splitTotal < total) {
+        setWarnModal(true); return;
       }
     } else {
       const diff = total - amountPaid;
@@ -160,7 +157,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
     await executePay();
   };
 
-  const warnDiff = payMethod === 'split' ? splitBalance : (total - amountPaid);
+  const warnDiff = payMethod === 'split' ? (total - splitTotal) : (total - amountPaid);
 
   return (
     <>
@@ -209,7 +206,7 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
             <p className="text-zinc-400 text-sm leading-relaxed mb-5">
               {payMethod === 'split'
                 ? <>The split total ({sym}{splitTotal.toFixed(2)}) is {sym}{Math.abs(warnDiff).toFixed(2)} less than the bill ({sym}{total.toFixed(2)}). Proceed?</>
-                : <>The amount paid ({sym}{amountPaid.toFixed(2)}) is {sym}{Math.abs(warnDiff).toFixed(2)} less than the bill ({sym}{total.toFixed(2)}). This will be recorded and shown in History. Proceed?</>
+                : <>The amount paid ({sym}{amountPaid.toFixed(2)}) is {sym}{Math.abs(warnDiff).toFixed(2)} less than the bill ({sym}{total.toFixed(2)}). Proceed?</>
               }
             </p>
             <div className="flex gap-3">
@@ -233,7 +230,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
             timeStr={timeStr}
           />
 
-          {/* Tab switcher — hidden on print */}
           {!isHistory && (
             <div className="no-print flex-shrink-0 flex bg-white border-b border-gray-100">
               {[
@@ -254,11 +250,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
             </div>
           )}
 
-          {/*
-            BillItems is ALWAYS rendered but hidden on screen when on payment tab.
-            This ensures print always shows the bill content.
-            The `no-print` class on PaymentTab hides it during printing.
-          */}
           <div style={{ display: activeTab === 'bill' || isHistory ? 'flex' : 'none', flexDirection: 'column', flex: activeTab === 'bill' || isHistory ? 1 : undefined, minHeight: 0 }}>
             <BillItems
               items={allItems}
@@ -275,7 +266,6 @@ export default function BillModal({ orders, orderId, table, onClose, onClosed, i
             />
           </div>
 
-          {/* Payment tab — always has no-print so it never prints */}
           {!isHistory && activeTab === 'payment' && (
             <PaymentTab
               brand={brand}

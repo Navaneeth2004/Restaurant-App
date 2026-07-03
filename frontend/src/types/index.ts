@@ -32,6 +32,7 @@ export interface Table {
   status: 'empty' | 'occupied' | 'waiting_bill';
   occupied_since: string | null;
   session_id?: string | null;
+  is_parcel?: boolean;
 }
 
 export interface OrderItem {

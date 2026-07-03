@@ -188,6 +188,9 @@ router.post(
 );
 
 // ── REVENUE EXPORT — Professional CSV / JSON ─────────────────────────────
+// NOTE: kept available in the backend (and the underlying API is unchanged)
+// even though the "Detailed Report" UI section has been removed from the
+// Export tab in the frontend. Nothing else relies on hiding this route.
 router.get('/revenue', (req, res) => {
   const { from, to, format = 'json' } = req.query;
   const today    = new Date().toISOString().split('T')[0];
@@ -458,14 +461,10 @@ router.get('/revenue', (req, res) => {
   });
 });
 
-// ── GST GSTR-1 JSON Export ────────────────────────────────────────────────
-// Generates a portal-uploadable GSTR-1 JSON for the given period.
-// B2CS (B2C Small, below ₹2.5L per invoice) aggregate is the standard
-// path for restaurants. B2B invoices are included when customer_gstin is set.
-router.get('/gst/gstr1', (req, res) => {
-  const { from, to } = req.query;
+// ── Shared helper used by both the GSTR-1 JSON export and its preview ─────
+function computeGstr1Data(from, to) {
   const today    = new Date().toISOString().split('T')[0];
-  const dateFrom = from || today.slice(0, 7) + '-01'; // default to start of current month
+  const dateFrom = from || today.slice(0, 7) + '-01';
   const dateTo   = to   || today;
 
   const settingsRows = db.prepare('SELECT key, value FROM settings').all();
@@ -477,12 +476,10 @@ router.get('/gst/gstr1', (req, res) => {
   const stateCode   = STATE_CODES[stateName] || '32';
   const sacCode     = S.sac_code || '9963';
   const taxPct      = parseFloat(S.tax_percent || '5');
-  const taxRate     = taxPct; // e.g. 5
-  // For intra-state: CGST = SGST = taxRate/2
+  const taxRate     = taxPct;
   const cgstRate    = taxRate / 2;
   const sgstRate    = taxRate / 2;
 
-  // Derive period: MMYYYY for GSTR-1
   const fromDate  = new Date(dateFrom + 'T00:00:00');
   const retPeriod = String(fromDate.getMonth() + 1).padStart(2, '0') + String(fromDate.getFullYear());
 
@@ -499,46 +496,30 @@ router.get('/gst/gstr1', (req, res) => {
     o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id);
   });
 
-  // Separate B2B (customer has GSTIN) from B2C
   const b2bOrders  = orders.filter(o => o.customer_gstin && o.customer_gstin.trim());
   const b2cOrders  = orders.filter(o => !o.customer_gstin || !o.customer_gstin.trim());
 
   function round2(n) { return Math.round(n * 100) / 100; }
 
-  // ── B2CS aggregate (B2C Small — all walk-in/no-GSTIN invoices) ──────────
-  // Grouped by: supply type + rate + place of supply
+  // ── B2CS aggregate ───────────────────────────────────────────────────────
   const b2csMap = {};
   for (const o of b2cOrders) {
     const taxableValue = round2(o.total);
     const key = `OE|${taxRate}|${stateCode}`;
     if (!b2csMap[key]) {
-      b2csMap[key] = {
-        sply_ty: 'INTRA',
-        typ: 'OE',
-        pos: stateCode,
-        txval: 0,
-        iamt: 0,
-        camt: 0,
-        samt: 0,
-        csamt: 0,
-      };
+      b2csMap[key] = { sply_ty: 'INTRA', typ: 'OE', pos: stateCode, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 };
     }
-    b2csMap[key].txval  = round2(b2csMap[key].txval  + taxableValue);
-    b2csMap[key].camt   = round2(b2csMap[key].camt   + taxableValue * cgstRate / 100);
-    b2csMap[key].samt   = round2(b2csMap[key].samt   + taxableValue * sgstRate / 100);
+    b2csMap[key].txval = round2(b2csMap[key].txval + taxableValue);
+    b2csMap[key].camt  = round2(b2csMap[key].camt  + taxableValue * cgstRate / 100);
+    b2csMap[key].samt  = round2(b2csMap[key].samt  + taxableValue * sgstRate / 100);
   }
   const b2csArray = Object.values(b2csMap).map(r => ({ ...r, rt: taxRate }));
 
-  // ── B2B invoices (customers with GSTIN) ──────────────────────────────────
+  // ── B2B invoices ─────────────────────────────────────────────────────────
   const b2bMap = {};
   for (const o of b2bOrders) {
     const gstin_b2b = o.customer_gstin.trim().toUpperCase();
-    if (!b2bMap[gstin_b2b]) {
-      b2bMap[gstin_b2b] = {
-        ctin: gstin_b2b,
-        inv: [],
-      };
-    }
+    if (!b2bMap[gstin_b2b]) b2bMap[gstin_b2b] = { ctin: gstin_b2b, inv: [] };
     const taxableValue = round2(o.total);
     const cgstAmt = round2(taxableValue * cgstRate / 100);
     const sgstAmt = round2(taxableValue * sgstRate / 100);
@@ -548,46 +529,112 @@ router.get('/gst/gstr1', (req, res) => {
     const yyyy = invoiceDate.getFullYear();
 
     b2bMap[gstin_b2b].inv.push({
-      inum:  o.id,
-      idt:   `${dd}-${mm}-${yyyy}`,
-      val:   round2(taxableValue + cgstAmt + sgstAmt),
-      pos:   stateCode,
-      rchrg: 'N',
-      inv_typ: 'R',
-      itms: [{
-        num: 1,
-        itm_det: {
-          ty:   'G',
-          hsn_sc: sacCode,
-          txval: taxableValue,
-          irt:  taxRate,
-          iamt: 0,
-          crt:  cgstRate,
-          camt: cgstAmt,
-          srt:  sgstRate,
-          samt: sgstAmt,
-          csrt: 0,
-          csamt: 0,
-        }
-      }],
+      inum: o.id, idt: `${dd}-${mm}-${yyyy}`, val: round2(taxableValue + cgstAmt + sgstAmt),
+      pos: stateCode, rchrg: 'N', inv_typ: 'R',
+      itms: [{ num: 1, itm_det: { ty: 'G', hsn_sc: sacCode, txval: taxableValue, irt: taxRate, iamt: 0, crt: cgstRate, camt: cgstAmt, srt: sgstRate, samt: sgstAmt, csrt: 0, csamt: 0 } }],
     });
   }
   const b2bArray = Object.values(b2bMap);
 
-  // ── Totals for summary ────────────────────────────────────────────────────
   const totalTaxable = round2(orders.reduce((s, o) => s + o.total, 0));
   const totalCgst    = round2(totalTaxable * cgstRate / 100);
   const totalSgst    = round2(totalTaxable * sgstRate / 100);
 
-  // ── GSTR-1 JSON structure (portal format) ────────────────────────────────
+  // Sums broken out for the preview UI
+  const b2cTaxable = round2(b2cOrders.reduce((s, o) => s + o.total, 0));
+  const b2bTaxable = round2(b2bOrders.reduce((s, o) => s + o.total, 0));
+  const b2bInvoiceCount = b2bOrders.length;
+  const b2cInvoiceCount = b2cOrders.length;
+
+  let itemQty = 0;
+  if (orders.length > 0) {
+    const ids = orders.map(o => `'${o.id.replace(/'/g, "''")}'`).join(',');
+    const itemRows = db.prepare(`SELECT SUM(quantity) as q FROM order_items WHERE order_id IN (${ids})`).get();
+    itemQty = itemRows?.q || 0;
+  }
+
+  return {
+    dateFrom, dateTo, retPeriod,
+    gstin, legalName, stateName, stateCode, sacCode, taxRate, cgstRate, sgstRate,
+    orders, b2bOrders, b2cOrders, b2csArray, b2bArray,
+    totalTaxable, totalCgst, totalSgst,
+    b2cTaxable, b2bTaxable, b2bInvoiceCount, b2cInvoiceCount, itemQty,
+    round2,
+  };
+}
+
+// ── GST GSTR-1 Preview — structured summary for on-screen table preview ──
+// Mirrors the shape used by GSTR-3B/GSTR-9 so the frontend can render the
+// same kind of clean copy-friendly table before the user downloads the
+// actual portal JSON.
+router.get('/gst/gstr1/preview', (req, res) => {
+  const { from, to } = req.query;
+  const d = computeGstr1Data(from, to);
+
+  res.json({
+    period:        { from: d.dateFrom, to: d.dateTo },
+    return_period: d.retPeriod,
+    gstin:         d.gstin,
+    legal_name:    d.legalName,
+    state_name:    d.stateName,
+    state_code:    d.stateCode,
+    sac_code:      d.sacCode,
+    tax_rate:      d.taxRate,
+    order_count:   d.orders.length,
+    item_qty:      d.itemQty,
+
+    // Table-friendly breakdown — B2CS (walk-in aggregate) vs B2B
+    b2cs: {
+      invoice_count: d.b2cInvoiceCount,
+      taxable_value: d.b2cTaxable,
+      central_tax:   d.round2(d.b2cTaxable * d.cgstRate / 100),
+      state_ut_tax:  d.round2(d.b2cTaxable * d.sgstRate / 100),
+    },
+    b2b: {
+      gstin_count:   d.b2bArray.length,
+      invoice_count: d.b2bInvoiceCount,
+      taxable_value: d.b2bTaxable,
+      central_tax:   d.round2(d.b2bTaxable * d.cgstRate / 100),
+      state_ut_tax:  d.round2(d.b2bTaxable * d.sgstRate / 100),
+    },
+    totals: {
+      taxable_value: d.totalTaxable,
+      central_tax:   d.totalCgst,
+      state_ut_tax:  d.totalSgst,
+      total_tax:     d.round2(d.totalCgst + d.totalSgst),
+      total_incl_tax: d.round2(d.totalTaxable + d.totalCgst + d.totalSgst),
+    },
+    hsn_summary: [{
+      hsn_sc: d.sacCode,
+      desc:   'Restaurant Services',
+      uqc:    'OTH',
+      qty:    d.itemQty,
+      taxable: d.totalTaxable,
+      central_tax: d.totalCgst,
+      state_ut_tax: d.totalSgst,
+    }],
+    doc_issued: d.orders.length,
+  });
+});
+
+// ── GST GSTR-1 JSON Export ────────────────────────────────────────────────
+// Generates a portal-uploadable GSTR-1 JSON for the given period.
+// B2CS (B2C Small, below ₹2.5L per invoice) aggregate is the standard
+// path for restaurants. B2B invoices are included when customer_gstin is set.
+router.get('/gst/gstr1', (req, res) => {
+  const { from, to } = req.query;
+  const d = computeGstr1Data(from, to);
+
+  const periodLabel = from ? `${d.dateFrom}_to_${d.dateTo}` : d.retPeriod;
+
   const gstr1 = {
-    gstin,
-    fp:   retPeriod,
-    gt:   round2(totalTaxable + totalCgst + totalSgst),
-    cur_gt: round2(totalTaxable + totalCgst + totalSgst),
-    b2b:  b2bArray,
-    b2c:  [], // B2CL (large, above ₹2.5L) — not applicable for restaurants
-    b2cs: b2csArray,
+    gstin: d.gstin,
+    fp:    d.retPeriod,
+    gt:    d.round2(d.totalTaxable + d.totalCgst + d.totalSgst),
+    cur_gt: d.round2(d.totalTaxable + d.totalCgst + d.totalSgst),
+    b2b:  d.b2bArray,
+    b2c:  [],
+    b2cs: d.b2csArray,
     cdnr: [],
     cdnur: [],
     exp:  [],
@@ -596,32 +643,25 @@ router.get('/gst/gstr1', (req, res) => {
     hsn: {
       data: [{
         num: 1,
-        hsn_sc: sacCode,
+        hsn_sc: d.sacCode,
         desc: 'Restaurant Services',
         uqc: 'OTH',
-        cnt: orders.length,
-        txval: totalTaxable,
+        cnt: d.orders.length,
+        txval: d.totalTaxable,
         iamt: 0,
-        camt: totalCgst,
-        samt: totalSgst,
+        camt: d.totalCgst,
+        samt: d.totalSgst,
         csamt: 0,
       }]
     },
     doc_issue: {
       doc_det: [{
         doc_num: 1,
-        docs: [{
-          num: 1,
-          to: orders.length,
-          totnum: orders.length,
-          cancel: 0,
-          net_issue: orders.length,
-        }]
+        docs: [{ num: 1, to: d.orders.length, totnum: d.orders.length, cancel: 0, net_issue: d.orders.length }]
       }]
     },
   };
 
-  const periodLabel = from ? `${dateFrom}_to_${dateTo}` : retPeriod;
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Content-Disposition', `attachment; filename="GSTR1_${periodLabel}.json"`);
   res.json(gstr1);

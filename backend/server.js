@@ -52,35 +52,6 @@ app.get('/api/network-info', (req, res) => {
   res.json({ lan_ip: getLanIp(), port: PORT });
 });
 
-app.use('/api/auth',                require('./middleware/auth').tokenRouter());
-app.use('/api/settings',            require('./routes/settings'));
-app.use('/api/categories',          require('./routes/categories'));
-app.use('/api/menu',                require('./routes/menu'));
-app.use('/api/tables',              require('./routes/tables'));
-app.use('/api/orders',              require('./routes/orders'));
-app.use('/api/staff',               require('./routes/staff'));
-app.use('/api/reports',             require('./routes/reports'));
-app.use('/api/export',              require('./routes/export'));
-app.use('/api/backup',              require('./routes/backup'));
-app.use('/api/reset',               require('./routes/reset'));
-app.use('/api/bug-report',          require('./routes/bug-report'));
-
-// ── Kiosk routes (public — no auth middleware applied) ────────────────────
-app.use('/api/kiosk',               require('./routes/kiosk'));
-
-const buildDir = path.join(__dirname, '..', 'frontend', 'build');
-if (fs.existsSync(buildDir)) {
-  app.use(express.static(buildDir));
-
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads'))
-      res.sendFile(path.join(buildDir, 'index.html'));
-  });
-  console.log('[Server] Serving frontend from', buildDir);
-} else {
-  console.log('[Server] No frontend build found.');
-}
-
 io.on('connection', socket => {
   console.log('[Socket] Connected:', socket.id);
   socket.on('disconnect', () => console.log('[Socket] Disconnected:', socket.id));
@@ -99,6 +70,35 @@ function startMdns() {
 async function start() {
   const db = require('./db/database');
   await db.init();
+
+  // ── Load routes AFTER db.init() so route module migrations can run safely ──
+  app.use('/api/auth',                require('./middleware/auth').tokenRouter());
+  app.use('/api/settings',            require('./routes/settings'));
+  app.use('/api/categories',          require('./routes/categories'));
+  app.use('/api/menu',                require('./routes/menu'));
+  app.use('/api/tables',              require('./routes/tables'));
+  app.use('/api/orders',              require('./routes/orders'));
+  app.use('/api/staff',               require('./routes/staff'));
+  app.use('/api/reports',             require('./routes/reports'));
+  app.use('/api/export',              require('./routes/export'));
+  app.use('/api/backup',              require('./routes/backup'));
+  app.use('/api/reset',               require('./routes/reset'));
+  app.use('/api/parcel',              require('./routes/parcel'));
+  app.use('/api/bug-report',          require('./routes/bug-report'));
+  app.use('/api/kiosk',               require('./routes/kiosk'));
+
+  // ── Frontend SPA catch-all (after all API routes) ──
+  const buildDir = path.join(__dirname, '..', 'frontend', 'build');
+  if (fs.existsSync(buildDir)) {
+    app.use(express.static(buildDir));
+    app.get('*', (req, res) => {
+      if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads'))
+        res.sendFile(path.join(buildDir, 'index.html'));
+    });
+    console.log('[Server] Serving frontend from', buildDir);
+  } else {
+    console.log('[Server] No frontend build found.');
+  }
 
   server.listen(PORT, '0.0.0.0', () => {
     const lanIp = getLanIp();
