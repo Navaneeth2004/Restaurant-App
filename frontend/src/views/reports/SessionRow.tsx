@@ -12,9 +12,18 @@
  * FIX (parcel label): the summary row and header used to always render
  * "Table {tableId}", which read as "Table P1" for parcel/takeaway orders —
  * nonsensical since there's no physical table. Now uses tableDisplayLabel()
- * from utils/sessions, which renders "Parcel 1" for parcel ids and
- * "Table T1" for real dine-in tables, matching the label style already
- * used on the waiter side.
+ * from utils/sessions, which renders "Parcel 1" for parcel ids.
+ *
+ * FIX (customer GSTIN): PaymentEditModal accepts a currentCustomerGstin prop
+ * to pre-fill the field, but this component never passed it — so the GSTIN
+ * input always rendered blank when editing an order that already had one
+ * saved, even though the backend correctly preserves the stored value.
+ * Also, session.customerGstin didn't exist until utils/sessions.ts was
+ * fixed to track it — meaning a reprinted bill from History could never
+ * show the customer's GSTIN even when it was correctly stored on the order.
+ * Both are now wired through: the modal is pre-filled with the real saved
+ * value, edits update local state via the existing onSaved callback param,
+ * and the value is forwarded into ReprintBill's session object.
  *
  * REDESIGN NOTES (unchanged from before):
  * - Summary row no longer crams icon + title + badges + amount + chevron
@@ -88,6 +97,8 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const [paymentDetails,  setPaymentDetails]  = useState<any>(session.paymentDetails);
   const [amountPaid, setAmountPaid] = useState<number | null>(session.amountPaid ?? null);
   const [orderType, setOrderType] = useState<'dine_in' | 'parcel' | null>(session.orderType ?? null);
+  // FIX: now backed by a real field on TableSession instead of always undefined.
+  const [customerGstin, setCustomerGstin] = useState<string | null>(session.customerGstin ?? null);
 
   const tax       = session.totalAmount * taxPct;
   const billTotal = session.totalAmount + tax;
@@ -97,7 +108,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
 
   const date = new Date(session.startedAt);
 
-  // FIX: display label — "Parcel 1" for parcel slots, "Table T1" otherwise.
+  // Display label — "Parcel 1" for parcel slots, "Table T1" otherwise.
   const displayLabel = tableDisplayLabel(session.tableId);
 
   // FIX: round count / "multi-round" status is based on KITCHEN rounds only.
@@ -126,7 +137,10 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
     <>
       {showBill && (
         <ReprintBill
-          session={{ ...session, paymentMethod, paymentDetails }}
+          // FIX: forward the real customerGstin so a B2B reprint from
+          // History can actually display it — previously this field was
+          // structurally always undefined on TableSession.
+          session={{ ...session, paymentMethod, paymentDetails, customerGstin }}
           onClose={() => setShowBill(false)}
         />
       )}
@@ -137,9 +151,11 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
           currentAmountPaid={amountPaid}
           currentPaymentDetails={paymentDetails}
           currentOrderType={orderType}
+          // FIX: pre-fill with the real saved value instead of always blank.
+          currentCustomerGstin={customerGstin}
           total={session.totalAmount}
           onClose={() => setShowPaymentEdit(false)}
-          onSaved={(newMethod, newDetails, newAmountPaid, newOrderType) => {
+          onSaved={(newMethod, newDetails, newAmountPaid, newOrderType, newGstin) => {
             setPaymentMethod(newMethod);
             setPaymentDetails(newDetails ?? null);
             if (typeof newAmountPaid === 'number') {
@@ -147,6 +163,15 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
             }
             if (newOrderType) {
               setOrderType(newOrderType);
+            }
+            // FIX: keep local state in sync after a successful edit. The
+            // modal only sends a value when the field is non-empty (backend
+            // COALESCEs on undefined, i.e. leaves the stored value alone),
+            // so only overwrite local state when a real value comes back —
+            // otherwise a blank submission would wrongly wipe the
+            // already-displayed GSTIN even though nothing changed server-side.
+            if (newGstin) {
+              setCustomerGstin(newGstin);
             }
             setShowPaymentEdit(false);
           }}
@@ -228,7 +253,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
         {expanded && (
           <div className="border-t border-surface-border">
             {/* Customer info */}
-            {(session.customerName || session.customerPhone) && (
+            {(session.customerName || session.customerPhone || customerGstin) && (
               <div className="px-4 pt-3 pb-3 border-b border-surface-border/60">
                 <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-1.5">Customer</p>
                 <div className="flex items-center gap-3 flex-wrap">
@@ -242,6 +267,12 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                     <span className="flex items-center gap-1.5 text-xs text-zinc-300">
                       <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" /></svg>
                       {session.customerPhone}
+                    </span>
+                  )}
+                  {customerGstin && (
+                    <span className="flex items-center gap-1.5 text-xs text-indigo-300 font-mono">
+                      <svg className="w-3 h-3 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12" /></svg>
+                      {customerGstin}
                     </span>
                   )}
                 </div>

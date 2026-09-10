@@ -25,6 +25,15 @@
  * here so SessionRow.tsx and ReprintBill.tsx (both already import from this
  * file) can share the same detection logic that WaiterView.tsx already uses
  * for the waiter-side table list, instead of each screen guessing on its own.
+ *
+ * FIX (customer GSTIN missing from sessions): TableSession previously had no
+ * customerGstin field at all, and this function never read order.customer_gstin
+ * into the session the way it already does for customer_name/customer_phone.
+ * ReprintBill.tsx reads `(session as any).customerGstin` — that field was
+ * structurally always undefined, so a B2B customer's GSTIN could never show
+ * up on a reprinted bill from History, even though it's correctly stored on
+ * the order row itself. Now tracked and copied over the same way name/phone
+ * already are.
  */
 
 import type { Order } from '../types';
@@ -45,6 +54,8 @@ export interface TableSession {
   amountPaid:    number | null;
   customerName:  string | null;
   customerPhone: string | null;
+  /** FIX: was missing entirely — needed so B2B reprints can show the GSTIN. */
+  customerGstin: string | null;
   /** 'dine_in' or 'parcel' — taken from the most recent round with a value set. */
   orderType:     'dine_in' | 'parcel' | null;
 }
@@ -63,7 +74,7 @@ function isDirectBill(order: Order): boolean {
 }
 
 /**
- * FIX: Returns true if this table id is a parcel/takeaway slot (P1, P2, ...).
+ * Returns true if this table id is a parcel/takeaway slot (P1, P2, ...).
  * Mirrors the isParcel() helper already used in WaiterView.tsx so the same
  * detection logic is shared instead of duplicated (and possibly drifting)
  * across every screen that displays a table id.
@@ -73,7 +84,7 @@ export function isParcelId(tableId: string): boolean {
 }
 
 /**
- * FIX: Human-readable label for a table id, correctly distinguishing
+ * Human-readable label for a table id, correctly distinguishing
  * parcel/takeaway slots from real dine-in tables. "Table P1" reads as
  * nonsense to a restaurant owner — "Parcel 1" is what it actually is.
  */
@@ -153,6 +164,8 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
 
       if ((order as any).customer_name)  existing.customerName  = (order as any).customer_name;
       if ((order as any).customer_phone) existing.customerPhone = (order as any).customer_phone;
+      // FIX: was never copied over at all — same pattern as name/phone above.
+      if ((order as any).customer_gstin) existing.customerGstin = (order as any).customer_gstin;
 
       for (const item of order.items) {
         const itemKey = `${item.name}||${item.note || ''}||${item.price}`;
@@ -197,6 +210,8 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       amountPaid:     hasAmountPaid ? orderAmountPaid : null,
       customerName:   (order as any).customer_name   || null,
       customerPhone:  (order as any).customer_phone  || null,
+      // FIX: was missing entirely from the initial session object too.
+      customerGstin:  (order as any).customer_gstin  || null,
       orderType:      (order as any).order_type || null,
     };
 
