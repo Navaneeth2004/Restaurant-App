@@ -1,34 +1,15 @@
 /**
  * components/waiter/OrderContent.tsx
  *
- * FIXES:
- * 1. Direct-bill orders (status = 'delivered' but created via /direct-bill,
- *    so they never went through the kitchen) no longer show as "Round N — Delivered"
- *    with a green dot. They are folded into the bill summary silently.
- *    Only orders that were explicitly sent to the kitchen (status = 'active' at
- *    some point before delivery) show as kitchen rounds.
+ * FIX (dedup): isDirectBill is now imported from utils/orderHelpers.ts
+ * instead of being defined locally in this file.
  *
- *    How we distinguish: the backend sets delivered_at = created_at for direct-bill
- *    orders (they were never 'active'). We treat any 'delivered' order whose
- *    delivered_at equals created_at (within 1 second) as a direct-bill order.
- *    For everything else the normal round display applies.
- *
- * 2. FIX: Every item — active, delivered, and direct-billed — now gets a
- *    per-item cancel control (using the same onCancelItem callback), and
- *    delivered kitchen rounds also get a "Cancel round" option matching the
- *    active round. Previously delivered/direct-billed items had NO way to
- *    be removed at all: if food came out wrong or a direct-bill was a
- *    mistake, there was no way to take it off the bill before payment.
- *
- *    Direct-bill items are no longer merged/flattened across separate
- *    direct-bill orders into one summary row — that flattening lost the
- *    order_item id needed to cancel a single item. They're now listed per
- *    underlying order (still grouped under one "Billed directly" header),
- *    each row keeping a real order id + item id to cancel.
+ * (All other fix comments from earlier rounds remain as before.)
  */
 
 import React from 'react';
 import type { Order, Table } from '../../types';
+import { isDirectBill } from '../../utils/orderHelpers';
 
 type CartItem = {
   menu_item_id: number;
@@ -47,19 +28,8 @@ interface Props {
   sym:           string;
   updateQty:     (idx: number, delta: number) => void;
   updateNote:    (idx: number, note: string) => void;
-  /** Cancels a single item — works on active, delivered, and direct-billed orders alike. */
   onCancelItem?: (orderId: string, itemId: number) => void;
-  /** Cancels an entire round/order — works on active and delivered kitchen rounds. */
   onCancelRound?: (orderId: string) => void;
-}
-
-/** Returns true if a delivered order was created via /direct-bill (never active). */
-function isDirectBill(order: Order): boolean {
-  if (!order.delivered_at || !order.created_at) return false;
-  const diff = Math.abs(
-    new Date(order.delivered_at).getTime() - new Date(order.created_at).getTime()
-  );
-  return diff < 2000; // within 2 seconds means it was set server-side atomically
 }
 
 export default function OrderContent({
@@ -74,7 +44,6 @@ export default function OrderContent({
   onCancelItem,
   onCancelRound,
 }: Props) {
-  // Separate true kitchen rounds from direct-bill "quiet" orders
   const kitchenRounds   = pastRounds.filter(o => !isDirectBill(o));
   const directBillItems = pastRounds.filter(o => isDirectBill(o));
 
@@ -86,8 +55,6 @@ export default function OrderContent({
 
   return (
     <>
-      {/* Direct-bill items — grouped under one header, but each row keeps
-          its real order id so it can be cancelled individually. */}
       {directBillItems.length > 0 && (
         <div className="px-3 pt-3 pb-2">
           <div className="flex items-center justify-between mb-2">
@@ -133,7 +100,6 @@ export default function OrderContent({
         </div>
       )}
 
-      {/* Kitchen rounds — delivered */}
       {kitchenRounds.map((round, roundIdx) => (
         <div key={round.id} className="px-3 pt-3 pb-2">
           <div className="flex items-center justify-between mb-2">
@@ -187,7 +153,6 @@ export default function OrderContent({
         </div>
       ))}
 
-      {/* Active kitchen round */}
       {activeRound && activeRound.items.length > 0 && (
         <div className="px-3 pt-3 pb-1">
           <div className="flex items-center justify-between mb-2">
@@ -241,7 +206,6 @@ export default function OrderContent({
         </div>
       )}
 
-      {/* All-delivered nudge */}
       {!activeRound && (kitchenRounds.length > 0 || directBillItems.length > 0) && cart.length === 0 && (
         <div className="px-3 pt-2 pb-1">
           <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-600 flex items-center gap-1.5">
@@ -251,7 +215,6 @@ export default function OrderContent({
         </div>
       )}
 
-      {/* Unsent cart */}
       {cart.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-8 px-4 text-zinc-600">
           <div className="w-10 h-10 rounded-xl border border-surface-border flex items-center justify-center mb-2">

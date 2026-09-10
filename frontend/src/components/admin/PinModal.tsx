@@ -1,12 +1,12 @@
 /**
  * components/admin/PinModal.tsx
  *
- * Numeric PIN-entry modal used by AdminLockContext (both the blocking
- * "requestPin" flow and the inline "requirePin" flow).
- * Extracted from AdminLockContext.tsx.
+ * FIX (dedup): the numpad grid is now the shared PinPad component instead
+ * of a duplicated copy of LoginScreen.tsx's grid.
  */
 import React, { useState } from 'react';
 import { useToast } from '../../context/ToastContext';
+import PinPad from '../PinPad';
 
 interface PinModalProps {
   title?: string;
@@ -52,15 +52,6 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
     }
   };
 
-  const cells: ('digit' | 'back' | 'login')[] = [
-    'digit','digit','digit',
-    'digit','digit','digit',
-    'digit','digit','digit',
-    'back', 'digit','login',
-  ];
-  const digitValues = [1,2,3,4,5,6,7,8,9,0];
-  let digitIdx = 0;
-
   return (
     <div
       className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4"
@@ -77,7 +68,6 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
           {subtitle && <p className="text-zinc-500 text-xs mt-0.5">{subtitle}</p>}
         </div>
 
-        {/* PIN dots */}
         <div
           className="flex justify-center gap-3 mb-5"
           style={shake ? { animation: 'shake 0.3s ease-in-out' } : {}}
@@ -91,53 +81,14 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
           ))}
         </div>
 
-        {/* Numpad */}
-        <div className="grid grid-cols-3 gap-2">
-          {cells.map((type, i) => {
-            if (type === 'digit') {
-              const val = digitValues[digitIdx++];
-              return (
-                <button
-                  key={i}
-                  onClick={() => handleDigit(String(val))}
-                  disabled={loading}
-                  className="h-12 rounded-xl font-mono font-medium text-lg border bg-surface-raised border-surface-border text-white hover:bg-zinc-600 active:scale-95 transition-all duration-100 select-none disabled:opacity-50"
-                >
-                  {val}
-                </button>
-              );
-            }
-            if (type === 'back') {
-              return (
-                <button
-                  key={i}
-                  onClick={handleBack}
-                  disabled={loading || pin.length === 0}
-                  className="h-12 rounded-xl border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 active:scale-95 transition-all disabled:opacity-30 flex items-center justify-center"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9.75L14.25 12m0 0l2.25 2.25M14.25 12l2.25-2.25M14.25 12L12 14.25m-2.58 4.92l-6.374-6.375a1.125 1.125 0 010-1.59L9.42 4.83c.211-.211.498-.33.796-.33H19.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25h-9.284c-.298 0-.585-.119-.796-.33z" />
-                  </svg>
-                </button>
-              );
-            }
-            return (
-              <button
-                key={i}
-                onClick={handleSubmit}
-                disabled={loading || pin.length < 4}
-                className="h-12 rounded-xl border bg-brand-500 border-brand-600 text-white hover:bg-brand-600 active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
-              >
-                {loading
-                  ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                  : <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                    </svg>
-                }
-              </button>
-            );
-          })}
-        </div>
+        <PinPad
+          pin={pin}
+          loading={loading}
+          size="md"
+          onDigit={handleDigit}
+          onBack={handleBack}
+          onSubmit={handleSubmit}
+        />
 
         <button
           onClick={onCancel}

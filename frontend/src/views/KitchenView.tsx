@@ -26,6 +26,15 @@ interface Cancellation {
   createdAt: string;
 }
 
+// FIX (#6.3): both Addition and Cancellation card ids previously used only
+// `${orderId}-${Date.now()}` — two events firing within the same
+// millisecond (e.g. a batch of near-simultaneous kitchen updates) produced
+// identical ids, so removing one via its 5-minute timeout could remove
+// both, and React would warn about duplicate keys. A monotonic counter
+// suffix guarantees uniqueness regardless of timing.
+let _seq = 0;
+function nextSeq(): number { return ++_seq; }
+
 function playCancelChime(): void {
   try {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -54,8 +63,6 @@ export default function KitchenView() {
   const [delivering,    setDelivering]    = useState<string | null>(null);
   const toast = useToast();
   const settings = useSettings();
-  // Configurable from Admin → Restaurant → "Kitchen Overdue Threshold".
-  // Falls back to 20 minutes if unset or invalid.
   const overdueMins = parseInt((settings as any).kitchen_overdue_mins || '20', 10) || 20;
   useTick(15000);
 
@@ -81,15 +88,11 @@ export default function KitchenView() {
 
   useSocket('order_additions', (data: { orderId: string; tableId: string; additions: OrderItem[]; createdAt: string }) => {
     playChime();
-    const addition: Addition = { id: `${data.orderId}-${Date.now()}`, ...data };
+    const addition: Addition = { id: `${data.orderId}-${Date.now()}-${nextSeq()}`, ...data };
     setAdditions(prev => [...prev, addition]);
     setTimeout(() => setAdditions(prev => prev.filter(a => a.id !== addition.id)), 5 * 60 * 1000);
   });
 
-  // ── FIX: Item cancelled from active/delivered order ────────────────────
-  // When a single-item order has its only item removed, the backend fires
-  // order_item_cancelled AND order_closed. We must show a cancellation card
-  // regardless of whether the order is fully gone.
   useSocket('order_item_cancelled', (data: {
     orderId: string;
     tableId: string;
@@ -99,9 +102,8 @@ export default function KitchenView() {
   }) => {
     playCancelChime();
 
-    // Always show a cancellation card for the removed item
     const cancellation: Cancellation = {
-      id: `cancel-item-${data.orderId}-${Date.now()}`,
+      id: `cancel-item-${data.orderId}-${Date.now()}-${nextSeq()}`,
       orderId: data.orderId,
       tableId: data.tableId,
       type: 'item',
@@ -111,10 +113,8 @@ export default function KitchenView() {
     setCancellations(prev => [...prev, cancellation]);
     setTimeout(() => setCancellations(prev => prev.filter(c => c.id !== cancellation.id)), 5 * 60 * 1000);
 
-    // Update or remove the order from the active list
     const updatedItems = data.updatedOrder?.items ?? [];
     if (updatedItems.length === 0) {
-      // Order is now empty — remove from kitchen view
       setOrders(prev => prev.filter(o => o.id !== data.orderId));
       setAdditions(prev => prev.filter(a => a.orderId !== data.orderId));
     } else {
@@ -122,13 +122,12 @@ export default function KitchenView() {
     }
   });
 
-  // Entire round cancelled
   useSocket('order_round_cancelled', (data: { orderId: string; tableId: string; cancelledItems: OrderItem[]; orderStatus: string }) => {
     playCancelChime();
     setOrders(prev => prev.filter(o => o.id !== data.orderId));
     setAdditions(prev => prev.filter(a => a.orderId !== data.orderId));
     const cancellation: Cancellation = {
-      id: `cancel-round-${data.orderId}-${Date.now()}`,
+      id: `cancel-round-${data.orderId}-${Date.now()}-${nextSeq()}`,
       orderId: data.orderId,
       tableId: data.tableId,
       type: 'round',
@@ -147,8 +146,6 @@ export default function KitchenView() {
   useSocket('order_closed', ({ orderId }: { orderId: string }) => {
     setOrders(prev => prev.filter(o => o.id !== orderId));
     setAdditions(prev => prev.filter(a => a.orderId !== orderId));
-    // Note: we do NOT remove cancellations here — they need to stay visible
-    // so kitchen staff can see what was cancelled even after the order closes.
   });
 
   const handleDeliver = async (orderId: string) => {
@@ -170,7 +167,6 @@ export default function KitchenView() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
       <div className="flex-shrink-0 flex items-center gap-2 px-4 py-3 border-b border-surface-border bg-surface-card/50 flex-wrap">
         <h2 className="font-bold text-white text-sm whitespace-nowrap">Kitchen Display</h2>
         <div className="flex items-center gap-2 flex-wrap">
@@ -216,7 +212,6 @@ export default function KitchenView() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
 
-            {/* Cancellation cards — shown FIRST, most urgent */}
             {cancellations.map(c => (
               <div key={c.id} className="rounded-xl border border-red-500/70 overflow-hidden flex flex-col animate-slide-up shadow-lg shadow-red-500/15">
                 <div className="px-4 py-3 flex items-center justify-between bg-red-600">
@@ -269,7 +264,6 @@ export default function KitchenView() {
               </div>
             ))}
 
-            {/* Addition cards */}
             {additions.map(addition => (
               <div key={addition.id} className="rounded-xl border border-amber-500/60 overflow-hidden flex flex-col animate-slide-up shadow-lg shadow-amber-500/10">
                 <div className="px-4 py-3 flex items-center justify-between bg-amber-500">
@@ -317,7 +311,6 @@ export default function KitchenView() {
               </div>
             ))}
 
-            {/* Regular order cards */}
             {orders.map(order => {
               const urgent  = isUrgent(order.created_at, overdueMins);
               const elapsed = formatElapsed(order.created_at);

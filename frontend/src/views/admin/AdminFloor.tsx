@@ -1,19 +1,18 @@
 /**
  * frontend/src/views/admin/AdminFloor.tsx
  *
- * FIXES (previous rounds):
- * 1-5. See earlier comments in this file's history: socket refresh wiring,
- *      tz-aware /stats, removed 🔥 emoji.
+ * FIX (#5.4): loadTableOrders previously reimplemented getTableOrders()
+ * inline (manual token fetch + raw fetch('/api/orders/table/:id/all'))
+ * instead of importing the existing getTableOrders helper from
+ * services/api.ts, which does exactly that through the shared,
+ * token-cached axios client.
  *
- * FIX (token caching): loadTableOrders and DetailPanel's stats useEffect
- * each did their own manual /api/auth/token fetch on every single call,
- * with no caching at all — unlike AdminMenu/AdminTables which already went
- * through the cached axios instance in services/api.ts. Both now use the
- * shared, correctly-cached authedFetch()/getToken() from utils/authedFetch.
+ * (All other fix comments from earlier rounds — socket refresh wiring,
+ * tz-aware /stats, removed 🔥 emoji, shared token cache — remain as before.)
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { getTables, getActiveOrders, getReportToday } from '../../services/api';
+import { getTables, getActiveOrders, getReportToday, getTableOrders } from '../../services/api';
 import { useSocket } from '../../hooks/useSocket';
 import { useTick } from '../../hooks/useTick';
 import { useSettings } from '../../context/SettingsContext';
@@ -199,8 +198,6 @@ function DetailPanel({ table, order, allTableOrders, sym, onClose }: {
     setStats(null);
     async function load() {
       try {
-        // FIX: was a manual token-fetch-per-call — now uses the shared,
-        // cached authedFetch() wrapper instead.
         const tzOffsetMin = -new Date().getTimezoneOffset();
         const API_BASE = window.location.origin;
         const res = await authedFetch(`${API_BASE}/api/tables/${table.id}/stats?tz_offset_min=${tzOffsetMin}`);
@@ -338,16 +335,13 @@ export default function AdminFloor() {
   const loadOrders  = useCallback(async () => { try { setOrders(await getActiveOrders()); } catch {} }, []);
   const loadSummary = useCallback(async () => { try { setSummary(await getReportToday()); } catch {} }, []);
 
-  // FIX: was a manual token-fetch-per-call with no caching — now uses the
-  // shared, cached authedFetch() wrapper instead.
+  // FIX (#5.4): reuse getTableOrders() from services/api.ts (goes through
+  // the shared, cached axios client) instead of a manually reimplemented
+  // token-fetch + raw fetch() call.
   const loadTableOrders = useCallback(async (tableId: string) => {
-    const API_BASE = window.location.origin;
     try {
-      const res = await authedFetch(`${API_BASE}/api/orders/table/${tableId}/all`);
-      if (res.ok) {
-        const tableOrders: Order[] = await res.json();
-        setTableOrdersMap(prev => ({ ...prev, [tableId]: tableOrders }));
-      }
+      const tableOrders = await getTableOrders(tableId);
+      setTableOrdersMap(prev => ({ ...prev, [tableId]: tableOrders }));
     } catch {}
   }, []);
 
@@ -485,7 +479,6 @@ export default function AdminFloor() {
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%', overflow:'hidden', background:'#18181b' }}>
 
-      {/* ── Top bar ── */}
       <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap', padding:'10px 20px', borderBottom:'1px solid #27272a', flexShrink:0, background:'#18181b' }}>
         <p style={{ color:'#fff', fontWeight:700, fontSize:'13px', margin:0 }}>Floor View</p>
         <span style={{ display:'inline-flex', alignItems:'center', gap:'5px', padding:'2px 8px', borderRadius:'99px', background:'rgba(16,185,129,0.1)', border:'1px solid rgba(16,185,129,0.2)', color:'#10b981', fontSize:'10px', fontWeight:700 }}>
@@ -512,7 +505,6 @@ export default function AdminFloor() {
         </div>
       </div>
 
-      {/* ── DESKTOP ── */}
       <div className="hidden md:flex" style={{ flex:1, overflow:'hidden' }}>
         <div style={{ flex:1, overflowY:'auto', padding:'20px', display:'flex', flexDirection:'column', gap:'16px' }}>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))', gap:'10px' }}>
@@ -591,7 +583,6 @@ export default function AdminFloor() {
         )}
       </div>
 
-      {/* ── MOBILE ── */}
       <div className="flex md:hidden" style={{ flex:1, overflowY:'auto', flexDirection:'column' }}>
         <div style={{ flexShrink:0, overflowX:'auto', display:'flex', gap:'8px', padding:'12px 16px', borderBottom:'1px solid #27272a', scrollbarWidth:'none' }}>
           {[

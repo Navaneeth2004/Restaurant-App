@@ -25,11 +25,6 @@ router.put('/:id', (req, res) => {
   res.json({ success: true });
 });
 
-// PATCH reorder categories
-// FIX: previously did not emit categories_updated (same rationale/mistake
-// as menu.js's reorder route — see the comment there). AdminCategories.tsx
-// already guards its own optimistic state with a local isSaving ref, so
-// suppressing this broadcast only stopped other devices from syncing.
 router.patch('/reorder', (req, res) => {
   const { order } = req.body;
   if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
@@ -43,12 +38,14 @@ router.patch('/reorder', (req, res) => {
 router.delete('/:id', (req, res) => {
   const count = db.prepare('SELECT COUNT(*) as c FROM menu_items WHERE category_id = ?').get(req.params.id).c;
   if (count > 0) {
+    // FIX (#6.5): removed vestigial 'billed_direct' — see comment in
+    // routes/tables.js's GET '/' handler.
     const inActiveOrder = db.prepare(`
       SELECT COUNT(*) as c FROM order_items oi
       JOIN orders o ON oi.order_id = o.id
       JOIN menu_items m ON oi.menu_item_id = m.id
       WHERE m.category_id = ?
-        AND o.status IN ('active', 'delivered', 'billed_direct')
+        AND o.status IN ('active', 'delivered')
     `).get(req.params.id).c;
 
     if (inActiveOrder > 0) {

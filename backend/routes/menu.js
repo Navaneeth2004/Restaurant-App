@@ -7,9 +7,6 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db/database');
 
-// Migration runs lazily on first request via hasSortOrderCol()
-// so the DB is guaranteed to be ready.
-
 const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -30,7 +27,6 @@ const upload = multer({
   }
 });
 
-// One-time seed: run after DB is confirmed ready (called from GET /)
 let _seeded = false;
 function seedSortOrder() {
   if (_seeded) return;
@@ -192,17 +188,6 @@ router.put('/:id', upload.single('image'), (req, res) => {
   res.json(item);
 });
 
-// PATCH reorder menu items
-// FIX: previously this deliberately did NOT emit menu_updated, on the theory
-// that it would cause the reordering client's OWN optimistic UI to be
-// reverted by a reload racing the DB write. But AdminMenu.tsx already
-// guards against exactly that with its own local `isSaving` ref (checked
-// before calling load() on every menu_updated listener) — so the socket
-// suppression here was never actually protecting anything locally; it was
-// only ever stopping OTHER connected devices from ever seeing the new
-// order in real time, unlike every other menu mutation in this file. Now
-// emits like everything else — the existing isSaving guard on the
-// originating client absorbs its own echo of this event correctly.
 router.patch('/reorder', (req, res) => {
   const { items } = req.body;
   if (!Array.isArray(items) || items.length === 0) {
@@ -229,11 +214,13 @@ router.delete('/:id', (req, res) => {
   const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Not found' });
 
+  // FIX (#6.5): removed vestigial 'billed_direct' — see comment in
+  // routes/tables.js's GET '/' handler.
   const inUse = db.prepare(`
     SELECT oi.id FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
     WHERE oi.menu_item_id = ?
-      AND o.status IN ('active', 'delivered', 'billed_direct')
+      AND o.status IN ('active', 'delivered')
     LIMIT 1
   `).get(req.params.id);
   if (inUse) {

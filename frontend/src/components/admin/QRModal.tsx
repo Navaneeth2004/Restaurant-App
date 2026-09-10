@@ -6,11 +6,21 @@
  *    192.168.x.x address — works on any phone on the same WiFi.
  * 2. Warning banner is compact (one line) so the modal doesn't get too tall.
  * 3. Falls back to window.location.origin if LAN IP can't be determined.
+ * 4. FIX (#6.1): Print and Download previously built qrImgSrc from a single
+ *    hardcoded chart.googleapis.com URL, with no fallback — if that
+ *    specific endpoint was unreachable, both silently failed even though
+ *    the on-screen preview (which uses QrImage.tsx's multi-provider
+ *    fallback) kept working fine. Download now uses
+ *    fetchQrBlobWithFallback() to try every provider before giving up.
+ *    Print embeds all provider URLs into the print window and lets its
+ *    <img> retry the next source on error, the same way QrImage.tsx does
+ *    for the on-screen preview.
  */
 
 import React, { useEffect, useState } from 'react';
 import { authedJson } from '../../utils/authedFetch';
 import QrImage from '../QrImage';
+import { qrSources, fetchQrBlobWithFallback } from '../../utils/qrFallback';
 import type { Table } from '../../types';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
@@ -27,8 +37,6 @@ export default function QRModal({ table, onClose }: Props) {
   const [error,    setError]    = useState<string | null>(null);
   const [copied,   setCopied]   = useState(false);
 
-  // Build the kiosk URL using the LAN IP if available, else current origin.
-  // Using LAN IP means the QR works on phones connected to the same WiFi.
   const currentPort = window.location.port ? `:${window.location.port}` : '';
   const baseOrigin  = lanIp
     ? `http://${lanIp}${currentPort}`
@@ -37,14 +45,13 @@ export default function QRModal({ table, onClose }: Props) {
   const kioskUrl  = token ? `${baseOrigin}/kiosk/${token}` : null;
   const isLocalhost = !lanIp && window.location.hostname === 'localhost';
 
-  const qrImgSrc = kioskUrl
-    ? `https://chart.googleapis.com/chart?cht=qr&chs=256x256&chl=${encodeURIComponent(kioskUrl)}&choe=UTF-8&chld=M|2`
-    : null;
+  // FIX (#6.1): full provider fallback list, used by both Print and Download.
+  const qrImgSources = kioskUrl ? qrSources(kioskUrl, 256) : [];
+  const qrImgSrc = qrImgSources[0] || null;
 
   useEffect(() => {
     (async () => {
       try {
-        // Fetch LAN IP and token in parallel
         const [ipData, tokenData] = await Promise.all([
           fetch(`${API_BASE}/api/kiosk/lan-ip`).then(r => r.json()).catch(() => ({ ip: null })),
           authedJson<{ token: string }>(
@@ -70,25 +77,33 @@ export default function QRModal({ table, onClose }: Props) {
     });
   };
 
-  const downloadQR = () => {
-    if (!qrImgSrc) return;
-    fetch(qrImgSrc)
-      .then(r => r.blob())
-      .then(blob => {
-        const url = URL.createObjectURL(blob);
-        const a   = document.createElement('a');
-        a.href     = url;
-        a.download = `qr-${table.label.replace(/\s+/g, '-').toLowerCase()}.png`;
-        a.click();
-        URL.revokeObjectURL(url);
-      })
-      .catch(() => { window.open(qrImgSrc, '_blank'); });
+  // FIX (#6.1): tries every provider in qrSources() before giving up,
+  // instead of only ever trying chart.googleapis.com.
+  const downloadQR = async () => {
+    if (!kioskUrl) return;
+    try {
+      const blob = await fetchQrBlobWithFallback(kioskUrl, 256);
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `qr-${table.label.replace(/\s+/g, '-').toLowerCase()}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Last resort: open the first source directly so the user can
+      // save it manually even if programmatic fetch failed (e.g. CORS).
+      if (qrImgSrc) window.open(qrImgSrc, '_blank');
+    }
   };
 
+  // FIX (#6.1): embeds ALL provider sources into the print window's own
+  // inline script, which cycles to the next source on <img> error — same
+  // fallback behavior QrImage.tsx already gives the on-screen preview.
   const printQR = () => {
-    if (!qrImgSrc || !kioskUrl) return;
+    if (!kioskUrl || qrImgSources.length === 0) return;
     const win = window.open('', '_blank', 'width=420,height=560');
     if (!win) return;
+    const sourcesJson = JSON.stringify(qrImgSources);
     win.document.write(`<!DOCTYPE html>
 <html>
 <head>
@@ -108,14 +123,30 @@ export default function QRModal({ table, onClose }: Props) {
 </head>
 <body>
   <div class="card">
-    <img src="${qrImgSrc}" alt="QR Code" />
+    <img id="qrimg" src="${qrImgSources[0]}" alt="QR Code" />
     <h2>${table.label}</h2>
     <p class="sub">Scan to order &amp; pay</p>
     <span class="seats">${table.seats} seats · Dine in</span>
     <hr class="divider" />
     <p class="hint">Point your phone camera at the QR code</p>
   </div>
-  <script>window.onload=function(){var img=document.querySelector('img');img.onload=function(){window.print();window.onafterprint=function(){window.close();};};img.onerror=function(){window.print();};};<\/script>
+  <script>
+    (function() {
+      var sources = ${sourcesJson};
+      var idx = 0;
+      var img = document.getElementById('qrimg');
+      function tryNext() {
+        idx++;
+        if (idx < sources.length) {
+          img.src = sources[idx];
+        } else {
+          window.print();
+        }
+      }
+      img.onload = function() { window.print(); window.onafterprint = function(){ window.close(); }; };
+      img.onerror = tryNext;
+    })();
+  <\/script>
 </body>
 </html>`);
     win.document.close();
@@ -130,7 +161,6 @@ export default function QRModal({ table, onClose }: Props) {
         className="rounded-xl border border-surface-border bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
             <h3 className="font-bold text-white text-sm">QR Code — {table.label}</h3>
@@ -148,7 +178,6 @@ export default function QRModal({ table, onClose }: Props) {
           </button>
         </div>
 
-        {/* FIX: Compact warning — only shown when LAN IP unavailable, single line */}
         {!loading && !error && isLocalhost && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/25 mb-3">
             <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -160,7 +189,6 @@ export default function QRModal({ table, onClose }: Props) {
           </div>
         )}
 
-        {/* Loading */}
         {loading && (
           <div className="flex flex-col items-center justify-center py-10 gap-3">
             <div className="w-8 h-8 border-2 border-zinc-700 border-t-brand-500 rounded-full animate-spin" />
@@ -168,23 +196,19 @@ export default function QRModal({ table, onClose }: Props) {
           </div>
         )}
 
-        {/* Error */}
         {error && (
           <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-4 text-center">
             <p className="text-red-400 text-sm">{error}</p>
           </div>
         )}
 
-        {/* QR + actions */}
-        {!loading && !error && token && kioskUrl && qrImgSrc && (
+        {!loading && !error && token && kioskUrl && (
           <>
-            {/* QR image */}
             <div className="flex flex-col items-center mb-4">
               <div className="bg-white p-3 rounded-2xl shadow-sm border border-zinc-100 mb-3">
                 <QrImage url={kioskUrl} size={200} />
               </div>
 
-              {/* Table badge + IP badge */}
               <div className="flex items-center gap-2 flex-wrap justify-center">
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface-raised border border-surface-border">
                   <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -203,7 +227,6 @@ export default function QRModal({ table, onClose }: Props) {
               </div>
             </div>
 
-            {/* URL row */}
             <div className="rounded-lg bg-surface-raised border border-surface-border p-3 mb-3">
               <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-wider mb-1.5">Kiosk URL</p>
               <div className="flex items-center gap-2">
@@ -230,14 +253,12 @@ export default function QRModal({ table, onClose }: Props) {
               </div>
             </div>
 
-            {/* How it works */}
             <div className="rounded-lg bg-brand-500/8 border border-brand-500/20 px-3 py-2 mb-3">
               <p className="text-zinc-400 text-[11px] leading-relaxed">
                 <span className="text-brand-400 font-semibold">How it works:</span> Customer scans → sees menu → orders → kitchen notified instantly → customer requests bill when done.
               </p>
             </div>
 
-            {/* Action buttons */}
             <div className="grid grid-cols-3 gap-2">
               <button onClick={printQR} className="btn btn-brand btn-sm flex items-center gap-1.5 justify-center">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

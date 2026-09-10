@@ -3,10 +3,10 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useToast } from '../context/ToastContext';
 import { getToken as getSharedToken } from '../utils/authedFetch';
+import PinPad from './PinPad';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
-// FIX: was its own uncached fetch on every call — now shared/cached.
 async function getApiToken(): Promise<string | null> {
   return getSharedToken();
 }
@@ -25,7 +25,7 @@ async function doVerifyPin(pin: string, currentSessionToken?: string | null): Pr
     err.data   = data;
     throw err;
   }
-  return data; // { id, name, role, sessionToken }
+  return data;
 }
 
 export default function LoginScreen() {
@@ -71,15 +71,6 @@ export default function LoginScreen() {
     if (pin.length >= 4 && !loading) tryLogin(pin);
   };
 
-  const cells: ('digit' | 'back' | 'login')[] = [
-    'digit','digit','digit',
-    'digit','digit','digit',
-    'digit','digit','digit',
-    'back', 'digit','login',
-  ];
-  const digitValues = [1,2,3,4,5,6,7,8,9,0];
-  let digitIdx = 0;
-
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center p-4">
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -87,7 +78,6 @@ export default function LoginScreen() {
       </div>
 
       <div className="relative w-full max-w-sm">
-        {/* Header */}
         <div className="text-center mb-8">
           {logoUrl && (
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 overflow-hidden shadow-xl shadow-brand-500/30">
@@ -100,7 +90,6 @@ export default function LoginScreen() {
           <p className="text-zinc-500 text-sm mt-1">Enter your PIN to continue</p>
         </div>
 
-        {/* Kicked-out banner */}
         {kickedOut && (
           <div className="mb-4 flex items-start gap-2.5 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 animate-slide-up">
             <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -119,7 +108,6 @@ export default function LoginScreen() {
         )}
 
         <div className="card p-6">
-          {/* PIN dots */}
           <div className="flex justify-center gap-3 mb-6">
             {[0,1,2,3,4,5].map(i => (
               <div key={i} className={`w-3 h-3 rounded-full border-2 transition-all duration-200 ${
@@ -130,41 +118,14 @@ export default function LoginScreen() {
             ))}
           </div>
 
-          {/* Numpad */}
-          <div className="grid grid-cols-3 gap-2.5">
-            {cells.map((type, i) => {
-              if (type === 'digit') {
-                const val = digitValues[digitIdx++];
-                return (
-                  <button key={i} onClick={() => handleDigit(String(val))} disabled={loading}
-                    className="h-14 rounded-xl font-mono font-medium text-lg border bg-surface-raised border-surface-border text-white hover:bg-zinc-600 hover:border-zinc-500 active:scale-95 active:bg-brand-500/20 transition-all duration-100 select-none disabled:opacity-50">
-                    {val}
-                  </button>
-                );
-              }
-              if (type === 'back') {
-                return (
-                  <button key={i} onClick={handleBack} disabled={loading || pin.length === 0}
-                    className="h-14 rounded-xl border bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700 active:scale-95 transition-all duration-100 select-none disabled:opacity-30 flex items-center justify-center">
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9.75L14.25 12m0 0l2.25 2.25M14.25 12l2.25-2.25M14.25 12L12 14.25m-2.58 4.92l-6.374-6.375a1.125 1.125 0 010-1.59L9.42 4.83c.211-.211.498-.33.796-.33H19.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25h-9.284c-.298 0-.585-.119-.796-.33z" />
-                    </svg>
-                  </button>
-                );
-              }
-              return (
-                <button key={i} onClick={handleSubmit} disabled={loading || pin.length < 4}
-                  className="h-14 rounded-xl border bg-brand-500 border-brand-600 text-white hover:bg-brand-600 active:scale-95 transition-all duration-100 select-none disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center">
-                  {loading
-                    ? <span className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                    : <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                      </svg>
-                  }
-                </button>
-              );
-            })}
-          </div>
+          <PinPad
+            pin={pin}
+            loading={loading}
+            size="lg"
+            onDigit={handleDigit}
+            onBack={handleBack}
+            onSubmit={handleSubmit}
+          />
         </div>
 
         <p className="text-center text-zinc-700 text-xs mt-5">

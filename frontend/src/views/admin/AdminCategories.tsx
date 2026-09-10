@@ -1,25 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getCategories, createCategory, updateCategory, deleteCategory, getMenuItems } from '../../services/api';
+import { getCategories, createCategory, updateCategory, deleteCategory, getMenuItems, reorderCategoriesApi } from '../../services/api';
 import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
 import { useSortable } from '../../hooks/useSortable';
 import { reorderLock } from '../../utils/reorderLock';
-import { authedFetch } from '../../utils/authedFetch';
 import ConfirmModal from '../../components/ConfirmModal';
 import type { Category } from '../../types';
-
-const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
-
-// FIX: was its own manual token-fetch-per-call with no caching at all —
-// now goes through the shared, cached authedFetch() wrapper instead.
-async function reorderCategories(order: { id: number; sort_order: number }[]): Promise<void> {
-  const res = await authedFetch(`${API_BASE}/api/categories/reorder`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ order }),
-  });
-  if (!res.ok) throw new Error('Reorder failed');
-}
 
 export default function AdminCategories() {
   const [cats,    setCats]    = useState<Category[]>([]);
@@ -48,12 +34,16 @@ export default function AdminCategories() {
   useSocket('menu_updated', useCallback(() => { if (!isSaving.current) load(); }, [load]));
 
   // ── Reorder ──────────────────────────────────────────────────────────────
+  // FIX (#5.3): now goes through the shared, token-cached axios client via
+  // reorderCategoriesApi() in services/api.ts — previously this manually
+  // re-fetched the token and built a raw fetch() call from scratch,
+  // inconsistent with how AdminMenu.tsx/AdminTables.tsx already worked.
   const handleReorder = useCallback(async (newCats: Category[]) => {
     isSaving.current = true;
     reorderLock.acquire();
     setCats(newCats);
     try {
-      await reorderCategories(newCats.map((c, i) => ({ id: c.id, sort_order: i })));
+      await reorderCategoriesApi(newCats.map((c, i) => ({ id: c.id, sort_order: i })));
     } catch {
       toast('Failed to save order', 'error');
       load();
@@ -102,7 +92,6 @@ export default function AdminCategories() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Left: Add form */}
         <div>
           <div className="flex items-center gap-3 mb-4">
             <h3 className="font-bold text-white text-sm">Menu Categories</h3>
@@ -121,7 +110,6 @@ export default function AdminCategories() {
           </p>
         </div>
 
-        {/* Right: Category list */}
         <div>
           <h3 className="font-bold text-white text-sm mb-4 lg:block hidden">&nbsp;</h3>
           <div className="space-y-2">
@@ -139,7 +127,6 @@ export default function AdminCategories() {
                   `}
                   style={{ ...itemProps.style, borderRadius: '0.75rem' }}
                 >
-                  {/* Drag handle */}
                   <div className="flex-shrink-0 text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing">
                     <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
                       <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />

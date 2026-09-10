@@ -7,11 +7,6 @@ const BASE = ORIGIN + '/api';
 
 const api = axios.create({ baseURL: BASE, timeout: 10000 });
 
-// FIX: previously duplicated its own broken token cache here (seeded the
-// disabled/error case with '' and never retried on transient failure).
-// Now delegates entirely to the shared, correctly-cached getToken() in
-// utils/authedFetch.ts — see that file's header comment for the exact
-// bugs this fixes.
 api.interceptors.request.use(async config => {
   const token = await getToken();
   if (token) {
@@ -43,6 +38,12 @@ export const getCategories     = (): Promise<Category[]>  => api.get('/categorie
 export const createCategory    = (name: string): Promise<Category> => api.post('/categories', { name }).then(r => r.data);
 export const updateCategory    = (id: number, data: Partial<Category>): Promise<void> => api.put(`/categories/${id}`, data).then(r => r.data);
 export const deleteCategory    = (id: number): Promise<void> => api.delete(`/categories/${id}`).then(r => r.data);
+
+// FIX (#5.3): added so AdminCategories.tsx can go through the shared,
+// token-cached axios client instead of manually reimplementing
+// token-fetch + fetch() + header construction from scratch.
+export const reorderCategoriesApi = (order: { id: number; sort_order: number }[]): Promise<void> =>
+  api.patch('/categories/reorder', { order }).then(r => r.data);
 
 export const getMenuItems      = (): Promise<MenuItem[]>  => api.get('/menu').then(r => r.data);
 export const createMenuItem    = (fd: FormData): Promise<MenuItem> => api.post('/menu', fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data);

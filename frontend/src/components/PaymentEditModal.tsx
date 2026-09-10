@@ -83,6 +83,15 @@ export default function PaymentEditModal({
   const diff = effectivePaid - grandTotal;
   const diffIsTiny = Math.abs(diff) < 0.01;
 
+  // FIX (#5.5): previously fired Promise.all(orderIds.map(id =>
+  // updateOrderPayment(id, ...))) — one PATCH request per order in the
+  // session. The backend's PATCH /orders/:id/payment always resolves to
+  // the SAME canonical (most-recent) row for a given session regardless
+  // of which order id in that session is targeted, and is fully
+  // idempotent — so N calls produce byte-identical end state to 1 call.
+  // A session's orders are chronologically sorted (see sessions.ts), so
+  // orderIds[orderIds.length - 1] is the most recent order, matching
+  // exactly what the backend's own canonical-row resolution converges to.
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -91,14 +100,18 @@ export default function PaymentEditModal({
         paymentDetails = splits.filter(s => parseFloat(s.amount) > 0).map(s => ({ method: s.method, amount: parseFloat(s.amount) }));
       }
       const finalAmountPaid = method === 'split' ? splitTotal : (parseFloat(amountPaid) || grandTotal);
-      await Promise.all(orderIds.map(id => updateOrderPayment(id, {
+
+      const targetOrderId = orderIds[orderIds.length - 1];
+      if (!targetOrderId) throw new Error('No order to update');
+
+      await updateOrderPayment(targetOrderId, {
         payment_method:  method,
         payment_details: paymentDetails,
         change_amount:   0,
         amount_paid:     finalAmountPaid,
         order_type:      orderType,
         customer_gstin:  customerGstin.trim() || undefined,
-      } as any)));
+      } as any);
       toast('Payment updated', 'success');
       onSaved(method, paymentDetails, finalAmountPaid, orderType, customerGstin.trim() || undefined);
     } catch (e: any) {
@@ -130,7 +143,6 @@ export default function PaymentEditModal({
           </div>
         )}
 
-        {/* Order type slider */}
         <label className="label mb-2">Order Type</label>
         <div
           role="radiogroup"
@@ -214,7 +226,6 @@ export default function PaymentEditModal({
           </div>
         )}
 
-        {/* Customer GSTIN — shown only when B2B invoicing is enabled */}
         {b2bEnabled && (
           <div className="mb-4">
             <label className="label mb-1">Customer GSTIN <span className="text-zinc-600 font-normal normal-case tracking-normal">(optional)</span></label>
@@ -232,7 +243,6 @@ export default function PaymentEditModal({
           </div>
         )}
 
-        {/* Bill vs Paid summary */}
         <div className={`flex justify-between text-xs px-3 py-2 rounded-lg border mb-2 ${
           diffIsTiny
             ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'

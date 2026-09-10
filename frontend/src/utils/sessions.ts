@@ -4,46 +4,21 @@
  * Groups a flat list of closed orders into "dining sessions" —
  * one session = one customer sitting at one table.
  *
- * FIX (amount_paid): amount_paid is recorded ONCE per session on a single
- * order row (see backend/routes/orders.js close route), not duplicated
- * across every order in the session. Previously this code summed
- * amount_paid across every order, so a 3-order session with amount_paid=150
- * on each row reported 450 total. Now we just take the value — if more than
- * one row somehow has a non-null amount_paid (e.g. data from before this
- * fix), the most recently-created order's value wins, since that's the
- * order the close/payment-edit routes treat as canonical.
+ * FIX (dedup): isDirectBill is now imported from utils/orderHelpers.ts
+ * instead of being defined locally — see that file's header comment.
  *
- * FIX (round count): "rounds" should mean kitchen rounds — orders that were
- * actually sent to the kitchen (status passed through 'active' at some
- * point). Direct-bill orders never go through the kitchen, so they must not
- * inflate the rounds count. `isDirectBill` mirrors the same detection logic
- * used on the waiter-side OrderContent/TotalsBar components (delivered_at
- * ≈ created_at).
- *
- * FIX (parcel labels): "Table P1" doesn't make sense for a parcel/takeaway
- * order — there's no physical table. Added `isParcelId` / `tableDisplayLabel`
- * here so SessionRow.tsx and ReprintBill.tsx (both already import from this
- * file) can share the same detection logic that WaiterView.tsx already uses
- * for the waiter-side table list, instead of each screen guessing on its own.
- *
- * FIX (customer GSTIN missing from sessions): TableSession previously had no
- * customerGstin field at all, and this function never read order.customer_gstin
- * into the session the way it already does for customer_name/customer_phone.
- * ReprintBill.tsx reads `(session as any).customerGstin` — that field was
- * structurally always undefined, so a B2B customer's GSTIN could never show
- * up on a reprinted bill from History, even though it's correctly stored on
- * the order row itself. Now tracked and copied over the same way name/phone
- * already are.
+ * (All other fix comments from earlier rounds — amount_paid, round count,
+ * parcel labels, customer GSTIN — remain as before.)
  */
 
 import type { Order } from '../types';
+import { isDirectBill } from './orderHelpers';
 
 export interface TableSession {
   sessionKey:    string;
   tableId:       string;
   tableLabel?:   string;
   orders:        Order[];
-  /** Only orders that actually went through the kitchen (excludes direct-bill orders). */
   kitchenRounds: Order[];
   totalAmount:   number;
   startedAt:     string;
@@ -54,40 +29,16 @@ export interface TableSession {
   amountPaid:    number | null;
   customerName:  string | null;
   customerPhone: string | null;
-  /** FIX: was missing entirely — needed so B2B reprints can show the GSTIN. */
   customerGstin: string | null;
-  /** 'dine_in' or 'parcel' — taken from the most recent round with a value set. */
   orderType:     'dine_in' | 'parcel' | null;
 }
 
 const LEGACY_SESSION_GAP_MS = 4 * 60 * 60 * 1000;
 
-/** Returns true if a 'delivered'/'closed' order was created via /direct-bill
- *  (never went through the kitchen's 'active' state). Mirrors the backend's
- *  isDirectBillOrder() and the frontend waiter-side detection. */
-function isDirectBill(order: Order): boolean {
-  if (!order.delivered_at || !order.created_at) return false;
-  const diff = Math.abs(
-    new Date(order.delivered_at).getTime() - new Date(order.created_at).getTime()
-  );
-  return diff < 2000;
-}
-
-/**
- * Returns true if this table id is a parcel/takeaway slot (P1, P2, ...).
- * Mirrors the isParcel() helper already used in WaiterView.tsx so the same
- * detection logic is shared instead of duplicated (and possibly drifting)
- * across every screen that displays a table id.
- */
 export function isParcelId(tableId: string): boolean {
   return /^P\d+$/.test(tableId);
 }
 
-/**
- * Human-readable label for a table id, correctly distinguishing
- * parcel/takeaway slots from real dine-in tables. "Table P1" reads as
- * nonsense to a restaurant owner — "Parcel 1" is what it actually is.
- */
 export function tableDisplayLabel(tableId: string): string {
   if (isParcelId(tableId)) {
     return `Parcel ${tableId.slice(1)}`;
@@ -102,9 +53,6 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
 
   const sessions: TableSession[] = [];
   const sessionMap: Record<string, number> = {};
-  // Tracks, per session, the created_at of whichever order currently "owns"
-  // amountPaid — used to decide if a newer order's amount_paid should replace
-  // an older one if (in legacy data) more than one row has a value set.
   const amountPaidOwnerTime: Record<string, number> = {};
 
   for (const order of sorted) {
@@ -145,15 +93,10 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
         existing.paymentMethod  = (order as any).payment_method;
         existing.paymentDetails = (order as any).payment_details;
       }
-      // Order type — keep the most recent round's value if set, so an edit
-      // made after the fact (which updates the latest round) is reflected.
       if ((order as any).order_type) {
         existing.orderType = (order as any).order_type;
       }
 
-      // FIX: take amount_paid as-is (no summing). If multiple rows somehow
-      // carry a value, prefer whichever order is most recent, matching the
-      // backend's notion of the "canonical" payment row.
       if (hasAmountPaid) {
         const currentOwnerTime = amountPaidOwnerTime[key];
         if (currentOwnerTime === undefined || orderTimeMs >= currentOwnerTime) {
@@ -164,7 +107,6 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
 
       if ((order as any).customer_name)  existing.customerName  = (order as any).customer_name;
       if ((order as any).customer_phone) existing.customerPhone = (order as any).customer_phone;
-      // FIX: was never copied over at all — same pattern as name/phone above.
       if ((order as any).customer_gstin) existing.customerGstin = (order as any).customer_gstin;
 
       for (const item of order.items) {
@@ -210,7 +152,6 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       amountPaid:     hasAmountPaid ? orderAmountPaid : null,
       customerName:   (order as any).customer_name   || null,
       customerPhone:  (order as any).customer_phone  || null,
-      // FIX: was missing entirely from the initial session object too.
       customerGstin:  (order as any).customer_gstin  || null,
       orderType:      (order as any).order_type || null,
     };

@@ -5,11 +5,17 @@ interface Toast { id: number; message: string; type: ToastType; }
 
 const ToastContext = createContext<(msg: string, type?: ToastType) => void>(() => {});
 
+// FIX (#6.3): id used to be Date.now(), so two toasts fired within the
+// same millisecond got the same id — removing one via its timeout could
+// remove both, and React warns about duplicate keys. A simple module-level
+// monotonic counter guarantees uniqueness regardless of timing.
+let _toastSeq = 0;
+
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const toast = useCallback((message: string, type: ToastType = 'default') => {
-    const id = Date.now();
+    const id = ++_toastSeq;
     setToasts(p => [...p, { id, message, type }]);
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3200);
   }, []);
