@@ -26,23 +26,23 @@ router.put('/:id', (req, res) => {
 });
 
 // PATCH reorder categories
+// FIX: previously did not emit categories_updated (same rationale/mistake
+// as menu.js's reorder route — see the comment there). AdminCategories.tsx
+// already guards its own optimistic state with a local isSaving ref, so
+// suppressing this broadcast only stopped other devices from syncing.
 router.patch('/reorder', (req, res) => {
   const { order } = req.body;
   if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
   const upd = db.prepare('UPDATE categories SET sort_order = ? WHERE id = ?');
   const reorder = db.transaction(() => { order.forEach(({ id, sort_order }) => upd.run(sort_order, id)); });
   reorder();
-  // Don't emit categories_updated here to avoid race condition with optimistic UI
+  req.io.emit('categories_updated');
   res.json({ success: true });
 });
 
 router.delete('/:id', (req, res) => {
-  // Check for menu items in this category
   const count = db.prepare('SELECT COUNT(*) as c FROM menu_items WHERE category_id = ?').get(req.params.id).c;
   if (count > 0) {
-    // FIX: include 'billed_direct' — a direct-billed order can be open
-    // (not yet closed/paid) just like 'active' or 'delivered', and its
-    // items must not lose their category reference out from under it.
     const inActiveOrder = db.prepare(`
       SELECT COUNT(*) as c FROM order_items oi
       JOIN orders o ON oi.order_id = o.id

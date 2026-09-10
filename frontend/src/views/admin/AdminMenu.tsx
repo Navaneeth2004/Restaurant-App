@@ -7,6 +7,7 @@ import { useSocket }      from '../../hooks/useSocket';
 import { useToast }       from '../../context/ToastContext';
 import { useSettings }    from '../../context/SettingsContext';
 import { useSortable }    from '../../hooks/useSortable';
+import { reorderLock }    from '../../utils/reorderLock';
 import ConfirmModal       from '../../components/ConfirmModal';
 import MenuItemModal      from '../../components/admin/MenuItemModal';
 import type { MenuItem, Category } from '../../types';
@@ -47,12 +48,21 @@ export default function AdminMenu() {
   const filtered = filterCat === 'all' ? items : items.filter(i => i.category_id === filterCat);
 
   // ── Reorder ───────────────────────────────────────────────────────────
+  // FIX: reorderLock.acquire()/release() are now actually called, matching
+  // the module's own doc comment ("Call before sending PATCH /menu/reorder"
+  // / "Call after the PATCH resolves"). Previously nothing in the codebase
+  // ever called these, so WaiterView's `if (!reorderLock.isLocked()) load()`
+  // guard was permanently a no-op. isSaving (below) remains the mechanism
+  // that protects THIS component's own optimistic state from being
+  // reverted by its own echoed menu_updated event — reorderLock is the
+  // separate, module-level signal other mounted components can check.
   const handleReorder = (newFiltered: MenuItem[]) => {
     const filteredIds = new Set(newFiltered.map(i => i.id));
     const others      = items.filter(i => !filteredIds.has(i.id));
     const merged      = [...newFiltered, ...others];
 
     isSaving.current = true;
+    reorderLock.acquire();
     setItems(merged);
 
     if (reorderDebounceTimer.current) clearTimeout(reorderDebounceTimer.current);
@@ -68,6 +78,7 @@ export default function AdminMenu() {
         console.error('Reorder save failed:', err);
         load();
       } finally {
+        reorderLock.release();
         setTimeout(() => { isSaving.current = false; }, 1500);
       }
     }, 300);

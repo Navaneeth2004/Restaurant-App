@@ -3,6 +3,7 @@ import { getCategories, createCategory, updateCategory, deleteCategory, getMenuI
 import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
 import { useSortable } from '../../hooks/useSortable';
+import { reorderLock } from '../../utils/reorderLock';
 import ConfirmModal from '../../components/ConfirmModal';
 import type { Category } from '../../types';
 
@@ -55,8 +56,13 @@ export default function AdminCategories() {
   useSocket('menu_updated', useCallback(() => { if (!isSaving.current) load(); }, [load]));
 
   // ── Reorder ──────────────────────────────────────────────────────────────
+  // FIX: reorderLock.acquire()/release() are now actually called — see the
+  // matching comment in AdminMenu.tsx's handleReorder for the full
+  // rationale. isSaving remains the guard protecting this component's own
+  // optimistic state from its own echoed categories_updated event.
   const handleReorder = useCallback(async (newCats: Category[]) => {
     isSaving.current = true;
+    reorderLock.acquire();
     setCats(newCats);
     try {
       await reorderCategories(newCats.map((c, i) => ({ id: c.id, sort_order: i })));
@@ -64,6 +70,7 @@ export default function AdminCategories() {
       toast('Failed to save order', 'error');
       load();
     } finally {
+      reorderLock.release();
       setTimeout(() => { isSaving.current = false; }, 1500);
     }
   }, [load, toast]);

@@ -16,30 +16,21 @@
  *   - Stale closure bug in order_closed fixed
  *   - Socket.io live updates
  *   - 30s polling fallback
+ *   - Back-button trap (history pushState guard + bfcache hard-reload fallback)
  *
- *   - FIX (back button): the kiosk previously had no history/popstate
- *     handling at all. Pressing the phone's back button either navigated
- *     away or (much more commonly) triggered the browser's back-forward
- *     cache (bfcache), silently restoring a STALE snapshot of the page —
- *     old React state from before the order was sent or the bill was
- *     requested — without re-running the bootstrap fetch. If the customer
- *     then tapped something on that stale screen, placeOrder()/reqBill()
- *     fired against a session that had already moved on server-side,
- *     producing duplicate/mismatched orders (e.g. showing as "Parcel" when
- *     it was actually a dine-in order, or letting them re-order after
- *     already requesting the bill).
- *
- *     Two independent guards now prevent this:
- *       1. A history "trap" — pushes a dummy history entry on mount and
- *          immediately re-pushes one on every popstate, making the phone's
- *          back button/gesture a no-op while inside the kiosk. This is the
- *          primary defence: back navigation away from the kiosk (and the
- *          bfcache restore that would come with it) simply never happens.
- *       2. A pageshow/bfcache fallback — if the page is EVER restored from
- *          bfcache anyway (event.persisted === true, e.g. via some other
- *          navigation path the trap doesn't cover), we force a hard
- *          window.location.reload() so the bootstrap fetch always re-runs
- *          against the live server state instead of trusting stale JS.
+ *   - FIX (bootstrap screen on refresh): previously the initial screen was
+ *     decided purely from `existingOrders.length > 0 ? 'ordered' : 'menu'`,
+ *     which never checked ctx.table_status even though it's fetched. So a
+ *     customer who requested the bill and then simply REFRESHED the kiosk
+ *     page (no back button involved at all) was dropped back onto the
+ *     orderable "menu"/"ordered" screen — complete with "Add More Items" —
+ *     even though the table was already sitting in 'waiting_bill' status
+ *     server-side. This is very likely the actual root cause behind most
+ *     of what looked like "back button" issues: a refresh (or any fresh
+ *     load of the kiosk URL) landed on the wrong screen regardless of how
+ *     the page got reloaded. Bootstrap now checks table_status first and
+ *     goes straight to 'bill_requested' when it's 'waiting_bill', before
+ *     falling back to the existingOrders-based logic.
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -160,15 +151,7 @@ export default function KioskView({ token }: { token: string }) {
   const pollRef   = useRef<ReturnType<typeof setInterval>|null>(null);
   const toastRef  = useRef<ReturnType<typeof setTimeout>|null>(null);
 
-  // ── FIX (back button trap) ────────────────────────────────────────────────
-  // Pushes a guard entry onto session history as soon as the kiosk mounts,
-  // and immediately re-pushes a fresh one every time the user navigates back
-  // (popstate fires for both the phone's hardware/gesture back button and
-  // any programmatic history.back()). Net effect: the URL never actually
-  // changes and the browser never leaves this page via back navigation, so
-  // there is nothing for the browser to bfcache-restore INTO in the first
-  // place. This alone should stop "going back re-opens an old screen" for
-  // the vast majority of browsers/devices.
+  // ── Back button trap ────────────────────────────────────────────────────
   useEffect(() => {
     window.history.pushState(null, '', window.location.href);
     const trapBack = () => {
@@ -178,13 +161,7 @@ export default function KioskView({ token }: { token: string }) {
     return () => window.removeEventListener('popstate', trapBack);
   }, []);
 
-  // ── FIX (bfcache fallback) ─────────────────────────────────────────────────
-  // Belt-and-braces: if the page is ever restored from the back-forward
-  // cache anyway (event.persisted === true — can still happen via edge
-  // cases the history trap above doesn't cover, e.g. some in-app browsers),
-  // force a hard reload so the bootstrap fetch always re-runs against the
-  // live server state. This guarantees stale React state (from before an
-  // order was sent or a bill was requested) can never be acted on.
+  // ── bfcache fallback ─────────────────────────────────────────────────────
   useEffect(() => {
     const handlePageShow = (e: PageTransitionEvent) => {
       if (e.persisted) {
@@ -231,7 +208,18 @@ export default function KioskView({ token }: { token: string }) {
         setItems(its);
         setCatId(categories[0]?.id ?? null);
         setOrders(existingOrders);
-        if (existingOrders.length > 0) setScreen('ordered');
+
+        // FIX: check table_status FIRST. Previously this only looked at
+        // existingOrders.length, so a refresh after "Request Bill" (which
+        // sets the table to 'waiting_bill' server-side but doesn't change
+        // the order count) dropped the customer back onto the orderable
+        // menu/ordered screen with "Add More Items" available — no back
+        // button involved at all, just a plain page reload.
+        if (c.table_status === 'waiting_bill') {
+          setScreen('bill_requested');
+        } else if (existingOrders.length > 0) {
+          setScreen('ordered');
+        }
       } catch (e: any) {
         setError(e.message || 'Could not load. Please scan QR again.');
       } finally {
@@ -528,8 +516,6 @@ export default function KioskView({ token }: { token: string }) {
   }
 
   // ── Menu + Cart ───────────────────────────────────────────────────────────
-  // The cart is position:fixed so the menu layout is NEVER affected by it.
-  // We only add bottom padding to the scroll container equal to the cart height.
   const cartBottomH = cartQty > 0 ? ((cartH || 44) + 8) : 0;
 
   return (
@@ -573,11 +559,7 @@ export default function KioskView({ token }: { token: string }) {
         </button>
       )}
 
-      {/* ── Menu scroll area ─────────────────────────────────────────────────
-           flex:1 + minHeight:0 makes this take all remaining vertical space.
-           paddingBottom grows to match the cart panel height so nothing
-           is hidden behind the fixed-position cart.
-      ── */}
+      {/* ── Menu scroll area ── */}
       <div style={{ flex:1, overflowY:'auto', minHeight:0, padding:`12px 12px 0` }}>
         <div style={{
           display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10,
@@ -640,12 +622,7 @@ export default function KioskView({ token }: { token: string }) {
         </div>
       )}
 
-      {/* ── Cart — COLLAPSIBLE PILL ───────────────────────────────────────────
-           Collapsed (default): single bar showing qty badge + item names + total
-           + Place Order button. Only 56px tall — takes almost no screen space.
-           Expanded: shows full item list (capped at 160px scroll) + notes.
-           User taps the pill bar to toggle. Auto-opens when item added.
-      ── */}
+      {/* ── Cart ── */}
       {cartQty > 0 && (
         <div ref={cartRef} style={{
           position:      'fixed',
@@ -660,7 +637,6 @@ export default function KioskView({ token }: { token: string }) {
           zIndex:        200,
         }}>
 
-          {/* ── Expanded item list — only visible when cartOpen ── */}
           {cartOpen && (
             <div style={{ maxHeight:160, overflowY:'auto', borderBottom:'1px solid #27272a' }}>
               {cart.map((item,idx) => (
@@ -697,10 +673,8 @@ export default function KioskView({ token }: { token: string }) {
             </div>
           )}
 
-          {/* ── Pill bar — always visible, tap to toggle expanded ── */}
           <div style={{ display:'flex', alignItems:'center', gap:0, padding:'0 0 0 0' }}>
 
-            {/* Left tap area — toggles expanded/collapsed */}
             <button
               onClick={() => setCartOpen(o => !o)}
               style={{
@@ -709,14 +683,12 @@ export default function KioskView({ token }: { token: string }) {
                 cursor:'pointer', minWidth:0,
               }}
             >
-              {/* Qty badge */}
               <span style={{
                 background:brand, color:'#fff', borderRadius:99,
                 minWidth:22, height:22, display:'flex', alignItems:'center', justifyContent:'center',
                 fontSize:11, fontWeight:800, fontFamily:FM, padding:'0 6px', flexShrink:0,
               }}>{cartQty}</span>
 
-              {/* Item names summary — truncated */}
               <span style={{
                 color:'#a1a1aa', fontSize:12, fontFamily:FF,
                 overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1,
@@ -724,7 +696,6 @@ export default function KioskView({ token }: { token: string }) {
                 {cart.map(i => i.name).join(', ')}
               </span>
 
-              {/* Chevron */}
               <span style={{
                 color:'#52525b', fontSize:10, flexShrink:0,
                 transform: cartOpen ? 'rotate(180deg)' : 'rotate(0deg)',
@@ -732,13 +703,11 @@ export default function KioskView({ token }: { token: string }) {
                 display:'inline-block',
               }}>▲</span>
 
-              {/* Subtotal */}
               <span style={{
                 color:brand, fontSize:14, fontWeight:800, fontFamily:FM, flexShrink:0,
               }}>{sym}{cartSub.toFixed(2)}</span>
             </button>
 
-            {/* Right: Place Order CTA button */}
             <button onClick={placeOrder} disabled={busy} style={{
               flexShrink:0,
               height:44, padding:'0 18px',

@@ -40,13 +40,8 @@ function seedSortOrder() {
     if (!cols.some(c => c.name === 'sort_order')) {
       db.exec('ALTER TABLE menu_items ADD COLUMN sort_order INTEGER DEFAULT 0');
     }
-    // BUG FIX: Only seed items whose sort_order is still 0 (never been manually set).
-    // Previously ALL items were reseeded on every server start, wiping any custom
-    // drag order the user had saved via PATCH /reorder.
     const items = db.prepare('SELECT id, category_id FROM menu_items WHERE sort_order = 0 ORDER BY category_id, id').all();
-    if (items.length === 0) return; // nothing to seed — all items already have an order
-    // Find the current max sort_order per category so new seeds don't collide
-    // with already-ordered items in the same category.
+    if (items.length === 0) return;
     const maxRows = db.prepare('SELECT category_id, MAX(sort_order) as m FROM menu_items GROUP BY category_id').all();
     const posMap = {};
     for (const r of maxRows) posMap[r.category_id] = r.m ?? 0;
@@ -64,7 +59,6 @@ function seedSortOrder() {
   }
 }
 
-// Helper: check if sort_order column actually exists in the live schema
 function hasSortOrderCol() {
   try {
     const cols = db.prepare("PRAGMA table_info(menu_items)").all();
@@ -199,9 +193,16 @@ router.put('/:id', upload.single('image'), (req, res) => {
 });
 
 // PATCH reorder menu items
-// FIX: Does NOT emit 'menu_updated' — this prevents the socket event from
-// triggering a reload in AdminMenu and reverting the optimistic reorder.
-// The frontend updates state directly from the API response instead.
+// FIX: previously this deliberately did NOT emit menu_updated, on the theory
+// that it would cause the reordering client's OWN optimistic UI to be
+// reverted by a reload racing the DB write. But AdminMenu.tsx already
+// guards against exactly that with its own local `isSaving` ref (checked
+// before calling load() on every menu_updated listener) — so the socket
+// suppression here was never actually protecting anything locally; it was
+// only ever stopping OTHER connected devices from ever seeing the new
+// order in real time, unlike every other menu mutation in this file. Now
+// emits like everything else — the existing isSaving guard on the
+// originating client absorbs its own echo of this event correctly.
 router.patch('/reorder', (req, res) => {
   const { items } = req.body;
   if (!Array.isArray(items) || items.length === 0) {
@@ -216,10 +217,7 @@ router.patch('/reorder', (req, res) => {
       }
     });
     updateAll(items);
-    // NOTE: intentionally NOT emitting menu_updated here.
-    // Emitting would cause AdminMenu's useSocket handler to call load(),
-    // overwriting the freshly reordered state with the pre-reorder DB state
-    // (race condition: the DB write may not have flushed to the read path yet).
+    req.io.emit('menu_updated');
     res.json({ ok: true });
   } catch (err) {
     console.error('Reorder failed:', err);
@@ -231,9 +229,6 @@ router.delete('/:id', (req, res) => {
   const item = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Not found' });
 
-  // FIX: include 'billed_direct' — a direct-billed order can still be
-  // open (not yet closed/paid), and deleting the item out from under it
-  // would orphan the order_items row's menu_item_id reference.
   const inUse = db.prepare(`
     SELECT oi.id FROM order_items oi
     JOIN orders o ON oi.order_id = o.id

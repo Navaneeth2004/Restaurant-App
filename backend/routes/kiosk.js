@@ -9,6 +9,14 @@
  * 2. POST /:token/bill now emits a dedicated 'bill_requested' socket event
  *    so WaiterView can show a toast/chime alerting the waiter.
  * 3. POST /:token/order emits 'tables_updated' consistently.
+ * 4. FIX (archived parcel slot QR still live): resolveToken() previously
+ *    matched purely on kiosk_token, with no check on is_archived. Once a
+ *    parcel slot was billed and soft-deleted (DELETE /api/parcel/slot/:id
+ *    sets is_archived=1), its QR/token kept working — a customer who still
+ *    had the QR (or re-scanned a printed one) could place a brand-new order
+ *    against a table row that's now invisible in WaiterView (which filters
+ *    is_archived=0), producing a "phantom" order tied to a table no staff
+ *    member can find or bill. resolveToken() now excludes archived tables.
  */
 
 const express  = require('express');
@@ -41,9 +49,13 @@ function ensureToken(tableId) {
   return token;
 }
 
+// FIX: excludes archived (soft-deleted) tables — a QR for a removed parcel
+// slot must stop working the moment it's archived, not stay live forever.
 function resolveToken(token) {
   if (!token) return null;
-  return db.prepare('SELECT * FROM tables WHERE kiosk_token = ?').get(token) || null;
+  return db.prepare(
+    "SELECT * FROM tables WHERE kiosk_token = ? AND (is_archived = 0 OR is_archived IS NULL)"
+  ).get(token) || null;
 }
 
 // ── LAN IP helper ─────────────────────────────────────────────────────────
@@ -84,8 +96,6 @@ function recalcTotal(orderId) {
 }
 
 // ── GET /api/kiosk/lan-ip ─────────────────────────────────────────────────
-// Returns the server's LAN IP so the frontend can build QR URLs that work
-// on phones connected to the same WiFi. No auth required — it's just an IP.
 router.get('/lan-ip', (req, res) => {
   const ip = getLanIp();
   res.json({ ip });
@@ -107,8 +117,6 @@ router.get('/:token', (req, res) => {
 
   const S = getSettings();
 
-  // FIX: explicitly flag parcel slots so the frontend doesn't need to
-  // guess from the table_id format — more robust if slot naming changes.
   const isParcelSlot = /^P\d+$/.test(table.id);
 
   res.json({
@@ -244,9 +252,6 @@ router.post('/:token/order', (req, res) => {
 
       const orderId = uuidv4();
       const now = new Date().toISOString();
-      // FIX: detect parcel slots (id like P1, P2…) and set order_type accordingly
-      // so the bill, reports, and GST exports correctly classify these as parcel
-      // orders instead of always defaulting to 'dine_in'.
       const orderType = /^P\d+$/.test(table_id) ? 'parcel' : 'dine_in';
       db.prepare(
         'INSERT INTO orders (id, table_id, session_id, status, created_at, order_type) VALUES (?, ?, ?, ?, ?, ?)'
@@ -294,7 +299,6 @@ router.post('/:token/order', (req, res) => {
 });
 
 // ── POST /api/kiosk/:token/bill ───────────────────────────────────────────
-// FIX: Now emits 'bill_requested' so WaiterView can show an alert toast/chime.
 router.post('/:token/bill', (req, res) => {
   const table = resolveToken(req.params.token);
   if (!table) return res.status(404).json({ error: 'Invalid QR code' });
@@ -326,7 +330,6 @@ router.post('/:token/bill', (req, res) => {
       req.io.emit('order_delivered', { order: updated });
     }
   } else {
-    // Already delivered — just ensure waiting_bill status
     db.prepare(
       "UPDATE tables SET status = 'waiting_bill' WHERE id = ?"
     ).run(table.id);
@@ -334,7 +337,6 @@ router.post('/:token/bill', (req, res) => {
 
   req.io.emit('tables_updated');
 
-  // FIX: Dedicated event so WaiterView can show a toast + chime for this table.
   req.io.emit('bill_requested', {
     tableId:    table.id,
     tableLabel: table.label,
