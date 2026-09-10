@@ -16,6 +16,30 @@
  *   - Stale closure bug in order_closed fixed
  *   - Socket.io live updates
  *   - 30s polling fallback
+ *
+ *   - FIX (back button): the kiosk previously had no history/popstate
+ *     handling at all. Pressing the phone's back button either navigated
+ *     away or (much more commonly) triggered the browser's back-forward
+ *     cache (bfcache), silently restoring a STALE snapshot of the page —
+ *     old React state from before the order was sent or the bill was
+ *     requested — without re-running the bootstrap fetch. If the customer
+ *     then tapped something on that stale screen, placeOrder()/reqBill()
+ *     fired against a session that had already moved on server-side,
+ *     producing duplicate/mismatched orders (e.g. showing as "Parcel" when
+ *     it was actually a dine-in order, or letting them re-order after
+ *     already requesting the bill).
+ *
+ *     Two independent guards now prevent this:
+ *       1. A history "trap" — pushes a dummy history entry on mount and
+ *          immediately re-pushes one on every popstate, making the phone's
+ *          back button/gesture a no-op while inside the kiosk. This is the
+ *          primary defence: back navigation away from the kiosk (and the
+ *          bfcache restore that would come with it) simply never happens.
+ *       2. A pageshow/bfcache fallback — if the page is EVER restored from
+ *          bfcache anyway (event.persisted === true, e.g. via some other
+ *          navigation path the trap doesn't cover), we force a hard
+ *          window.location.reload() so the bootstrap fetch always re-runs
+ *          against the live server state instead of trusting stale JS.
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -135,6 +159,41 @@ export default function KioskView({ token }: { token: string }) {
   const tidRef    = useRef<string>('');
   const pollRef   = useRef<ReturnType<typeof setInterval>|null>(null);
   const toastRef  = useRef<ReturnType<typeof setTimeout>|null>(null);
+
+  // ── FIX (back button trap) ────────────────────────────────────────────────
+  // Pushes a guard entry onto session history as soon as the kiosk mounts,
+  // and immediately re-pushes a fresh one every time the user navigates back
+  // (popstate fires for both the phone's hardware/gesture back button and
+  // any programmatic history.back()). Net effect: the URL never actually
+  // changes and the browser never leaves this page via back navigation, so
+  // there is nothing for the browser to bfcache-restore INTO in the first
+  // place. This alone should stop "going back re-opens an old screen" for
+  // the vast majority of browsers/devices.
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.href);
+    const trapBack = () => {
+      window.history.pushState(null, '', window.location.href);
+    };
+    window.addEventListener('popstate', trapBack);
+    return () => window.removeEventListener('popstate', trapBack);
+  }, []);
+
+  // ── FIX (bfcache fallback) ─────────────────────────────────────────────────
+  // Belt-and-braces: if the page is ever restored from the back-forward
+  // cache anyway (event.persisted === true — can still happen via edge
+  // cases the history trap above doesn't cover, e.g. some in-app browsers),
+  // force a hard reload so the bootstrap fetch always re-runs against the
+  // live server state. This guarantees stale React state (from before an
+  // order was sent or a bill was requested) can never be acted on.
+  useEffect(() => {
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        window.location.reload();
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
 
   const showToast = useCallback((msg: string, type: 'ok'|'err'|'info' = 'info') => {
     setToast({ msg, type });

@@ -115,6 +115,42 @@ export function AdminLockProvider({ children, verifyPin }: {
   const [inlineProps, setInlineProps] = useState<{ title?: string; subtitle?: string; onSuccess: () => void }>({ onSuccess: () => {} });
   const lastUnlockRef = useRef<number>(Date.now());
 
+  // Timer that fires lock() automatically once timeout_mins has elapsed
+  // since the last unlock — this is what makes the TopBar lock icon appear
+  // on its own instead of only after a manual "Lock" click or page refresh.
+  const autoLockTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearAutoLockTimer = useCallback(() => {
+    if (autoLockTimer.current) {
+      clearTimeout(autoLockTimer.current);
+      autoLockTimer.current = null;
+    }
+  }, []);
+
+  const lock = useCallback(() => {
+    clearAutoLockTimer();
+    setIsLocked(true);
+    try { sessionStorage.setItem(LOCKED_KEY, 'true'); } catch {}
+  }, [clearAutoLockTimer]);
+
+  // (Re)schedules the automatic lock based on the current config and the
+  // last time the panel was unlocked. Safe to call any time config or the
+  // unlock timestamp changes — it always clears any previous timer first.
+  const scheduleAutoLock = useCallback(() => {
+    clearAutoLockTimer();
+    if (!config.enabled) return;
+    if (config.timeout_mins <= 0) return; // "Always ask" — handled reactively by requestPin, no timer needed
+    const elapsedMs   = Date.now() - lastUnlockRef.current;
+    const remainingMs = config.timeout_mins * 60000 - elapsedMs;
+    if (remainingMs <= 0) {
+      lock();
+      return;
+    }
+    autoLockTimer.current = setTimeout(() => {
+      lock();
+    }, remainingMs);
+  }, [config.enabled, config.timeout_mins, lock, clearAutoLockTimer]);
+
   // ── Load config from server on mount ──────────────────────────────────
   useEffect(() => {
     loadConfigFromServer().then(serverConfig => {
@@ -152,26 +188,29 @@ export function AdminLockProvider({ children, verifyPin }: {
     return () => { socket.off('settings_updated', handler); };
   }, []);
 
+  // ── Auto-lock timer — (re)armed whenever config changes ────────────────
+  useEffect(() => {
+    scheduleAutoLock();
+    return () => { clearAutoLockTimer(); };
+  }, [scheduleAutoLock, clearAutoLockTimer]);
+
   const setConfig = useCallback((c: AdminLockConfig) => {
     setConfigState(c);
     writeLocalCache(c);
     saveConfigToServer(c);
     if (!c.enabled) {
       setIsLocked(false);
+      clearAutoLockTimer();
       try { sessionStorage.removeItem(LOCKED_KEY); } catch {}
     }
-  }, []);
-
-  const lock = useCallback(() => {
-    setIsLocked(true);
-    try { sessionStorage.setItem(LOCKED_KEY, 'true'); } catch {}
-  }, []);
+  }, [clearAutoLockTimer]);
 
   const unlock = useCallback(() => {
     setIsLocked(false);
     lastUnlockRef.current = Date.now();
     try { sessionStorage.removeItem(LOCKED_KEY); } catch {}
-  }, []);
+    scheduleAutoLock();
+  }, [scheduleAutoLock]);
 
   const isExpired = useCallback(() => {
     if (config.timeout_mins <= 0) return true;

@@ -9,6 +9,13 @@
  * never touched the kitchen). A session with 1 direct-bill order + 2 kitchen
  * rounds now correctly shows "2 rounds", not "3 rounds".
  *
+ * FIX (parcel label): the summary row and header used to always render
+ * "Table {tableId}", which read as "Table P1" for parcel/takeaway orders —
+ * nonsensical since there's no physical table. Now uses tableDisplayLabel()
+ * from utils/sessions, which renders "Parcel 1" for parcel ids and
+ * "Table T1" for real dine-in tables, matching the label style already
+ * used on the waiter side.
+ *
  * REDESIGN NOTES (unchanged from before):
  * - Summary row no longer crams icon + title + badges + amount + chevron
  *   into a single flex line. Title/badges sit on their own row that's
@@ -26,6 +33,7 @@ import React, { useState } from 'react';
 import PaymentBadge    from './PaymentBadge';
 import ReprintBill     from './ReprintBill';
 import PaymentEditModal from '../../components/PaymentEditModal';
+import { tableDisplayLabel } from '../../utils/sessions';
 import type { TableSession } from '../../utils/sessions';
 
 interface Props {
@@ -88,6 +96,9 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const hasDiff   = Math.abs(paidDiff) >= 0.01;
 
   const date = new Date(session.startedAt);
+
+  // FIX: display label — "Parcel 1" for parcel slots, "Table T1" otherwise.
+  const displayLabel = tableDisplayLabel(session.tableId);
 
   // FIX: round count / "multi-round" status is based on KITCHEN rounds only.
   // Direct-bill orders never reach the kitchen, so they must not count as
@@ -158,7 +169,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap mb-1">
-              <span className="text-white text-sm font-semibold">Table {session.tableId}</span>
+              <span className="text-white text-sm font-semibold">{displayLabel}</span>
               <OrderTypeBadge type={orderType} />
               {isMultiRound && (
                 <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-400 border border-brand-500/25 whitespace-nowrap">

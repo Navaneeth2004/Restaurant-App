@@ -4,6 +4,19 @@
  * CHANGE: Added `defaultOrderType` prop so WaiterView can pre-select
  * 'parcel' when billing a parcel slot. The toggle still works — the
  * waiter can switch it if needed.
+ *
+ * FIX (blank print from Payment tab) — v2: the previous fix tried to
+ * switch to the Bill tab via JS (requestAnimationFrame) right before
+ * window.print(), which raced against React's render/commit cycle
+ * unreliably and still produced a blank bill in testing. Replaced with a
+ * pure-CSS approach: the bill items wrapper now has a stable
+ * `bill-items-wrapper` class, and the Payment tab's container has a
+ * `payment-tab-print-hide` class. index.css's @media print block forces
+ * the former to `display: flex !important` and the latter to
+ * `display: none !important` regardless of the on-screen active tab —
+ * CSS !important in a stylesheet always overrides a plain inline style,
+ * so this can't lose a timing race the way the JS approach could.
+ * Print button is back to a plain window.print() call.
  */
 
 import React, { useState } from 'react';
@@ -250,7 +263,13 @@ export default function BillModal({
             </div>
           )}
 
-          <div style={{ display: activeTab === 'bill' || isHistory ? 'flex' : 'none', flexDirection: 'column', flex: activeTab === 'bill' || isHistory ? 1 : undefined, minHeight: 0 }}>
+          {/* FIX: added `bill-items-wrapper` class so the print stylesheet
+              can force this to display:flex regardless of activeTab. The
+              inline style below still controls the on-screen toggle. */}
+          <div
+            className="bill-items-wrapper"
+            style={{ display: activeTab === 'bill' || isHistory ? 'flex' : 'none', flexDirection: 'column', flex: activeTab === 'bill' || isHistory ? 1 : undefined, minHeight: 0 }}
+          >
             <BillItems
               items={allItems}
               subtotal={subtotal}
@@ -266,28 +285,32 @@ export default function BillModal({
             />
           </div>
 
+          {/* FIX: wrapped in `payment-tab-print-hide` so it never prints
+              alongside the force-shown bill items above. */}
           {!isHistory && activeTab === 'payment' && (
-            <PaymentTab
-              brand={brand}
-              sym={sym}
-              total={total}
-              tableLabel={tableLabel}
-              itemCount={allItems.reduce((s, i) => s + i.quantity, 0)}
-              orderType={orderType}
-              setOrderType={setOrderType}
-              payMethod={payMethod}
-              setPayMethod={setPayMethod}
-              received={received}
-              setReceived={setReceived}
-              splits={splits}
-              setSplits={setSplits}
-              customerName={customerName}
-              setCustomerName={setCustomerName}
-              customerPhone={customerPhone}
-              setCustomerPhone={setCustomerPhone}
-              customerGstin={customerGstin}
-              setCustomerGstin={setCustomerGstin}
-            />
+            <div className="payment-tab-print-hide" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <PaymentTab
+                brand={brand}
+                sym={sym}
+                total={total}
+                tableLabel={tableLabel}
+                itemCount={allItems.reduce((s, i) => s + i.quantity, 0)}
+                orderType={orderType}
+                setOrderType={setOrderType}
+                payMethod={payMethod}
+                setPayMethod={setPayMethod}
+                received={received}
+                setReceived={setReceived}
+                splits={splits}
+                setSplits={setSplits}
+                customerName={customerName}
+                setCustomerName={setCustomerName}
+                customerPhone={customerPhone}
+                setCustomerPhone={setCustomerPhone}
+                customerGstin={customerGstin}
+                setCustomerGstin={setCustomerGstin}
+              />
+            </div>
           )}
 
           <div className="no-print flex-shrink-0"

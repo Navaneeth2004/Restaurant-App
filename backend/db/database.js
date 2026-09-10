@@ -236,6 +236,28 @@ function _initSchema() {
     console.log('[DB] Migrated tables: added kiosk_token column');
   } catch (_) { /* column already exists — safe to ignore */ }
 
+  // Migration: add is_parcel to tables if it doesn't exist yet.
+  // FIX: This used to live only in backend/routes/parcel.js, and only ran
+  // lazily the first time a /api/parcel/* route was hit. Any route that
+  // queried is_parcel/is_archived before that (e.g. GET /api/reports/today)
+  // would throw "no such column: is_parcel" and silently fail, which is why
+  // Analytics/Floor View never updated even though History worked fine.
+  // Moving it here guarantees the column exists before ANY route can run.
+  try {
+    _raw.run(`ALTER TABLE tables ADD COLUMN is_parcel INTEGER DEFAULT 0`);
+    console.log('[DB] Migrated tables: added is_parcel column');
+  } catch (_) { /* column already exists — safe to ignore */ }
+
+  // Migration: add is_archived to tables if it doesn't exist yet.
+  // When this column is added for the first time, backfill is_parcel=1
+  // for any pre-existing parcel-style ids (P1, P2, ...) so old data stays
+  // consistent — mirrors the backfill that used to happen in parcel.js.
+  try {
+    _raw.run(`ALTER TABLE tables ADD COLUMN is_archived INTEGER DEFAULT 0`);
+    console.log('[DB] Migrated tables: added is_archived column');
+    _raw.run(`UPDATE tables SET is_parcel = 1 WHERE id GLOB 'P[0-9]*'`);
+  } catch (_) { /* column already exists — safe to ignore */ }
+
   _raw.run(`
     CREATE TABLE IF NOT EXISTS orders (
       id               TEXT    PRIMARY KEY,

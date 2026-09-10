@@ -221,6 +221,16 @@ router.post('/direct-bill', (req, res) => {
 });
 
 // ── PATCH /:id/cancel-item ────────────────────────────────────────────────
+// FIX: order_closed used to fire unconditionally whenever an order's last
+// item was removed, even if the table still had OTHER open rounds or a
+// separate direct-bill order still sitting on it. Since the frontend
+// treats order_closed as "this whole dining session is done, deselect the
+// table and clear the cart," cancelling a single item from a delivered or
+// direct-billed order that emptied it out would incorrectly kick the
+// waiter off a table that still had other active business. order_closed
+// now only fires when the table is genuinely empty of every open order
+// afterward — every other case just gets order_item_cancelled so callers
+// can refresh the order list without losing their place.
 router.patch('/:id/cancel-item', (req, res) => {
   const { item_id } = req.body;
   if (!item_id) return res.status(400).json({ error: 'item_id required' });
@@ -245,8 +255,12 @@ router.patch('/:id/cancel-item', (req, res) => {
         const other = db.prepare(
           "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered') AND id != ?"
         ).get(order.table_id, order.session_id, req.params.id).c;
-        if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
-        return { cancelled: true, order_cancelled: true, table_id: order.table_id, cancelledItem, orderStatus: order.status };
+        const tableNowEmpty = other === 0;
+        if (tableNowEmpty) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
+        return {
+          cancelled: true, order_cancelled: true, table_id: order.table_id,
+          cancelledItem, orderStatus: order.status, tableNowEmpty,
+        };
       }
 
       return { updatedOrder: getOrderWithItems(req.params.id), cancelledItem, orderStatus: order.status };
@@ -263,8 +277,14 @@ router.patch('/:id/cancel-item', (req, res) => {
         cancelledItem: result.cancelledItem,
         orderStatus: result.orderStatus,
         updatedOrder: { id: req.params.id, table_id: result.table_id, items: [] },
+        tableNowEmpty: result.tableNowEmpty,
       });
-      req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
+      // FIX: only announce a full "order_closed" (which the frontend treats
+      // as "deselect this table, wipe the cart") when the table is truly
+      // empty of open orders now — not just because THIS order emptied out.
+      if (result.tableNowEmpty) {
+        req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
+      }
       req.io.emit('tables_updated');
     } else {
       req.io.emit('order_updated', { order: result.updatedOrder, isNew: false });
@@ -274,6 +294,7 @@ router.patch('/:id/cancel-item', (req, res) => {
         cancelledItem: result.cancelledItem,
         orderStatus: result.orderStatus,
         updatedOrder: result.updatedOrder,
+        tableNowEmpty: false,
       });
     }
     res.json(result.updatedOrder || { success: true });
@@ -284,6 +305,10 @@ router.patch('/:id/cancel-item', (req, res) => {
 });
 
 // ── PATCH /:id/cancel ─────────────────────────────────────────────────────
+// FIX: same reasoning as cancel-item above — order_closed only fires when
+// the table has no other open orders left after this whole round/direct-
+// bill order is cancelled, so cancelling one round out of several doesn't
+// wipe the waiter's current table selection.
 router.patch('/:id/cancel', (req, res) => {
   try {
     const cancel = db.transaction(() => {
@@ -299,7 +324,8 @@ router.patch('/:id/cancel', (req, res) => {
       const other = db.prepare(
         "SELECT COUNT(*) as c FROM orders WHERE table_id = ? AND session_id = ? AND status IN ('active','delivered')"
       ).get(order.table_id, order.session_id).c;
-      if (other === 0) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
+      const tableNowEmpty = other === 0;
+      if (tableNowEmpty) db.prepare("UPDATE tables SET status = 'empty' WHERE id = ?").run(order.table_id);
 
       return {
         success: true,
@@ -307,6 +333,7 @@ router.patch('/:id/cancel', (req, res) => {
         tableId: order.table_id,
         items,
         orderStatus: order.status,
+        tableNowEmpty,
       };
     });
 
@@ -314,13 +341,16 @@ router.patch('/:id/cancel', (req, res) => {
     if (!result) return res.status(404).json({ error: 'Order not found' });
     if (result.error) return res.status(400).json({ error: result.error });
 
-    req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
+    if (result.tableNowEmpty) {
+      req.io.emit('order_closed', { orderId: req.params.id, tableId: result.table_id });
+    }
     req.io.emit('tables_updated');
     req.io.emit('order_round_cancelled', {
       orderId: req.params.id,
       tableId: result.tableId,
       cancelledItems: result.items,
       orderStatus: result.orderStatus,
+      tableNowEmpty: result.tableNowEmpty,
     });
     res.json({ success: true });
   } catch (err) {

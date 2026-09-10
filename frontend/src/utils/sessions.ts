@@ -19,6 +19,12 @@
  * inflate the rounds count. `isDirectBill` mirrors the same detection logic
  * used on the waiter-side OrderContent/TotalsBar components (delivered_at
  * ≈ created_at).
+ *
+ * FIX (parcel labels): "Table P1" doesn't make sense for a parcel/takeaway
+ * order — there's no physical table. Added `isParcelId` / `tableDisplayLabel`
+ * here so SessionRow.tsx and ReprintBill.tsx (both already import from this
+ * file) can share the same detection logic that WaiterView.tsx already uses
+ * for the waiter-side table list, instead of each screen guessing on its own.
  */
 
 import type { Order } from '../types';
@@ -54,6 +60,28 @@ function isDirectBill(order: Order): boolean {
     new Date(order.delivered_at).getTime() - new Date(order.created_at).getTime()
   );
   return diff < 2000;
+}
+
+/**
+ * FIX: Returns true if this table id is a parcel/takeaway slot (P1, P2, ...).
+ * Mirrors the isParcel() helper already used in WaiterView.tsx so the same
+ * detection logic is shared instead of duplicated (and possibly drifting)
+ * across every screen that displays a table id.
+ */
+export function isParcelId(tableId: string): boolean {
+  return /^P\d+$/.test(tableId);
+}
+
+/**
+ * FIX: Human-readable label for a table id, correctly distinguishing
+ * parcel/takeaway slots from real dine-in tables. "Table P1" reads as
+ * nonsense to a restaurant owner — "Parcel 1" is what it actually is.
+ */
+export function tableDisplayLabel(tableId: string): string {
+  if (isParcelId(tableId)) {
+    return `Parcel ${tableId.slice(1)}`;
+  }
+  return `Table ${tableId}`;
 }
 
 export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {

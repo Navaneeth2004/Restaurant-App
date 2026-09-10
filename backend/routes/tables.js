@@ -4,6 +4,29 @@ const db      = require('../db/database');
 
 // NOTE: sort_order column is included in the CREATE TABLE schema in database.js
 
+// ── Local-day helpers — same tz_offset_min-aware pattern reports.js uses ───
+// FIX: /:id/stats previously computed "today" as `new Date().toISOString()
+// .split('T')[0]` — pure server UTC with zero timezone awareness. For an
+// IST-based restaurant (UTC+5:30), that means "today" doesn't roll over
+// until 5:30am local time instead of local midnight, so orders placed in
+// the first ~5.5 hours of the local day were still being counted against
+// the PREVIOUS day's bucket. That's why "today's" stats (and messages like
+// "High-demand spot today") appeared to carry over past midnight instead
+// of resetting. Now accepts the same tz_offset_min query param the rest of
+// the reports already use.
+function getLocalToday(tzOffsetMin) {
+  const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0;
+  const now = new Date(Date.now() + offset * 60000);
+  return now.toISOString().split('T')[0];
+}
+
+function localDateExprAliased(alias, tzOffsetMin) {
+  const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0;
+  const sign = offset >= 0 ? '+' : '-';
+  const mins = Math.abs(Math.round(offset));
+  return `substr(datetime(${alias}.created_at, '${sign}${mins} minutes'), 1, 10)`;
+}
+
 router.get('/', (req, res) => {
   // occupied_since must consider every OPEN status — active, delivered,
   // AND billed_direct — so a directly-billed table still shows a timer
@@ -28,15 +51,19 @@ router.get('/', (req, res) => {
 });
 
 // GET /api/tables/:id/stats — today's performance for this specific table
+// FIX: now timezone-aware via tz_offset_min (see helpers above).
 router.get('/:id/stats', (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
+  const tzOffsetMin = req.query.tz_offset_min !== undefined ? parseInt(req.query.tz_offset_min, 10) : 0;
+  const today    = getLocalToday(tzOffsetMin);
+  const dateExpr = localDateExprAliased('o', tzOffsetMin);
+
   const rows = db.prepare(`
     SELECT o.id, o.created_at, o.total,
       (SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.order_id = o.id) AS items
     FROM orders o
     WHERE o.table_id = ?
       AND o.status IN ('delivered','closed')
-      AND substr(o.created_at,1,10) = ?
+      AND ${dateExpr} = ?
     ORDER BY o.created_at DESC
   `).all(req.params.id, today);
 

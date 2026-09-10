@@ -11,6 +11,27 @@
  *    small hover "×" button that calls DELETE /api/parcel/slot/:id.
  * 6. bill_requested socket handler retained from kiosk fix.
  *
+ * FIX (cancel item/round on delivered & direct-billed orders): cancelItem
+ * and cancelRound are now reused across active, delivered, and direct-bill
+ * orders alike (OrderContent renders the buttons on all three). cancelRound
+ * only clears the in-progress cart when it's actually the active round
+ * being cancelled — clearing it for a delivered-round cancel would wipe
+ * unrelated unsent items. Added order_item_cancelled/order_round_cancelled
+ * socket listeners so another device viewing the same table refreshes
+ * instead of relying on order_closed (which the backend now only fires
+ * when the table is truly empty afterward).
+ *
+ * FIX (Generate Bill doesn't flip table to Bill mode): previously, clicking
+ * Generate Bill while the table still had an 'active' (in-kitchen) order
+ * did nothing except open the bill modal — the table stayed "Active"
+ * because only Kitchen's own "Mark Delivered" button ever transitioned an
+ * order out of 'active'. Kitchen staff are often too busy to tap that
+ * button promptly, so Generate Bill now treats itself as the waiter
+ * confirming "this food is already served": if an active order is still
+ * on the table when Generate Bill is clicked (whether pre-existing or
+ * just created/merged from the cart), it's force-delivered via the same
+ * deliverOrder() call Kitchen's button uses, before the bill opens.
+ *
  * Everything else (add items, send to kitchen, cancel item, cancel round,
  * generate bill) works identically for parcel slots as for dine-in tables
  * because they ARE tables in the DB.
@@ -20,6 +41,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   getTables, getMenuItems, getCategories,
   getTableOrders, submitOrder, cancelOrderItem, cancelOrder, directBillOrder,
+  deliverOrder,
 } from '../services/api';
 import { useSocket }    from '../hooks/useSocket';
 import { useToast }     from '../context/ToastContext';
@@ -163,6 +185,19 @@ export default function WaiterView() {
     toast(`🧾 Bill requested — ${tableLabel}`, 'info');
     loadTables();
   });
+  // FIX: a single item or a whole round can now be cancelled off a
+  // delivered/direct-billed order without the table becoming fully empty
+  // (backend no longer fires order_closed for those partial cases). Keep
+  // this device's view of the table in sync when the cancellation happened
+  // elsewhere (e.g. another waiter device on the same table).
+  useSocket('order_item_cancelled', ({ tableId }: { tableId: string }) => {
+    if (selectedTable && tableId === selectedTable.id) loadTableOrders(selectedTable.id);
+    loadTables();
+  });
+  useSocket('order_round_cancelled', ({ tableId }: { tableId: string }) => {
+    if (selectedTable && tableId === selectedTable.id) loadTableOrders(selectedTable.id);
+    loadTables();
+  });
 
   // ── Table / parcel selection ──────────────────────────────────────────────
   const selectTable = async (table: Table) => {
@@ -249,10 +284,14 @@ export default function WaiterView() {
   };
 
   // ── Cancel item / round ───────────────────────────────────────────────────
+  // FIX: reused across active, delivered, and direct-billed orders now —
+  // OrderContent renders the cancel controls on all three. The confirmation
+  // copy is kept neutral since a direct-billed item was never in the
+  // kitchen in the first place.
   const cancelItem = (orderId: string, itemId: number) => {
     setConfirmModal({
       title: 'Remove Item',
-      message: 'This item will be removed from the order and the kitchen will be notified.',
+      message: 'This item will be removed and the bill total updated. If it was already sent to the kitchen, they will be notified.',
       confirmLabel: 'Remove Item',
       danger: true,
       onConfirm: async () => {
@@ -270,7 +309,7 @@ export default function WaiterView() {
   const cancelRound = (orderId: string) => {
     setConfirmModal({
       title: 'Cancel Entire Round',
-      message: 'All items in this round will be cancelled. The kitchen will be notified.',
+      message: 'All items in this round will be cancelled and removed from the bill.',
       confirmLabel: 'Cancel Round',
       danger: true,
       onConfirm: async () => {
@@ -278,7 +317,10 @@ export default function WaiterView() {
         try {
           await cancelOrder(orderId);
           toast('Round cancelled', 'success');
-          setCart([]);
+          // FIX: only clear the in-progress (unsent) cart if the round
+          // being cancelled is actually the active one — cancelling a
+          // past delivered round must not wipe unrelated unsent items.
+          if (orderId === activeRound?.id) setCart([]);
           if (selectedTable) await loadTableOrders(selectedTable.id);
           loadTables();
         } catch (e: any) { toast(e.response?.data?.error || 'Failed', 'error'); }
@@ -287,15 +329,24 @@ export default function WaiterView() {
   };
 
   // ── Generate bill ─────────────────────────────────────────────────────────
+  // FIX: Generate Bill now always ensures the table actually reaches
+  // "waiting_bill" state. If any 'active' (in-kitchen) order is still on
+  // the table by the time the bill is requested — whether it was already
+  // sitting there or just created/merged from the cart — it's treated as
+  // the waiter confirming the food is already served, and is force-marked
+  // delivered (same effect as Kitchen's own "Mark Delivered") before the
+  // bill modal opens. Kitchen staff can still mark it delivered themselves
+  // at any time before this; this just adds a second path for when they're
+  // too busy to do it promptly.
   const handleBill = async () => {
     if (!selectedTable) return;
     if (cart.length === 0 && allOrders.length === 0) {
       toast('No order for this slot', 'error');
       return;
     }
-    if (cart.length > 0) {
-      setLoading(true);
-      try {
+    setLoading(true);
+    try {
+      if (cart.length > 0) {
         if (activeRound) {
           const freshOrders = await getTableOrders(selectedTable.id);
           const freshActive = freshOrders.find(o => o.status === 'active');
@@ -306,20 +357,29 @@ export default function WaiterView() {
               }))
             : [];
           await submitOrder({ table_id: selectedTable.id, items: [...activeItems, ...cart] });
-          setCart([]);
-          await loadTableOrders(selectedTable.id);
         } else {
           await directBillOrder({ table_id: selectedTable.id, items: cart });
-          setCart([]);
-          await loadTableOrders(selectedTable.id);
         }
-      } catch (e: any) {
-        toast(e.response?.data?.error || 'Failed to prepare bill', 'error');
-        setLoading(false);
-        return;
+        setCart([]);
       }
+
+      // Whatever happened above, check if the table still has an order
+      // sitting in 'active' (in-kitchen) status and force it to 'delivered'
+      // so the table correctly flips into billing mode.
+      const freshOrders = await getTableOrders(selectedTable.id);
+      const stillActive = freshOrders.find(o => o.status === 'active');
+      if (stillActive) {
+        await deliverOrder(stillActive.id);
+      }
+
+      await loadTableOrders(selectedTable.id);
+      loadTables();
+    } catch (e: any) {
+      toast(e.response?.data?.error || 'Failed to prepare bill', 'error');
       setLoading(false);
+      return;
     }
+    setLoading(false);
     setBillModal(true);
   };
 

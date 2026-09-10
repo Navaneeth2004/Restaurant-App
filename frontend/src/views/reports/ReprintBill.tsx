@@ -6,6 +6,11 @@
  * - Same items table (BillItems component)
  * - Same footer buttons
  * - Portaled to document.body to escape scroll containers
+ *
+ * FIX (parcel label): tableLabel used to always render "Table {tableId}",
+ * which produced "Table P1" for parcel/takeaway orders — no such physical
+ * table exists. Now uses tableDisplayLabel() from utils/sessions, which
+ * renders "Parcel 1" for parcel ids.
  */
 
 import React from 'react';
@@ -13,6 +18,7 @@ import ReactDOM from 'react-dom';
 import { useSettings } from '../../context/SettingsContext';
 import BillHeader from '../../components/bill/BillHeader';
 import BillItems  from '../../components/bill/BillItems';
+import { tableDisplayLabel } from '../../utils/sessions';
 import type { TableSession } from '../../utils/sessions';
 
 interface Props {
@@ -35,7 +41,8 @@ export default function ReprintBill({ session, onClose }: Props) {
   const dateStr = date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr = date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-  const tableLabel = `Table ${session.tableId}`;
+  // FIX: "Parcel 1" for parcel slots instead of "Table P1"
+  const tableLabel = tableDisplayLabel(session.tableId);
 
   // Resolve payment details for display
   let paymentDetails = session.paymentDetails;

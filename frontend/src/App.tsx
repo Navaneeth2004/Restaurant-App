@@ -87,6 +87,15 @@ function Shell() {
   const handleViewChange = async (v: ViewType) => {
     if (adminProtectedViews.includes(view) && !adminProtectedViews.includes(v)) {
       lastAdminVisit.current = Date.now();
+      // FIX: "Always ask" (timeout_mins === 0) previously only re-checked
+      // reactively the NEXT time the user tried to navigate back into an
+      // admin view — isLocked itself never flipped to true when leaving,
+      // so the TopBar lock icon never appeared on its own for this
+      // setting. Locking immediately on the way out makes the icon show
+      // right away, matching what "Always ask" actually means.
+      if (config.enabled && config.timeout_mins === 0) {
+        lock();
+      }
     }
     await handleSetView(v);
   };

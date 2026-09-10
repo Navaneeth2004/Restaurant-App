@@ -23,11 +23,29 @@
  *
  *    Sessions without a session_id (legacy data) fall back to counting the row
  *    itself, so old data is not broken.
+ *
+ * 5. FIX (defensive is_parcel/is_archived guard): database.js now migrates these
+ *    columns onto the tables table unconditionally at startup, so this route
+ *    should never see them missing. This guard is kept anyway as cheap
+ *    insurance — if the columns are ever absent for any reason (e.g. an old
+ *    database.db file created before the migration existed, or the migration
+ *    hasn't run yet on a given process), the parcel-aware queries below fall
+ *    back to plain counts (treating everything as dine-in) instead of
+ *    throwing "no such column: is_parcel" and taking down the whole /today
+ *    response, which is what previously broke Analytics/Floor View entirely.
  */
 
 const express = require('express');
 const router  = express.Router();
 const db      = require('../db/database');
+
+// ── Column-existence guard (mirrors the pattern used in routes/menu.js) ────
+function hasColumn(table, col) {
+  try {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+    return cols.some(c => c.name === col);
+  } catch { return false; }
+}
 
 // ── Local-day boundary helper ─────────────────────────────────────────────
 function localDateExpr(tzOffsetMin) {
@@ -117,30 +135,46 @@ router.get('/today', (req, res) => {
       : billIncl;
   }
 
-  const activeOrders   = db.prepare("SELECT COUNT(*) as count FROM orders WHERE status = 'active'").get();
-  const occupiedTables = db.prepare(`
-    SELECT COUNT(*) as count FROM tables
-    WHERE status IN ('occupied','waiting_bill')
-      AND (is_parcel = 0 OR is_parcel IS NULL)
-      AND (is_archived = 0 OR is_archived IS NULL)
-  `).get();
-  const dineInSeatsTotal = db.prepare(`
-    SELECT SUM(seats) as total FROM tables
-    WHERE (is_parcel = 0 OR is_parcel IS NULL)
-      AND (is_archived = 0 OR is_archived IS NULL)
-  `).get();
-  const dineInSeatsFilled = db.prepare(`
-    SELECT SUM(seats) as filled FROM tables
-    WHERE status IN ('occupied','waiting_bill')
-      AND (is_parcel = 0 OR is_parcel IS NULL)
-      AND (is_archived = 0 OR is_archived IS NULL)
-  `).get();
-  const parcelsActive = db.prepare(`
-    SELECT COUNT(*) as c FROM tables
-    WHERE is_parcel = 1
-      AND (is_archived = 0 OR is_archived IS NULL)
-      AND status IN ('occupied','waiting_bill')
-  `).get();
+  const activeOrders = db.prepare("SELECT COUNT(*) as count FROM orders WHERE status = 'active'").get();
+
+  // FIX: guard every is_parcel/is_archived reference — fall back to plain
+  // counts (treating all tables as dine-in) if the columns are somehow
+  // missing, instead of throwing and breaking this entire endpoint.
+  const parcelColsExist = hasColumn('tables', 'is_parcel') && hasColumn('tables', 'is_archived');
+
+  let occupiedTables, dineInSeatsTotal, dineInSeatsFilled, parcelsActive;
+
+  if (parcelColsExist) {
+    occupiedTables = db.prepare(`
+      SELECT COUNT(*) as count FROM tables
+      WHERE status IN ('occupied','waiting_bill')
+        AND (is_parcel = 0 OR is_parcel IS NULL)
+        AND (is_archived = 0 OR is_archived IS NULL)
+    `).get();
+    dineInSeatsTotal = db.prepare(`
+      SELECT SUM(seats) as total FROM tables
+      WHERE (is_parcel = 0 OR is_parcel IS NULL)
+        AND (is_archived = 0 OR is_archived IS NULL)
+    `).get();
+    dineInSeatsFilled = db.prepare(`
+      SELECT SUM(seats) as filled FROM tables
+      WHERE status IN ('occupied','waiting_bill')
+        AND (is_parcel = 0 OR is_parcel IS NULL)
+        AND (is_archived = 0 OR is_archived IS NULL)
+    `).get();
+    parcelsActive = db.prepare(`
+      SELECT COUNT(*) as c FROM tables
+      WHERE is_parcel = 1
+        AND (is_archived = 0 OR is_archived IS NULL)
+        AND status IN ('occupied','waiting_bill')
+    `).get();
+  } else {
+    console.warn('[Reports] is_parcel/is_archived columns missing on tables — falling back to plain counts. Restart the backend to re-run migrations.');
+    occupiedTables    = db.prepare(`SELECT COUNT(*) as count FROM tables WHERE status IN ('occupied','waiting_bill')`).get();
+    dineInSeatsTotal  = db.prepare(`SELECT SUM(seats) as total FROM tables`).get();
+    dineInSeatsFilled = db.prepare(`SELECT SUM(seats) as filled FROM tables WHERE status IN ('occupied','waiting_bill')`).get();
+    parcelsActive     = { c: 0 };
+  }
 
   // FIX: use aliased date expression to avoid column ambiguity in the JOIN
   const topItems = db.prepare(`

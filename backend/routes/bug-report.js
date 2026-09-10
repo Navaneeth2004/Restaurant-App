@@ -3,6 +3,31 @@
 const express = require('express');
 const router  = express.Router();
 
+// ── Startup diagnostic — logs whether email is actually configured ────────
+// Runs once when this file is first loaded (i.e. on server startup), so
+// you can check the console immediately instead of needing to submit a
+// test report first to find out something's misconfigured.
+(function logEmailConfigStatus() {
+  const to = process.env.BUG_REPORT_EMAIL;
+  if (!to) {
+    console.warn('[BugReport] BUG_REPORT_EMAIL is not set in backend/.env — reports will be saved to the database only, no email will be sent.');
+    return;
+  }
+  let nodemailerInstalled = true;
+  try { require('nodemailer'); } catch { nodemailerInstalled = false; }
+  if (!nodemailerInstalled) {
+    console.warn(`[BugReport] BUG_REPORT_EMAIL=${to} is set, but nodemailer is not installed. Run: cd backend && npm install nodemailer`);
+    return;
+  }
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const user = process.env.SMTP_USER;
+  if (!user || !process.env.SMTP_PASS) {
+    console.warn(`[BugReport] BUG_REPORT_EMAIL=${to} is set, but SMTP_USER and/or SMTP_PASS are missing from backend/.env — email will fail.`);
+    return;
+  }
+  console.log(`[BugReport] Email is configured: bug reports will be sent to ${to} via ${host} as ${user}`);
+})();
+
 /**
  * POST /api/bug-report
  * Accepts a structured bug report and emails it to BUG_REPORT_EMAIL.

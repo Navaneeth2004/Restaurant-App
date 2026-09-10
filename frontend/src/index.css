@@ -113,17 +113,41 @@
     background: #ffffff !important;
     color: #000000 !important;
     padding: 4mm 4mm 6mm !important;
+    /* FIX (blank print from Payment tab): the modal is normally height-
+       capped (h-full / md:max-h-[92vh]) with overflow-hidden so it fits
+       on screen. Under print we need the FULL bill content to render,
+       not just whatever fit in the on-screen viewport. */
+    max-height: none !important;
+    overflow: visible !important;
+    height: auto !important;
   }
 
-  .no-print { display: none !important; }
-
-  body {
-    background: white !important;
-    font-size: 13px !important;
-    line-height: 1.5 !important;
+  /* FIX (blank print from Payment tab): BillModal toggles its bill-items
+     wrapper with an inline `display: none` while the Payment tab is
+     active on screen. A previous fix tried to switch tabs via JS timing
+     (requestAnimationFrame) right before window.print(), but that raced
+     against React's render/commit cycle unreliably. CSS `!important` in
+     a stylesheet always beats a plain (non-important) inline style, so
+     this forces the bill items to be laid out and printed regardless of
+     which tab was selected on screen when Print was clicked — no JS
+     timing involved at all. */
+  .bill-items-wrapper {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
   }
 
-  /* Strip brand-color header — white background, black text */
+  /* FIX (blank print from Payment tab): if the Payment tab happens to be
+     showing on screen when Print is clicked, its form must not also
+     render onto the printed bill alongside the forced-visible items
+     above — only the bill itself should ever print. */
+  .payment-tab-print-hide {
+    display: none !important;
+  }
+
+  /* Suppress ALL backgrounds globally — no brand colors, no dark UI */
   .bill-header {
     background: #ffffff !important;
     background-color: #ffffff !important;

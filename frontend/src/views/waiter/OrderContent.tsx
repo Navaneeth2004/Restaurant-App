@@ -13,9 +13,18 @@
  *    delivered_at equals created_at (within 1 second) as a direct-bill order.
  *    For everything else the normal round display applies.
  *
- * 2. Cancel controls are shown only on kitchen rounds (active orders), not on
- *    direct-bill items (those bypass the kitchen so there's nothing to cancel
- *    in the kitchen display).
+ * 2. FIX: Every item — active, delivered, and direct-billed — now gets a
+ *    per-item cancel control (using the same onCancelItem callback), and
+ *    delivered kitchen rounds also get a "Cancel round" option matching the
+ *    active round. Previously delivered/direct-billed items had NO way to
+ *    be removed at all: if food came out wrong or a direct-bill was a
+ *    mistake, there was no way to take it off the bill before payment.
+ *
+ *    Direct-bill items are no longer merged/flattened across separate
+ *    direct-bill orders into one summary row — that flattening lost the
+ *    order_item id needed to cancel a single item. They're now listed per
+ *    underlying order (still grouped under one "Billed directly" header),
+ *    each row keeping a real order id + item id to cancel.
  */
 
 import React from 'react';
@@ -38,7 +47,9 @@ interface Props {
   sym:           string;
   updateQty:     (idx: number, delta: number) => void;
   updateNote:    (idx: number, note: string) => void;
+  /** Cancels a single item — works on active, delivered, and direct-billed orders alike. */
   onCancelItem?: (orderId: string, itemId: number) => void;
+  /** Cancels an entire round/order — works on active and delivered kitchen rounds. */
   onCancelRound?: (orderId: string) => void;
 }
 
@@ -67,47 +78,56 @@ export default function OrderContent({
   const kitchenRounds   = pastRounds.filter(o => !isDirectBill(o));
   const directBillItems = pastRounds.filter(o => isDirectBill(o));
 
-  // Flatten direct-bill items for display (no round header)
-  const directItems: { name: string; price: number; quantity: number; note: string }[] = [];
-  const directItemMap = new Map<string, typeof directItems[0]>();
-  for (const order of directBillItems) {
-    for (const item of order.items) {
-      const key = `${item.name}||${item.note || ''}||${item.price}`;
-      const ex = directItemMap.get(key);
-      if (ex) { ex.quantity += item.quantity; }
-      else {
-        const entry = { name: item.name, price: item.price, quantity: item.quantity, note: item.note || '' };
-        directItemMap.set(key, entry);
-        directItems.push(entry);
-      }
-    }
-  }
+  const directBillTotal = directBillItems.reduce(
+    (s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0
+  );
 
   const totalRounds = kitchenRounds.length + (activeRound ? 1 : 0);
 
   return (
     <>
-      {/* Direct-bill items — shown without a round header */}
-      {directItems.length > 0 && (
+      {/* Direct-bill items — grouped under one header, but each row keeps
+          its real order id so it can be cancelled individually. */}
+      {directBillItems.length > 0 && (
         <div className="px-3 pt-3 pb-2">
-          <div className="flex items-center gap-1.5 mb-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-zinc-500 flex-shrink-0" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-              Billed directly
-            </span>
-          </div>
-          {directItems.map((item, i) => (
-            <div key={i} className="flex items-center justify-between py-1 gap-2">
-              <div className="flex-1 min-w-0">
-                <span className="text-zinc-400 text-xs font-medium">
-                  <span className="text-zinc-500 font-bold">{item.quantity}×</span> {item.name}
-                </span>
-                {item.note && <div className="text-zinc-600 text-[10px] italic truncate">{item.note}</div>}
-              </div>
-              <span className="font-mono text-zinc-500 text-xs flex-shrink-0">
-                {sym}{(item.price * item.quantity).toFixed(2)}
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-zinc-500 flex-shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                Billed directly
               </span>
             </div>
+            <span className="font-mono text-xs text-zinc-500">
+              {sym}{directBillTotal.toFixed(2)}
+            </span>
+          </div>
+          {directBillItems.map(order => (
+            order.items.map((item, i) => (
+              <div key={`${order.id}-${i}`} className="flex items-center justify-between py-1 gap-2">
+                <div className="flex-1 min-w-0">
+                  <span className="text-zinc-400 text-xs font-medium">
+                    <span className="text-zinc-500 font-bold">{item.quantity}×</span> {item.name}
+                  </span>
+                  {item.note && <div className="text-zinc-600 text-[10px] italic truncate">{item.note}</div>}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="font-mono text-zinc-500 text-xs">
+                    {sym}{(item.price * item.quantity).toFixed(2)}
+                  </span>
+                  {onCancelItem && (
+                    <button
+                      onClick={() => onCancelItem(order.id, item.id!)}
+                      className="w-5 h-5 rounded flex items-center justify-center text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                      title="Remove item"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))
           ))}
           <div className="border-t border-surface-border mt-2" />
         </div>
@@ -123,9 +143,19 @@ export default function OrderContent({
                 Round {roundIdx + 1} — Delivered
               </span>
             </div>
-            <span className="font-mono text-xs text-zinc-500">
-              {sym}{round.items.reduce((s, i) => s + i.price * i.quantity, 0).toFixed(2)}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs text-zinc-500">
+                {sym}{round.items.reduce((s, i) => s + i.price * i.quantity, 0).toFixed(2)}
+              </span>
+              {onCancelRound && (
+                <button
+                  onClick={() => onCancelRound(round.id)}
+                  className="text-[10px] font-semibold text-red-400/70 hover:text-red-400 px-1.5 py-0.5 rounded border border-red-500/20 hover:border-red-500/40 transition-colors"
+                >
+                  Cancel round
+                </button>
+              )}
+            </div>
           </div>
           {round.items.map((item, i) => (
             <div key={i} className="flex items-center justify-between py-1 gap-2">
@@ -135,9 +165,22 @@ export default function OrderContent({
                 </span>
                 {item.note && <div className="text-zinc-600 text-[10px] italic truncate">{item.note}</div>}
               </div>
-              <span className="font-mono text-zinc-500 text-xs flex-shrink-0">
-                {sym}{(item.price * item.quantity).toFixed(2)}
-              </span>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="font-mono text-zinc-500 text-xs">
+                  {sym}{(item.price * item.quantity).toFixed(2)}
+                </span>
+                {onCancelItem && (
+                  <button
+                    onClick={() => onCancelItem(round.id, item.id!)}
+                    className="w-5 h-5 rounded flex items-center justify-center text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    title="Remove item"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           <div className="border-t border-surface-border mt-2" />
@@ -199,7 +242,7 @@ export default function OrderContent({
       )}
 
       {/* All-delivered nudge */}
-      {!activeRound && (kitchenRounds.length > 0 || directItems.length > 0) && cart.length === 0 && (
+      {!activeRound && (kitchenRounds.length > 0 || directBillItems.length > 0) && cart.length === 0 && (
         <div className="px-3 pt-2 pb-1">
           <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-600 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />

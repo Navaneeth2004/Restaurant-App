@@ -10,6 +10,13 @@
  * 3. loadTableOrders was declared inside the component but the useEffect that
  *    watches `selected` did not list it as a dependency — added it to the dep
  *    array to be safe (it's stable anyway because of useCallback).
+ * 4. FIX: /:id/stats now sends tz_offset_min so "today" is computed in the
+ *    restaurant's local timezone instead of server UTC — previously the day
+ *    boundary was off by the local UTC offset (5.5 hrs for IST), so stats
+ *    appeared to carry over past local midnight instead of resetting.
+ * 5. FIX: removed the 🔥 emoji from the "High-demand spot today" message —
+ *    the rest of the app deliberately avoids emojis; this was the one
+ *    leftover instance.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -202,7 +209,12 @@ function DetailPanel({ table, order, allTableOrders, sym, onClose }: {
         const tokenRes  = await fetch(`${API_BASE}/api/auth/token`);
         const tokenData = await tokenRes.json();
         const token     = tokenData.token;
-        const res = await fetch(`${API_BASE}/api/tables/${table.id}/stats`, {
+        // FIX: send tz_offset_min so the backend computes "today" using the
+        // restaurant's local timezone, not server UTC — previously the day
+        // boundary was ~5.5 hours late for IST, so stats didn't reset until
+        // 5:30am local time instead of local midnight.
+        const tzOffsetMin = -new Date().getTimezoneOffset();
+        const res = await fetch(`${API_BASE}/api/tables/${table.id}/stats?tz_offset_min=${tzOffsetMin}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (res.ok) setStats(await res.json());
@@ -266,10 +278,12 @@ function DetailPanel({ table, order, allTableOrders, sym, onClose }: {
                 </div>
               ))}
             </div>
+            {/* FIX: removed the 🔥 emoji — rest of the app deliberately
+                avoids emojis, this was the one leftover instance. */}
             {stats.orders_today > 0 ? (
               <div style={{ marginTop:'8px', padding:'6px 10px', borderRadius:'8px', background: stats.orders_today >= 4 ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)', border:`1px solid ${stats.orders_today >= 4 ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
                 <p style={{ color: stats.orders_today >= 4 ? '#10b981' : '#f59e0b', fontSize:'11px', margin:0, fontWeight:500 }}>
-                  {stats.orders_today >= 6 ? '🔥 High-demand spot today' : stats.orders_today >= 4 ? '✓ Popular table today' : stats.orders_today >= 2 ? 'Moderate traffic today' : `${stats.orders_today} visit so far today`}
+                  {stats.orders_today >= 6 ? 'High-demand spot today' : stats.orders_today >= 4 ? 'Popular table today' : stats.orders_today >= 2 ? 'Moderate traffic today' : `${stats.orders_today} visit so far today`}
                 </p>
               </div>
             ) : (
