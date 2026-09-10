@@ -1,22 +1,15 @@
 /**
  * frontend/src/views/admin/AdminFloor.tsx
  *
- * FIXES:
- * 1. loadSummary was only called once on mount. Now it is also triggered by
- *    order_delivered and order_closed socket events so the "Today at a Glance"
- *    and "Top Items Today" panels update without a page refresh.
- * 2. new_order and order_updated also refresh the summary (active order count
- *    and occupied tables change immediately when a new order comes in).
- * 3. loadTableOrders was declared inside the component but the useEffect that
- *    watches `selected` did not list it as a dependency — added it to the dep
- *    array to be safe (it's stable anyway because of useCallback).
- * 4. FIX: /:id/stats now sends tz_offset_min so "today" is computed in the
- *    restaurant's local timezone instead of server UTC — previously the day
- *    boundary was off by the local UTC offset (5.5 hrs for IST), so stats
- *    appeared to carry over past local midnight instead of resetting.
- * 5. FIX: removed the 🔥 emoji from the "High-demand spot today" message —
- *    the rest of the app deliberately avoids emojis; this was the one
- *    leftover instance.
+ * FIXES (previous rounds):
+ * 1-5. See earlier comments in this file's history: socket refresh wiring,
+ *      tz-aware /stats, removed 🔥 emoji.
+ *
+ * FIX (token caching): loadTableOrders and DetailPanel's stats useEffect
+ * each did their own manual /api/auth/token fetch on every single call,
+ * with no caching at all — unlike AdminMenu/AdminTables which already went
+ * through the cached axios instance in services/api.ts. Both now use the
+ * shared, correctly-cached authedFetch()/getToken() from utils/authedFetch.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -24,6 +17,7 @@ import { getTables, getActiveOrders, getReportToday } from '../../services/api';
 import { useSocket } from '../../hooks/useSocket';
 import { useTick } from '../../hooks/useTick';
 import { useSettings } from '../../context/SettingsContext';
+import { authedFetch } from '../../utils/authedFetch';
 import type { Table, Order } from '../../types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -203,20 +197,13 @@ function DetailPanel({ table, order, allTableOrders, sym, onClose }: {
 
   useEffect(() => {
     setStats(null);
-    const API_BASE = (window as any).location.origin;
     async function load() {
       try {
-        const tokenRes  = await fetch(`${API_BASE}/api/auth/token`);
-        const tokenData = await tokenRes.json();
-        const token     = tokenData.token;
-        // FIX: send tz_offset_min so the backend computes "today" using the
-        // restaurant's local timezone, not server UTC — previously the day
-        // boundary was ~5.5 hours late for IST, so stats didn't reset until
-        // 5:30am local time instead of local midnight.
+        // FIX: was a manual token-fetch-per-call — now uses the shared,
+        // cached authedFetch() wrapper instead.
         const tzOffsetMin = -new Date().getTimezoneOffset();
-        const res = await fetch(`${API_BASE}/api/tables/${table.id}/stats?tz_offset_min=${tzOffsetMin}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
+        const API_BASE = window.location.origin;
+        const res = await authedFetch(`${API_BASE}/api/tables/${table.id}/stats?tz_offset_min=${tzOffsetMin}`);
         if (res.ok) setStats(await res.json());
       } catch {}
     }
@@ -278,8 +265,6 @@ function DetailPanel({ table, order, allTableOrders, sym, onClose }: {
                 </div>
               ))}
             </div>
-            {/* FIX: removed the 🔥 emoji — rest of the app deliberately
-                avoids emojis, this was the one leftover instance. */}
             {stats.orders_today > 0 ? (
               <div style={{ marginTop:'8px', padding:'6px 10px', borderRadius:'8px', background: stats.orders_today >= 4 ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)', border:`1px solid ${stats.orders_today >= 4 ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
                 <p style={{ color: stats.orders_today >= 4 ? '#10b981' : '#f59e0b', fontSize:'11px', margin:0, fontWeight:500 }}>
@@ -353,15 +338,12 @@ export default function AdminFloor() {
   const loadOrders  = useCallback(async () => { try { setOrders(await getActiveOrders()); } catch {} }, []);
   const loadSummary = useCallback(async () => { try { setSummary(await getReportToday()); } catch {} }, []);
 
+  // FIX: was a manual token-fetch-per-call with no caching — now uses the
+  // shared, cached authedFetch() wrapper instead.
   const loadTableOrders = useCallback(async (tableId: string) => {
     const API_BASE = window.location.origin;
     try {
-      const tokenRes  = await fetch(`${API_BASE}/api/auth/token`);
-      const tokenData = await tokenRes.json();
-      const token     = tokenData.token;
-      const res = await fetch(`${API_BASE}/api/orders/table/${tableId}/all`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const res = await authedFetch(`${API_BASE}/api/orders/table/${tableId}/all`);
       if (res.ok) {
         const tableOrders: Order[] = await res.json();
         setTableOrdersMap(prev => ({ ...prev, [tableId]: tableOrders }));
@@ -369,34 +351,20 @@ export default function AdminFloor() {
     } catch {}
   }, []);
 
-  // Initial load
   useEffect(() => { loadTables(); loadOrders(); loadSummary(); }, []);
 
-  // FIX: wire up all socket events that should refresh each data source.
-  //
-  // Before this fix loadSummary was never called on socket events, so the
-  // "Today at a Glance", "Top Items Today", KPI tiles, and order-count
-  // stats never updated without a page refresh.
-  //
-  // Each handler is kept narrow — only the data that actually changed is
-  // re-fetched, avoiding unnecessary network calls.
-
-  // New order: tables (status → occupied), active orders list, summary (active count)
   useSocket('new_order', useCallback(() => {
     loadTables();
     loadOrders();
     loadSummary();
   }, [loadTables, loadOrders, loadSummary]));
 
-  // Order updated (additions, item changes): active orders list + summary
   useSocket('order_updated', useCallback(() => {
     loadOrders();
     loadSummary();
-    // Also refresh the selected table's order panel if one is open
     setSelected(prev => { if (prev) loadTableOrders(prev); return prev; });
   }, [loadOrders, loadSummary, loadTableOrders]));
 
-  // Order delivered: tables (status → waiting_bill), active orders, summary
   useSocket('order_delivered', useCallback(() => {
     loadTables();
     loadOrders();
@@ -404,7 +372,6 @@ export default function AdminFloor() {
     setSelected(prev => { if (prev) loadTableOrders(prev); return prev; });
   }, [loadTables, loadOrders, loadSummary, loadTableOrders]));
 
-  // Order closed (payment done): tables (status → empty), summary (revenue, ordersCount)
   useSocket('order_closed', useCallback(() => {
     loadTables();
     loadOrders();
@@ -412,12 +379,10 @@ export default function AdminFloor() {
     setSelected(prev => { if (prev) loadTableOrders(prev); return prev; });
   }, [loadTables, loadOrders, loadSummary, loadTableOrders]));
 
-  // Tables reordered / edited in Admin → Tables tab
   useSocket('tables_updated', useCallback(() => {
     loadTables();
   }, [loadTables]));
 
-  // FIX: added loadTableOrders to the dependency array
   useEffect(() => {
     if (selected) loadTableOrders(selected);
   }, [selected, loadTableOrders]);
@@ -453,7 +418,6 @@ export default function AdminFloor() {
     available: empty,
   };
 
-  // ── Today panels ──────────────────────────────────────────────────────
   const TopItemsPanel = () => (
     <div style={{ background:'#1c1c1f', border:'1px solid #27272a', borderRadius:'14px', padding:'14px 16px' }}>
       <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 12px' }}>Top Items Today</p>
@@ -551,7 +515,6 @@ export default function AdminFloor() {
       {/* ── DESKTOP ── */}
       <div className="hidden md:flex" style={{ flex:1, overflow:'hidden' }}>
         <div style={{ flex:1, overflowY:'auto', padding:'20px', display:'flex', flexDirection:'column', gap:'16px' }}>
-          {/* 6-tile stat row */}
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))', gap:'10px' }}>
             <Tile label="Tables occupied" value={`${occupied}/${dineInTables.length}`} sub={`${empty} free right now`} color="var(--brand,#f97316)" />
             <Tile label="Seat fill rate"  value={`${seatPct}%`}                 sub={`${occupiedSeats} of ${totalSeats} seats`} color={seatPct > 70 ? '#ef4444' : seatPct > 40 ? '#f59e0b' : '#10b981'} />
@@ -562,7 +525,6 @@ export default function AdminFloor() {
             <Tile label="Awaiting bill"   value={String(billPending)}            sub={billPending > 0 ? 'needs attention' : 'all clear'} color={billPending > 0 ? '#818cf8' : '#52525b'} />
           </div>
 
-          {/* Activity + status breakdown */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
             <div style={{ background:'#1c1c1f', border:'1px solid #27272a', borderRadius:'14px', padding:'14px 16px' }}>
               <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 10px' }}>Order activity — last 12 hours</p>
@@ -587,13 +549,11 @@ export default function AdminFloor() {
             </div>
           </div>
 
-          {/* Top Items + Today at a Glance */}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
             <TopItemsPanel />
             <TodayGlancePanel />
           </div>
 
-          {/* Table grid */}
           <div>
             <p style={{ color:'#52525b', fontSize:'10px', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', margin:'0 0 10px' }}>
               Dine-in tables — tap to view order &amp; today's stats
@@ -633,7 +593,6 @@ export default function AdminFloor() {
 
       {/* ── MOBILE ── */}
       <div className="flex md:hidden" style={{ flex:1, overflowY:'auto', flexDirection:'column' }}>
-        {/* Stats strip */}
         <div style={{ flexShrink:0, overflowX:'auto', display:'flex', gap:'8px', padding:'12px 16px', borderBottom:'1px solid #27272a', scrollbarWidth:'none' }}>
           {[
             { l:'Occupied', v:`${occupied}/${tables.length}`, color:'var(--brand,#f97316)' },
@@ -679,7 +638,6 @@ export default function AdminFloor() {
           </div>
         )}
 
-        {/* Table strip */}
         <div style={{ flexShrink:0, overflowX:'auto', display:'flex', gap:'10px', padding:'12px 16px', borderBottom:'1px solid #27272a', scrollbarWidth:'none', WebkitOverflowScrolling:'touch' as any }}>
           {tables.map(t => {
             const since = (t as any).occupied_since as string | null ?? null;

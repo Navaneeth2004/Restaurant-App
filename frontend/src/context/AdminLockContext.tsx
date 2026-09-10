@@ -7,6 +7,7 @@ import React, {
   useEffect,
 } from 'react';
 import { getSocket } from '../services/socket';
+import { getToken as getSharedToken } from '../utils/authedFetch';
 import { PinModal } from '../components/admin/PinModal';
 
 interface AdminLockConfig {
@@ -24,14 +25,12 @@ interface AdminLockCtx {
   requirePin: (onSuccess: () => void, title?: string, subtitle?: string) => void;
 }
 
-// ── Server-side config helpers ────────────────────────────────────────────
-// The lock config is stored in the `settings` table (key: admin_lock_config)
-// so it is consistent across all devices. localStorage is only used as a
-// fast initial cache to avoid a flash on first render.
 const LOCAL_CACHE_KEY = 'pos_admin_lock_cfg_cache';
-const LOCKED_KEY      = 'pos_admin_locked'; // sessionStorage — per-tab
+const LOCKED_KEY      = 'pos_admin_locked';
 
 const DEFAULT_CONFIG: AdminLockConfig = { enabled: false, timeout_mins: 5 };
+
+const AUTO_LOCK_CHECK_INTERVAL_MS = 10_000;
 
 function loadLocalCache(): AdminLockConfig {
   try {
@@ -47,12 +46,9 @@ function writeLocalCache(c: AdminLockConfig) {
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
+// FIX: was its own uncached fetch on every call — now shared/cached.
 async function fetchApiToken(): Promise<string | null> {
-  try {
-    const r = await fetch(`${API_BASE}/api/auth/token`);
-    const d = await r.json();
-    return d.token ?? null;
-  } catch { return null; }
+  return getSharedToken();
 }
 
 async function loadConfigFromServer(): Promise<AdminLockConfig | null> {
@@ -95,11 +91,8 @@ export function AdminLockProvider({ children, verifyPin }: {
   children: React.ReactNode;
   verifyPin: (pin: string) => Promise<boolean>;
 }) {
-  // Start from local cache so first render is instant, then sync from server
   const [config, setConfigState] = useState<AdminLockConfig>(loadLocalCache);
 
-  // isLocked is per-tab (sessionStorage). But on page load we also check
-  // whether the lock SHOULD be active based on server config.
   const [isLocked, setIsLocked] = useState<boolean>(() => {
     try {
       const cfg = loadLocalCache();
@@ -115,43 +108,11 @@ export function AdminLockProvider({ children, verifyPin }: {
   const [inlineProps, setInlineProps] = useState<{ title?: string; subtitle?: string; onSuccess: () => void }>({ onSuccess: () => {} });
   const lastUnlockRef = useRef<number>(Date.now());
 
-  // Timer that fires lock() automatically once timeout_mins has elapsed
-  // since the last unlock — this is what makes the TopBar lock icon appear
-  // on its own instead of only after a manual "Lock" click or page refresh.
-  const autoLockTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearAutoLockTimer = useCallback(() => {
-    if (autoLockTimer.current) {
-      clearTimeout(autoLockTimer.current);
-      autoLockTimer.current = null;
-    }
-  }, []);
-
   const lock = useCallback(() => {
-    clearAutoLockTimer();
     setIsLocked(true);
     try { sessionStorage.setItem(LOCKED_KEY, 'true'); } catch {}
-  }, [clearAutoLockTimer]);
+  }, []);
 
-  // (Re)schedules the automatic lock based on the current config and the
-  // last time the panel was unlocked. Safe to call any time config or the
-  // unlock timestamp changes — it always clears any previous timer first.
-  const scheduleAutoLock = useCallback(() => {
-    clearAutoLockTimer();
-    if (!config.enabled) return;
-    if (config.timeout_mins <= 0) return; // "Always ask" — handled reactively by requestPin, no timer needed
-    const elapsedMs   = Date.now() - lastUnlockRef.current;
-    const remainingMs = config.timeout_mins * 60000 - elapsedMs;
-    if (remainingMs <= 0) {
-      lock();
-      return;
-    }
-    autoLockTimer.current = setTimeout(() => {
-      lock();
-    }, remainingMs);
-  }, [config.enabled, config.timeout_mins, lock, clearAutoLockTimer]);
-
-  // ── Load config from server on mount ──────────────────────────────────
   useEffect(() => {
     loadConfigFromServer().then(serverConfig => {
       if (!serverConfig) return;
@@ -164,11 +125,6 @@ export function AdminLockProvider({ children, verifyPin }: {
     });
   }, []);
 
-  // ── Keep lock config in sync across devices via the shared socket ─────
-  // SettingsContext already owns the socket connection and listens for
-  // 'settings_updated'; we attach our own listener directly to the shared
-  // singleton from services/socket instead of lazy-importing it, which
-  // removes the fragile dynamic import that could silently fail to wire up.
   useEffect(() => {
     const socket = getSocket();
     const handler = (data: any) => {
@@ -188,11 +144,18 @@ export function AdminLockProvider({ children, verifyPin }: {
     return () => { socket.off('settings_updated', handler); };
   }, []);
 
-  // ── Auto-lock timer — (re)armed whenever config changes ────────────────
   useEffect(() => {
-    scheduleAutoLock();
-    return () => { clearAutoLockTimer(); };
-  }, [scheduleAutoLock, clearAutoLockTimer]);
+    if (!config.enabled || config.timeout_mins <= 0 || isLocked) return;
+
+    const check = () => {
+      const elapsedMin = (Date.now() - lastUnlockRef.current) / 60000;
+      if (elapsedMin >= config.timeout_mins) lock();
+    };
+
+    check();
+    const id = setInterval(check, AUTO_LOCK_CHECK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [config.enabled, config.timeout_mins, isLocked, lock]);
 
   const setConfig = useCallback((c: AdminLockConfig) => {
     setConfigState(c);
@@ -200,17 +163,15 @@ export function AdminLockProvider({ children, verifyPin }: {
     saveConfigToServer(c);
     if (!c.enabled) {
       setIsLocked(false);
-      clearAutoLockTimer();
       try { sessionStorage.removeItem(LOCKED_KEY); } catch {}
     }
-  }, [clearAutoLockTimer]);
+  }, []);
 
   const unlock = useCallback(() => {
     setIsLocked(false);
     lastUnlockRef.current = Date.now();
     try { sessionStorage.removeItem(LOCKED_KEY); } catch {}
-    scheduleAutoLock();
-  }, [scheduleAutoLock]);
+  }, []);
 
   const isExpired = useCallback(() => {
     if (config.timeout_mins <= 0) return true;

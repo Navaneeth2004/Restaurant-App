@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getToken } from '../utils/authedFetch';
 import type { Settings, Category, MenuItem, Table, Order, Staff, ReportSummary, RevenueDay, AuthUser } from '../types';
 
 const ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
@@ -6,24 +7,16 @@ const BASE = ORIGIN + '/api';
 
 const api = axios.create({ baseURL: BASE, timeout: 10000 });
 
-let _token: string | null = null;
-
-async function ensureToken(): Promise<void> {
-  if (_token !== null) return;
-  try {
-    const res = await fetch(`${ORIGIN}/api/auth/token`);
-    const data = await res.json();
-    _token = data.token ?? '';
-  } catch {
-    _token = '';
-  }
-}
-
+// FIX: previously duplicated its own broken token cache here (seeded the
+// disabled/error case with '' and never retried on transient failure).
+// Now delegates entirely to the shared, correctly-cached getToken() in
+// utils/authedFetch.ts — see that file's header comment for the exact
+// bugs this fixes.
 api.interceptors.request.use(async config => {
-  await ensureToken();
-  if (_token) {
+  const token = await getToken();
+  if (token) {
     config.headers ||= {} as any;
-    config.headers['Authorization'] = `Bearer ${_token}`;
+    config.headers['Authorization'] = `Bearer ${token}`;
   }
   console.log('[API]', config.method?.toUpperCase(), config.url);
   return config;

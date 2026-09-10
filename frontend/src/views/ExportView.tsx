@@ -1,30 +1,20 @@
 /**
  * views/ExportView.tsx
  *
- * Standalone Export tab (admin-only) with a pill switcher between:
- * - GSTR-1 (preview table + portal-upload JSON)
- * - GSTR-3B (on-screen summary with copy fields)
- * - GSTR-9  (annual return summary)
- *
- * NOTE: The "Detailed Report" (CSV/JSON revenue export) section has been
- * removed from this tab's UI per request. The underlying backend route
- * (GET /api/export/revenue) is untouched and still works — only the
- * frontend entry point here was removed. To bring it back, reintroduce a
- * "Detailed Report" section/tab that calls GET /api/export/revenue with
- * format=csv|json (see backend/routes/export.js — unchanged).
+ * FIX (token caching): was its own uncached fetch of /api/auth/token on
+ * every download click — now uses the shared, correctly-cached getToken()
+ * from utils/authedFetch, consistent with every other screen in the app.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminLock } from '../context/AdminLockContext';
 import { useToast } from '../context/ToastContext';
 import { useSettings } from '../context/SettingsContext';
-import { authedJson } from '../utils/authedFetch';
+import { authedJson, getToken as getSharedToken } from '../utils/authedFetch';
 
 const API_ORIGIN = process.env.REACT_APP_API_URL || window.location.origin;
 
 type Section = 'gstr1' | 'gstr3b' | 'gstr9';
-
-// ── Shared helpers ─────────────────────────────────────────────────────────
 
 function todayStr(): string {
   const d = new Date();
@@ -43,14 +33,12 @@ function quarterStartStr(): string {
   return `${d.getFullYear()}-${String(qm+1).padStart(2,'0')}-01`;
 }
 
-/** Returns the current Indian financial year label, e.g. "2024-25" */
 function currentFyLabel(): string {
   const now = new Date();
   const fyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
   return `${fyStart}-${String(fyStart + 1).slice(2)}`;
 }
 
-/** Generates a list of financial years from 2023-24 up to the current one */
 function fyOptions(): string[] {
   const now = new Date();
   const currentFyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
@@ -58,7 +46,7 @@ function fyOptions(): string[] {
   for (let y = 2023; y <= currentFyStart; y++) {
     years.push(`${y}-${String(y + 1).slice(2)}`);
   }
-  return years.reverse(); // most recent first
+  return years.reverse();
 }
 
 function validateRange(from: string, to: string): string {
@@ -66,16 +54,8 @@ function validateRange(from: string, to: string): string {
   return '';
 }
 
-async function getToken(): Promise<string | null> {
-  try {
-    const res  = await fetch(`${API_ORIGIN}/api/auth/token`);
-    const data = await res.json();
-    return data.token ?? null;
-  } catch { return null; }
-}
-
 async function downloadFile(url: string, filename: string): Promise<void> {
-  const token = await getToken();
+  const token = await getSharedToken();
   const res   = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -123,16 +103,11 @@ function DateRangeError({ message }: { message: string }) {
   );
 }
 
-// ── Generic preview table — used by GSTR-1, kept visually consistent
-//    with how GSTR-3B/GSTR-9 already present copyable rows. Renders as a
-//    real <table> on wider screens and as stacked label/value cards on
-//    narrow (mobile) screens, all from the same row data. ────────────────
-
 interface PreviewRow {
   label: string;
   value: string;
-  copyValue?: string;   // raw numeric string to copy; defaults to value
-  emphasis?: boolean;    // bold/total row styling
+  copyValue?: string;
+  emphasis?: boolean;
 }
 
 function PreviewTable({
@@ -150,7 +125,6 @@ function PreviewTable({
         {subtitle && <p className="text-zinc-600 text-[10px] mt-0.5">{subtitle}</p>}
       </div>
 
-      {/* Desktop / tablet: table layout */}
       <div className="hidden sm:block">
         <table className="w-full text-sm">
           <tbody className="divide-y divide-surface-border">
@@ -176,7 +150,6 @@ function PreviewTable({
         </table>
       </div>
 
-      {/* Mobile: stacked rows */}
       <div className="sm:hidden divide-y divide-surface-border">
         {rows.map((r, i) => (
           <button
@@ -199,11 +172,6 @@ function PreviewTable({
     </div>
   );
 }
-
-// ── GSTR-1 section ─────────────────────────────────────────────────────────
-// Shows a clean preview (B2CS / B2B / totals / HSN) of what the JSON export
-// will contain, presented the same way GSTR-3B and GSTR-9 already do —
-// so the user knows what they're downloading before they download it.
 
 interface Gstr1Preview {
   period: { from: string; to: string };
@@ -308,7 +276,6 @@ function Gstr1Section() {
         </div>
       )}
 
-      {/* Filing period */}
       <div className="rounded-xl border border-surface-border bg-surface-card p-5">
         <h4 className="font-semibold text-zinc-500 text-xs uppercase tracking-widest mb-4">Filing Period</h4>
         <div className="flex gap-2 mb-4">
@@ -351,7 +318,6 @@ function Gstr1Section() {
 
       {data && (
         <div className="space-y-4">
-          {/* Header tiles */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { l: 'GSTIN',       v: data.gstin || '—' },
@@ -366,7 +332,6 @@ function Gstr1Section() {
             ))}
           </div>
 
-          {/* B2CS — walk-in aggregate */}
           <PreviewTable
             title="B2CS — Walk-in Sales (Aggregate)"
             subtitle={`${data.b2cs.invoice_count} invoice${data.b2cs.invoice_count !== 1 ? 's' : ''} without customer GSTIN, grouped into one entry`}
@@ -378,7 +343,6 @@ function Gstr1Section() {
             ]}
           />
 
-          {/* B2B — registered customers */}
           <PreviewTable
             title="B2B — Registered Customers (with GSTIN)"
             subtitle={`${data.b2b.invoice_count} invoice${data.b2b.invoice_count !== 1 ? 's' : ''} across ${data.b2b.gstin_count} customer GSTIN${data.b2b.gstin_count !== 1 ? 's' : ''}`}
@@ -390,7 +354,6 @@ function Gstr1Section() {
             ]}
           />
 
-          {/* HSN/SAC summary */}
           <PreviewTable
             title="HSN/SAC Summary"
             subtitle={`SAC ${data.hsn_summary[0]?.hsn_sc} — Restaurant Services`}
@@ -403,7 +366,6 @@ function Gstr1Section() {
             ]}
           />
 
-          {/* Totals */}
           <PreviewTable
             title="Totals — B2CS + B2B Combined"
             subtitle="This is what gets bundled into the GSTR-1 JSON below"
@@ -417,7 +379,6 @@ function Gstr1Section() {
             ]}
           />
 
-          {/* Download */}
           <div className="rounded-xl border border-surface-border bg-surface-card p-5">
             <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
               <div>
@@ -447,8 +408,6 @@ function Gstr1Section() {
     </div>
   );
 }
-
-// ── GSTR-3B section ────────────────────────────────────────────────────────
 
 function Gstr3bSection() {
   const today   = todayStr();
@@ -605,8 +564,6 @@ function Gstr3bSection() {
   );
 }
 
-// ── GSTR-9 section ─────────────────────────────────────────────────────────
-
 function CopyButton({ label, value, sym }: { label: string; value: number; sym: string }) {
   const toast = useToast();
   return (
@@ -653,7 +610,6 @@ function Gstr9Section() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Format month key "2024-06" → "Jun 2024"
   const fmtMonth = (mk: string) => {
     const [y, m] = mk.split('-');
     return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
@@ -661,7 +617,6 @@ function Gstr9Section() {
 
   return (
     <div className="space-y-5">
-      {/* Header */}
       <div>
         <div className="flex items-center gap-2 mb-1">
           <h3 className="font-bold text-white text-sm">GSTR-9 Annual Return</h3>
@@ -676,7 +631,6 @@ function Gstr9Section() {
         </p>
       </div>
 
-      {/* Eligibility note */}
       <div className="rounded-xl border border-zinc-700/60 bg-surface-card px-4 py-3">
         <p className="text-zinc-300 text-xs font-semibold mb-1.5">Who needs to file GSTR-9?</p>
         <div className="space-y-1">
@@ -704,7 +658,6 @@ function Gstr9Section() {
         </div>
       )}
 
-      {/* FY selector */}
       <div className="rounded-xl border border-surface-border bg-surface-card p-5">
         <h4 className="font-semibold text-zinc-500 text-xs uppercase tracking-widest mb-3">Financial Year</h4>
         <div className="flex items-center gap-3 flex-wrap">
@@ -746,7 +699,6 @@ function Gstr9Section() {
 
       {data && (
         <div className="space-y-4">
-          {/* Summary tiles */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { l: 'GSTIN',        v: data.gstin        || '—' },
@@ -761,7 +713,6 @@ function Gstr9Section() {
             ))}
           </div>
 
-          {/* Part II — Table 4: Outward taxable supplies */}
           <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
             <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
               <p className="text-zinc-300 text-xs font-semibold">Part II — Table 4: Outward Taxable Supplies</p>
@@ -778,14 +729,12 @@ function Gstr9Section() {
               <CopyButton label="State/UT Tax (SGST)"                        value={data.outward.total_sgst}    sym={sym} />
               <CopyButton label="Cess"                                        value={0}                          sym={sym} />
             </div>
-            {/* Total incl. tax — informational only */}
             <div className="px-4 py-3 bg-surface-raised/40 flex items-center justify-between border-t border-surface-border">
               <span className="text-zinc-500 text-xs">Total incl. tax (for your reference)</span>
               <span className="font-mono text-zinc-300 text-sm font-semibold">{sym}{data.outward.total_incl_tax.toFixed(2)}</span>
             </div>
           </div>
 
-          {/* Part II — Table 6: ITC */}
           <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
             <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
               <p className="text-zinc-300 text-xs font-semibold">Part II — Table 6: ITC Availed</p>
@@ -798,7 +747,6 @@ function Gstr9Section() {
             </div>
           </div>
 
-          {/* Part II — Table 9: Tax paid */}
           <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
             <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
               <p className="text-zinc-300 text-xs font-semibold">Part II — Table 9: Tax Payable &amp; Paid</p>
@@ -814,7 +762,6 @@ function Gstr9Section() {
             </div>
           </div>
 
-          {/* Part V — Table 17: HSN summary */}
           <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
             <div className="bg-surface-raised px-4 py-3 border-b border-surface-border">
               <p className="text-zinc-300 text-xs font-semibold">Part V — Table 17: HSN/SAC-wise Outward Summary</p>
@@ -847,7 +794,6 @@ function Gstr9Section() {
             </div>
           </div>
 
-          {/* Monthly cross-check breakdown */}
           <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
             <button
               className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-raised/40 transition-colors"
@@ -889,7 +835,6 @@ function Gstr9Section() {
                           <td className="px-4 py-3 font-mono text-zinc-300">{row.tax.toFixed(2)}</td>
                         </tr>
                       ))}
-                      {/* Totals row */}
                       <tr className="bg-surface-raised/60 font-semibold">
                         <td className="px-4 py-3 text-zinc-300">Total FY {data.fy}</td>
                         <td className="px-4 py-3 font-mono text-zinc-300">{data.session_count}</td>
@@ -905,7 +850,6 @@ function Gstr9Section() {
             )}
           </div>
 
-          {/* How-to callout */}
           <div className="rounded-xl bg-purple-500/8 border border-purple-500/20 px-4 py-3">
             <p className="text-purple-400 text-xs font-semibold mb-1">How to file GSTR-9</p>
             <p className="text-zinc-500 text-xs leading-relaxed">
@@ -921,8 +865,6 @@ function Gstr9Section() {
   );
 }
 
-// ── Main ExportView ────────────────────────────────────────────────────────
-
 export default function ExportView() {
   const [section, setSection] = useState<Section>('gstr1');
 
@@ -934,7 +876,6 @@ export default function ExportView() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
       <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 border-b border-surface-border bg-surface-card/50">
         <div className="flex items-center gap-3 flex-shrink-0">
           <h2 className="font-bold text-white text-sm hidden sm:block">Export</h2>
@@ -964,12 +905,11 @@ export default function ExportView() {
         </div>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-5">
         {section === 'gstr1'  && <Gstr1Section />}
         {section === 'gstr3b' && <Gstr3bSection />}
         {section === 'gstr9'  && <Gstr9Section />}
-      </div> t
+      </div>
     </div>
   );
 }

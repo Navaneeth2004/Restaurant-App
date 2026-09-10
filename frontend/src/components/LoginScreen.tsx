@@ -2,15 +2,13 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useToast } from '../context/ToastContext';
+import { getToken as getSharedToken } from '../utils/authedFetch';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
+// FIX: was its own uncached fetch on every call — now shared/cached.
 async function getApiToken(): Promise<string | null> {
-  try {
-    const r = await fetch(`${API_BASE}/api/auth/token`);
-    const d = await r.json();
-    return d.token ?? null;
-  } catch { return null; }
+  return getSharedToken();
 }
 
 async function doVerifyPin(pin: string, currentSessionToken?: string | null): Promise<any> {
@@ -48,7 +46,6 @@ export default function LoginScreen() {
       login(user, sessionToken);
     } catch (err: any) {
       if (err.status === 409) {
-        // Already logged in on another device — show as toast
         toast(err.data?.error || 'Already logged in on another device', 'error');
       } else {
         toast('Incorrect PIN — try again', 'error');
@@ -103,7 +100,7 @@ export default function LoginScreen() {
           <p className="text-zinc-500 text-sm mt-1">Enter your PIN to continue</p>
         </div>
 
-        {/* Kicked-out banner — shown when the heartbeat detected another device took this session */}
+        {/* Kicked-out banner */}
         {kickedOut && (
           <div className="mb-4 flex items-start gap-2.5 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 animate-slide-up">
             <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

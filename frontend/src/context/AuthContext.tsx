@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { getToken as getSharedToken } from '../utils/authedFetch';
 import type { AuthUser } from '../types';
 
 interface AuthCtx {
@@ -22,12 +23,10 @@ const AuthContext = createContext<AuthCtx>({
 const API_BASE    = process.env.REACT_APP_API_URL || window.location.origin;
 const HEARTBEAT   = 30_000; // ms between session checks
 
+// FIX: was its own uncached fetch of /api/auth/token on every single call —
+// now uses the shared, correctly-cached implementation.
 async function getApiToken(): Promise<string | null> {
-  try {
-    const r = await fetch(`${API_BASE}/api/auth/token`);
-    const d = await r.json();
-    return d.token ?? null;
-  } catch { return null; }
+  return getSharedToken();
 }
 
 async function authedPost(path: string, body: object): Promise<void> {
@@ -54,10 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => sessionStorage.getItem('pos_session_token')
   );
   const [kickedOut, setKickedOut] = useState(false);
-  // Track whether initial validation has completed (to avoid rendering children
-  // with stale auth state that gets immediately invalidated)
   const [validating, setValidating] = useState<boolean>(() => {
-    // Only need to validate if we have a stored session
     return !!(
       sessionStorage.getItem('pos_user') &&
       sessionStorage.getItem('pos_session_token')
@@ -121,11 +117,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearKicked = useCallback(() => setKickedOut(false), []);
 
-  // ── Validate session IMMEDIATELY on page load ────────────────────────────
-  // This catches server restarts: the server loses all in-memory sessions
-  // (now DB-backed, but still good to validate on load) and the stored
-  // sessionStorage token from a kept-away tab would be silently accepted
-  // without this check.
   useEffect(() => {
     const storedUser  = sessionStorage.getItem('pos_user');
     const storedToken = sessionStorage.getItem('pos_session_token');
@@ -153,20 +144,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ).then((data: any) => {
       if (cancelled) return;
       if (data.valid === false) {
-        // Session gone (e.g. server restarted, or another device grabbed the slot)
         sessionStorage.removeItem('pos_user');
         sessionStorage.removeItem('pos_session_token');
         setUser(null);
         setSessionToken(null);
-        // Show kicked-out banner only if we actually had a user loaded
         setKickedOut(true);
       } else {
-        // Session still valid — attach heartbeat
         startHeartbeat(parsedUser!.id, storedToken);
       }
       setValidating(false);
     }).catch(() => {
-      // Network error — trust the stored session optimistically
       if (!cancelled) {
         startHeartbeat(parsedUser!.id, storedToken);
         setValidating(false);
@@ -176,8 +163,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Don't render children until initial validation completes — prevents a
-  // flash where the app loads as logged-in and then immediately kicks to login.
   if (validating) {
     return (
       <AuthContext.Provider value={{ user: null, sessionToken: null, login, logout, kickedOut: false, clearKicked }}>

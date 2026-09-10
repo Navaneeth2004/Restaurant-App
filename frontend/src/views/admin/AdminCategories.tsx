@@ -4,26 +4,18 @@ import { useSocket } from '../../hooks/useSocket';
 import { useToast } from '../../context/ToastContext';
 import { useSortable } from '../../hooks/useSortable';
 import { reorderLock } from '../../utils/reorderLock';
+import { authedFetch } from '../../utils/authedFetch';
 import ConfirmModal from '../../components/ConfirmModal';
 import type { Category } from '../../types';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
-async function getAuthToken(): Promise<string | null> {
-  try {
-    const res  = await fetch(`${API_BASE}/api/auth/token`);
-    const data = await res.json();
-    return data.token ?? null;
-  } catch { return null; }
-}
-
+// FIX: was its own manual token-fetch-per-call with no caching at all —
+// now goes through the shared, cached authedFetch() wrapper instead.
 async function reorderCategories(order: { id: number; sort_order: number }[]): Promise<void> {
-  const token = await getAuthToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}/api/categories/reorder`, {
+  const res = await authedFetch(`${API_BASE}/api/categories/reorder`, {
     method: 'PATCH',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ order }),
   });
   if (!res.ok) throw new Error('Reorder failed');
@@ -56,10 +48,6 @@ export default function AdminCategories() {
   useSocket('menu_updated', useCallback(() => { if (!isSaving.current) load(); }, [load]));
 
   // ── Reorder ──────────────────────────────────────────────────────────────
-  // FIX: reorderLock.acquire()/release() are now actually called — see the
-  // matching comment in AdminMenu.tsx's handleReorder for the full
-  // rationale. isSaving remains the guard protecting this component's own
-  // optimistic state from its own echoed categories_updated event.
   const handleReorder = useCallback(async (newCats: Category[]) => {
     isSaving.current = true;
     reorderLock.acquire();

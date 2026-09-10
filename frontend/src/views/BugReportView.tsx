@@ -9,6 +9,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth }     from '../context/AuthContext';
 import { useToast }    from '../context/ToastContext';
+import { getToken as getSharedToken } from '../utils/authedFetch';
 import { collectDiagnostics, captureScreenshot, startErrorCapture } from '../utils/diagnostics';
 import type { DiagnosticsPayload } from '../utils/diagnostics';
 import StepsRecorder      from '../components/bug/StepsRecorder';
@@ -19,22 +20,20 @@ startErrorCapture();
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
-// ── Auth token helper ─────────────────────────────────────────────────────
-let _tok: string | null = null;
-async function getToken(): Promise<string | null> {
-  if (_tok !== null) return _tok;
-  try {
-    const r = await fetch(`${API_BASE}/api/auth/token`);
-    const d = await r.json();
-    _tok = d.token ?? null;
-    return _tok;
-  } catch { return null; }
-}
+// FIX: was its own local `_tok`-cached implementation with the exact
+// "disabled → null → treated as unfetched forever" bug described in the
+// audit — now delegates to the shared, correctly-cached getToken().
 async function authedPost(url: string, body: any): Promise<Response> {
-  const token = await getToken();
+  const token = await getSharedToken();
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) h['Authorization'] = `Bearer ${token}`;
   return fetch(url, { method: 'POST', headers: h, body: JSON.stringify(body) });
+}
+async function authedGet(url: string): Promise<Response> {
+  const token = await getSharedToken();
+  const h: Record<string, string> = {};
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  return fetch(url, { headers: h });
 }
 
 // ── Severity config ───────────────────────────────────────────────────────
@@ -65,6 +64,109 @@ const CATEGORIES = [
   { key: 'other',    label: 'Other',             icon: <CatIcon d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" /> },
 ];
 
+// ── Past reports (admin only) ──────────────────────────────────────────────
+
+interface SavedReport {
+  id: number;
+  title: string;
+  description: string;
+  severity: string;
+  category: string;
+  email_sent: boolean;
+  created_at: string;
+  steps: string[];
+}
+
+function PastReportsPanel() {
+  const [reports, setReports] = useState<SavedReport[] | null>(null);
+  const [error,   setError]   = useState('');
+  const [openId,  setOpenId]  = useState<number | null>(null);
+
+  const load = async () => {
+    setError('');
+    try {
+      const res = await authedGet(`${API_BASE}/api/bug-report`);
+      if (!res.ok) throw new Error('Failed to load');
+      setReports(await res.json());
+    } catch {
+      setError('Could not load past reports.');
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const sevColor: Record<string, string> = {
+    critical: '#ef4444', high: '#f97316', medium: '#f59e0b', low: '#6b7280',
+  };
+
+  return (
+    <div className="rounded-xl border border-surface-border bg-surface-card p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <p className="text-white text-sm font-semibold">Past Reports</p>
+          <p className="text-zinc-500 text-[11px] mt-0.5">Visible to admins only — every submitted report is saved here, even if email isn't set up.</p>
+        </div>
+        <button onClick={load} className="text-[11px] font-medium text-zinc-400 hover:text-white px-2 py-1 rounded-lg border border-surface-border hover:border-zinc-600 transition-colors flex-shrink-0">
+          Refresh
+        </button>
+      </div>
+
+      {error && <p className="text-red-400 text-xs">{error}</p>}
+
+      {reports === null && !error && (
+        <p className="text-zinc-600 text-xs py-2">Loading…</p>
+      )}
+
+      {reports && reports.length === 0 && (
+        <p className="text-zinc-600 text-xs py-2">No reports submitted yet.</p>
+      )}
+
+      {reports && reports.length > 0 && (
+        <div className="space-y-1.5">
+          {reports.map(r => (
+            <div key={r.id} className="rounded-lg border border-surface-border bg-surface-raised overflow-hidden">
+              <button
+                onClick={() => setOpenId(o => o === r.id ? null : r.id)}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
+              >
+                <span
+                  className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full flex-shrink-0"
+                  style={{ color: sevColor[r.severity] || '#6b7280', background: `${sevColor[r.severity] || '#6b7280'}22` }}
+                >
+                  {r.severity}
+                </span>
+                <span className="flex-1 min-w-0 text-white text-xs font-medium truncate">{r.title}</span>
+                {!r.email_sent && (
+                  <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-zinc-700/40 text-zinc-400 flex-shrink-0">
+                    Not emailed
+                  </span>
+                )}
+                <span className="text-zinc-600 text-[10px] flex-shrink-0">
+                  {new Date(r.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                </span>
+              </button>
+              {openId === r.id && (
+                <div className="px-3 pb-3 border-t border-surface-border">
+                  <p className="text-zinc-300 text-xs leading-relaxed mt-2 whitespace-pre-wrap">{r.description}</p>
+                  {r.steps.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-widest mb-1">Steps</p>
+                      <ol className="list-decimal list-inside text-zinc-400 text-xs space-y-0.5">
+                        {r.steps.map((s, i) => <li key={i}>{s}</li>)}
+                      </ol>
+                    </div>
+                  )}
+                  <p className="text-zinc-700 text-[10px] mt-2">Category: {r.category}</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────
 
 interface Props {
@@ -86,6 +188,7 @@ export default function BugReportView({ currentView = 'unknown' }: Props) {
   const [submitting,  setSubmitting]  = useState(false);
   const [error,       setError]       = useState('');
   const [diagnostics, setDiagnostics] = useState<DiagnosticsPayload | null>(null);
+  const [lastResult,  setLastResult]  = useState<{ emailSent: boolean; note?: string } | null>(null);
 
   useEffect(() => {
     setDiagnostics(collectDiagnostics(user, currentView, sessionStartRef.current));
@@ -120,6 +223,7 @@ export default function BugReportView({ currentView = 'unknown' }: Props) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit');
+      setLastResult({ emailSent: !!data.email_sent, note: data.note });
       setStep('sent');
     } catch (err: any) {
       setError(err.message || 'Failed to send report. Please try again.');
@@ -131,24 +235,34 @@ export default function BugReportView({ currentView = 'unknown' }: Props) {
   const reset = () => {
     setTitle(''); setDescription(''); setSteps([]); setSeverity('medium');
     setCategory(''); setScreenshot(null); setError(''); setStep('form');
+    setLastResult(null);
   };
 
   const selectedSev = SEVERITIES.find(s => s.key === severity)!;
 
   if (step === 'sent') {
+    const emailSent = lastResult?.emailSent ?? false;
     return (
       <div className="flex flex-col items-center justify-center h-full px-4 text-center">
-        <div className="w-20 h-20 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-5">
-          <svg className="w-9 h-9 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <div className={`w-20 h-20 rounded-full border flex items-center justify-center mb-5 ${
+          emailSent ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-amber-500/10 border-amber-500/20'
+        }`}>
+          <svg className={`w-9 h-9 ${emailSent ? 'text-emerald-400' : 'text-amber-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
           </svg>
         </div>
-        <h2 className="text-white font-bold text-xl mb-2">Report sent!</h2>
+        <h2 className="text-white font-bold text-xl mb-2">
+          {emailSent ? 'Report sent!' : 'Report saved'}
+        </h2>
         <p className="text-zinc-400 text-sm leading-relaxed max-w-sm mb-1">
-          Your bug report was delivered to the developer with full diagnostics.
+          {emailSent
+            ? 'Your bug report was delivered to the developer with full diagnostics.'
+            : 'Your bug report was saved with full diagnostics, but email delivery isn\u2019t set up on this server.'}
         </p>
         <p className="text-zinc-600 text-xs max-w-xs mb-8">
-          The developer will have your browser details, errors, and device info — you don't need to send anything else.
+          {emailSent
+            ? "The developer will have your browser details, errors, and device info — you don't need to send anything else."
+            : (lastResult?.note || "An admin can review it in-app under Ticket → Past Reports whenever they're free.")}
         </p>
         <button onClick={reset} className="btn btn-brand px-6">Report another issue</button>
       </div>
@@ -183,7 +297,6 @@ export default function BugReportView({ currentView = 'unknown' }: Props) {
             {/* Severity */}
             <div>
               <label className="label mb-2">How bad is it?</label>
-              {/* Mobile pill row */}
               <div className="flex gap-1.5 sm:hidden">
                 {SEVERITIES.map(s => (
                   <button key={s.key} onClick={() => setSeverity(s.key)}
@@ -197,7 +310,6 @@ export default function BugReportView({ currentView = 'unknown' }: Props) {
                   </button>
                 ))}
               </div>
-              {/* Desktop cards */}
               <div className="hidden sm:grid sm:grid-cols-4 gap-2">
                 {SEVERITIES.map(s => (
                   <button key={s.key} onClick={() => setSeverity(s.key)}
@@ -258,6 +370,12 @@ export default function BugReportView({ currentView = 'unknown' }: Props) {
               </label>
               <StepsRecorder steps={steps} onChange={setSteps} />
             </div>
+
+            {user?.role === 'admin' && (
+              <div className="pt-2">
+                <PastReportsPanel />
+              </div>
+            )}
           </div>
         </div>
 
@@ -336,8 +454,8 @@ export default function BugReportView({ currentView = 'unknown' }: Props) {
                 )}
               </button>
               <p className="text-zinc-600 text-[10px] text-center mt-2.5 leading-relaxed">
-                Your report will include browser info, errors, and device details — captured automatically.<br />
-                {screenshot ? 'Screenshot will be attached.' : 'No personal data beyond your name and role is included.'}
+                Your report is always saved and viewable by an admin, whether or not email is set up on this server.<br />
+                {screenshot ? 'Screenshot will be attached to the email if it sends.' : 'No personal data beyond your name and role is included.'}
               </p>
             </div>
           </div>

@@ -27,12 +27,17 @@
  * 5. FIX (defensive is_parcel/is_archived guard): database.js now migrates these
  *    columns onto the tables table unconditionally at startup, so this route
  *    should never see them missing. This guard is kept anyway as cheap
- *    insurance — if the columns are ever absent for any reason (e.g. an old
- *    database.db file created before the migration existed, or the migration
- *    hasn't run yet on a given process), the parcel-aware queries below fall
- *    back to plain counts (treating everything as dine-in) instead of
- *    throwing "no such column: is_parcel" and taking down the whole /today
- *    response, which is what previously broke Analytics/Floor View entirely.
+ *    insurance — falls back to plain counts instead of throwing if the
+ *    columns are ever absent for any reason.
+ *
+ * 6. FIX (dead code removed): billTotalInclTax/paidTotal/paidVsBillDiff were
+ *    computed on every /today request via a separate paidRows query + a
+ *    per-session accumulation loop, but nothing in the frontend consumes
+ *    them — AnalyticsTab.tsx's own comment explains the "Bill vs. Actually
+ *    Paid" panel that used to display this was removed because the
+ *    underlying calc was misleading. Kept computing it here was dead work
+ *    on every request and risked the same flawed number being
+ *    reintroduced elsewhere. Removed entirely.
  */
 
 const express = require('express');
@@ -55,7 +60,6 @@ function localDateExpr(tzOffsetMin) {
   return `substr(datetime(created_at, '${sign}${mins} minutes'), 1, 10)`;
 }
 
-// Same but with explicit table alias (prevents ambiguity in JOINs)
 function localDateExprAliased(alias, tzOffsetMin) {
   const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0;
   const sign = offset >= 0 ? '+' : '-';
@@ -76,16 +80,6 @@ router.get('/today', (req, res) => {
   const dateExpr     = localDateExpr(tzOffsetMin);
   const dateExprO    = localDateExprAliased('o', tzOffsetMin);
 
-  // FIX: Count sessions, not order rows.
-  //
-  // A "session" = one dining visit. Each visit has a session_id shared across
-  // all its rounds (kitchen rounds + any direct-bill order). Counting rows gives
-  // inflated numbers when a session has multiple rounds.
-  //
-  // COUNT(DISTINCT COALESCE(session_id, id)) handles both cases:
-  //   - Modern rows: session_id is set → distinct session_id per visit
-  //   - Legacy rows (session_id IS NULL): fall back to the order id itself,
-  //     so each legacy row counts once (preserving old behaviour for old data)
   const revenueAndCount = db.prepare(`
     SELECT
       COALESCE(SUM(total), 0) as total,
@@ -94,52 +88,8 @@ router.get('/today', (req, res) => {
     WHERE status = 'closed' AND ${dateExpr} = ?
   `).get(today);
 
-  const settingsRows = db.prepare('SELECT key, value FROM settings').all();
-  const S      = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
-  const taxPct = parseFloat(S.tax_percent || '5') / 100;
-
-  // Paid vs bill totals
-  const paidRows = db.prepare(`
-    SELECT total, amount_paid, session_id, id
-    FROM orders
-    WHERE status = 'closed' AND ${dateExpr} = ?
-  `).all(today);
-
-  // For paid totals, use one amount_paid per session (the canonical row is the
-  // most recent order in the session, matching the close route's behaviour).
-  // Sum per session then add them up to avoid double-counting split-session rows.
-  const sessionPaidMap = new Map();
-  for (const o of paidRows) {
-    const sessionKey = o.session_id || o.id;
-    const existing = sessionPaidMap.get(sessionKey);
-    if (!existing) {
-      sessionPaidMap.set(sessionKey, {
-        totalSubtotal: o.total,
-        amountPaid: o.amount_paid,
-        createdAtMs: 0, // not needed for today summary
-      });
-    } else {
-      existing.totalSubtotal += o.total;
-      // Keep amount_paid from the row that has it (only one row per session should)
-      if (o.amount_paid != null) existing.amountPaid = o.amount_paid;
-    }
-  }
-
-  let billTotalInclTax = 0;
-  let paidTotal = 0;
-  for (const sess of sessionPaidMap.values()) {
-    const billIncl = sess.totalSubtotal * (1 + taxPct);
-    billTotalInclTax += billIncl;
-    paidTotal += (typeof sess.amountPaid === 'number' && sess.amountPaid !== null)
-      ? sess.amountPaid
-      : billIncl;
-  }
-
   const activeOrders = db.prepare("SELECT COUNT(*) as count FROM orders WHERE status = 'active'").get();
 
-  // FIX: guard every is_parcel/is_archived reference — fall back to plain
-  // counts (treating all tables as dine-in) if the columns are somehow
-  // missing, instead of throwing and breaking this entire endpoint.
   const parcelColsExist = hasColumn('tables', 'is_parcel') && hasColumn('tables', 'is_archived');
 
   let occupiedTables, dineInSeatsTotal, dineInSeatsFilled, parcelsActive;
@@ -176,7 +126,6 @@ router.get('/today', (req, res) => {
     parcelsActive     = { c: 0 };
   }
 
-  // FIX: use aliased date expression to avoid column ambiguity in the JOIN
   const topItems = db.prepare(`
     SELECT oi.name,
            SUM(oi.quantity)          AS total_qty,
@@ -199,7 +148,7 @@ router.get('/today', (req, res) => {
 
   res.json({
     revenue:          revenueAndCount.total,
-    ordersCount:      revenueAndCount.session_count,  // FIX: sessions, not rows
+    ordersCount:      revenueAndCount.session_count,
     activeOrders:     activeOrders.count,
     occupiedTables:   occupiedTables.count,
     dineInSeatsTotal: dineInSeatsTotal.total ?? 0,
@@ -207,9 +156,6 @@ router.get('/today', (req, res) => {
     parcelsActive:    parcelsActive.c ?? 0,
     topItems,
     paymentBreakdown,
-    billTotalInclTax: parseFloat(billTotalInclTax.toFixed(2)),
-    paidTotal:        parseFloat(paidTotal.toFixed(2)),
-    paidVsBillDiff:   parseFloat((paidTotal - billTotalInclTax).toFixed(2)),
   });
 });
 
@@ -232,21 +178,13 @@ router.get('/history', (req, res) => {
 });
 
 // ── GET /revenue ──────────────────────────────────────────────────────────
-// FIX: Use local-date grouping consistent with the /today endpoint.
-// Previously used substr(created_at,1,10) which is UTC-based, causing the
-// day boundary to be different from what /today reports.
-//
-// NOTE: The chart "orders" count also uses session counting for consistency
-// with the /today summary. Each bar shows dining visits, not order rows.
 router.get('/revenue', (req, res) => {
-  // Default to UTC if no tz param; clients send tz_offset_min in other queries
   const tzOffsetMin = req.query.tz_offset_min !== undefined ? parseInt(req.query.tz_offset_min, 10) : 0;
   const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0;
   const sign = offset >= 0 ? '+' : '-';
   const mins = Math.abs(Math.round(offset));
   const localDay = `substr(datetime(created_at, '${sign}${mins} minutes'), 1, 10)`;
 
-  // FIX: COUNT(DISTINCT COALESCE(session_id, id)) for the same reason as /today
   const rows = db.prepare(`
     SELECT ${localDay} as day,
            SUM(total) as revenue,
