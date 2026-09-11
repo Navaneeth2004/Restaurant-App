@@ -1,8 +1,9 @@
 /**
  * components/waiter/OrderContent.tsx
  *
- * FIX (dedup): isDirectBill is now imported from utils/orderHelpers.ts
- * instead of being defined locally in this file.
+ * FIX (#10): removed the `title="Remove item"` attribute from all three
+ * per-item cancel (×) buttons — it triggered the browser's native tooltip
+ * on hover, which wasn't wanted.
  *
  * (All other fix comments from earlier rounds remain as before.)
  */
@@ -85,7 +86,6 @@ export default function OrderContent({
                     <button
                       onClick={() => onCancelItem(order.id, item.id!)}
                       className="w-5 h-5 rounded flex items-center justify-center text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                      title="Remove item"
                     >
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -139,7 +139,6 @@ export default function OrderContent({
                   <button
                     onClick={() => onCancelItem(round.id, item.id!)}
                     className="w-5 h-5 rounded flex items-center justify-center text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                    title="Remove item"
                   >
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -192,7 +191,6 @@ export default function OrderContent({
                   <button
                     onClick={() => onCancelItem(activeRound.id, item.id!)}
                     className="w-5 h-5 rounded flex items-center justify-center text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                    title="Remove item"
                   >
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />

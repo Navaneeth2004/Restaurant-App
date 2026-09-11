@@ -1,25 +1,20 @@
 /**
  * BillModal.tsx
  *
- * CHANGE: Added `defaultOrderType` prop so WaiterView can pre-select
- * 'parcel' when billing a parcel slot. The toggle still works — the
- * waiter can switch it if needed.
- *
- * FIX (blank print from Payment tab) — v2: the previous fix tried to
- * switch to the Bill tab via JS (requestAnimationFrame) right before
- * window.print(), which raced against React's render/commit cycle
- * unreliably and still produced a blank bill in testing. Replaced with a
- * pure-CSS approach: the bill items wrapper now has a stable
- * `bill-items-wrapper` class, and the Payment tab's container has a
- * `payment-tab-print-hide` class. index.css's @media print block forces
- * the former to `display: flex !important` and the latter to
- * `display: none !important` regardless of the on-screen active tab —
- * CSS !important in a stylesheet always overrides a plain inline style,
- * so this can't lose a timing race the way the JS approach could.
- * Print button is back to a plain window.print() call.
+ * FIX (#11): the waiter-tab print output looked different (some grey text
+ * illegible/odd on the white print background) from the report-section
+ * print (ReprintBill.tsx), because ReprintBill.tsx embeds its own local
+ * <style> block with a BLANKET `color: #111111 !important` rule on every
+ * text node inside .bill-print-area, while this file relied entirely on
+ * index.css's global print block, which only targets specific muted-grey
+ * inline color strings via attribute selectors — any grey shade in
+ * BillItems.tsx not covered by those exact strings stayed grey-on-white.
+ * Copied ReprintBill.tsx's same local <style> approach here so both print
+ * paths are now visually identical and self-contained (don't depend on
+ * index.css's attribute-selector matching at all).
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { useSettings }          from '../context/SettingsContext';
 import { closeOrderWithPayment } from '../services/api';
 import { useToast }              from '../context/ToastContext';
@@ -42,13 +37,13 @@ interface Props {
   onClosed:         () => void;
   isHistory?:       boolean;
   cartItems?:       { menu_item_id: number; name: string; price: number; quantity: number; note: string }[];
-  defaultOrderType?: 'dine_in' | 'parcel';   // NEW — pre-selects order type
+  defaultOrderType?: 'dine_in' | 'parcel';
 }
 
 export default function BillModal({
   orders, orderId, table, onClose, onClosed,
   isHistory = false, cartItems = [],
-  defaultOrderType = 'dine_in',              // default stays dine_in for normal tables
+  defaultOrderType = 'dine_in',
 }: Props) {
   const settings = useSettings();
   const toast    = useToast();
@@ -85,22 +80,21 @@ export default function BillModal({
   const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
   const tableLabel = table?.label || `Table ${orders[0]?.table_id}`;
 
-  const [activeTab,      setActiveTab]      = useState<'bill' | 'payment'>('bill');
-  const [paymentVisited, setPaymentVisited] = useState(false);
-  // NEW: initialise from defaultOrderType prop
-  const [orderType,      setOrderType]      = useState<'dine_in' | 'parcel'>(defaultOrderType);
-  const [payMethod,      setPayMethod]      = useState('cash');
-  const [received,       setReceived]       = useState('');
-  const [splits,         setSplits]         = useState<SplitEntry[]>([
+  const [activeTab,      setActiveTab]      = React.useState<'bill' | 'payment'>('bill');
+  const [paymentVisited, setPaymentVisited] = React.useState(false);
+  const [orderType,      setOrderType]      = React.useState<'dine_in' | 'parcel'>(defaultOrderType);
+  const [payMethod,      setPayMethod]      = React.useState('cash');
+  const [received,       setReceived]       = React.useState('');
+  const [splits,         setSplits]         = React.useState<SplitEntry[]>([
     { method: 'cash', amount: '' }, { method: 'upi', amount: '' },
   ]);
-  const [customerName,   setCustomerName]   = useState('');
-  const [customerPhone,  setCustomerPhone]  = useState('');
-  const [customerGstin,  setCustomerGstin]  = useState('');
-  const [paying,         setPaying]         = useState(false);
+  const [customerName,   setCustomerName]   = React.useState('');
+  const [customerPhone,  setCustomerPhone]  = React.useState('');
+  const [customerGstin,  setCustomerGstin]  = React.useState('');
+  const [paying,         setPaying]         = React.useState(false);
 
-  const [showPaymentWarn, setShowPaymentWarn] = useState(false);
-  const [warnModal,       setWarnModal]       = useState(false);
+  const [showPaymentWarn, setShowPaymentWarn] = React.useState(false);
+  const [warnModal,       setWarnModal]       = React.useState(false);
 
   const splitTotal   = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const receivedNum  = parseFloat(received) || 0;
@@ -174,6 +168,37 @@ export default function BillModal({
 
   return (
     <>
+      {/* FIX (#11): local print stylesheet, mirroring ReprintBill.tsx's
+          proven approach — blanket black text on everything inside
+          .bill-print-area, instead of relying on index.css's fragile
+          attribute-selector-matched grey overrides. */}
+      <style>{`
+        @media print {
+          @page { size: 80mm auto; margin: 0; }
+          * { -webkit-print-color-adjust: economy !important; print-color-adjust: economy !important; }
+          body * { visibility: hidden !important; }
+          .bill-print-area, .bill-print-area * { visibility: visible !important; }
+          .bill-print-area {
+            position: fixed !important; top: 0 !important; left: 0 !important;
+            width: 100% !important; max-width: 100% !important;
+            border-radius: 0 !important; box-shadow: none !important;
+            max-height: none !important; overflow: visible !important; height: auto !important;
+            background: #ffffff !important; padding: 4mm 4mm 6mm !important;
+          }
+          .bill-items-wrapper {
+            display: flex !important; flex-direction: column !important;
+            flex: 1 1 auto !important; min-height: 0 !important; overflow: visible !important;
+          }
+          .payment-tab-print-hide { display: none !important; }
+          .bill-header { background: #ffffff !important; background-color: #ffffff !important; background-image: none !important; padding: 8px 0 10px !important; }
+          .bill-header * { color: #111111 !important; background: transparent !important; }
+          .bill-print-area div, .bill-print-area span, .bill-print-area p,
+          .bill-print-area td, .bill-print-area th { color: #111111 !important; }
+          .no-print { display: none !important; }
+          body { background: white !important; }
+        }
+      `}</style>
+
       {showPaymentWarn && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
           onClick={() => setShowPaymentWarn(false)}>
@@ -263,9 +288,6 @@ export default function BillModal({
             </div>
           )}
 
-          {/* FIX: added `bill-items-wrapper` class so the print stylesheet
-              can force this to display:flex regardless of activeTab. The
-              inline style below still controls the on-screen toggle. */}
           <div
             className="bill-items-wrapper"
             style={{ display: activeTab === 'bill' || isHistory ? 'flex' : 'none', flexDirection: 'column', flex: activeTab === 'bill' || isHistory ? 1 : undefined, minHeight: 0 }}
@@ -285,8 +307,6 @@ export default function BillModal({
             />
           </div>
 
-          {/* FIX: wrapped in `payment-tab-print-hide` so it never prints
-              alongside the force-shown bill items above. */}
           {!isHistory && activeTab === 'payment' && (
             <div className="payment-tab-print-hide" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
               <PaymentTab

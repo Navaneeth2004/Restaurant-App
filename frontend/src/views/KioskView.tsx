@@ -1,36 +1,21 @@
 /**
- * frontend/src/views/KioskView.tsx  —  COMPLETE REDESIGN
+ * frontend/src/views/KioskView.tsx
  *
- * Layout approach:
- *   - Page = full-height flex column: Header | CatTabs | [OrderBanner] | MenuScroll
- *   - MenuScroll takes all remaining space and scrolls internally
- *   - Cart is position:fixed bottom sheet — overlays the menu, never pushes it
- *   - Menu gets padding-bottom equal to the cart panel height so content
- *     is never hidden behind the cart
+ * FIX (#12 — session-scoped access): see backend/routes/kiosk.js's header
+ * comment for the full rationale. Summary: the kiosk now tracks which
+ * specific dining session this client belongs to (sessionIdRef, captured
+ * at bootstrap from ctx.session_id and updated whenever this client
+ * successfully places its own order). Every write (placeOrder, reqBill)
+ * sends that session id back to the server, which rejects it (409,
+ * session_changed: true) if the table has turned over to a different
+ * session since — the client then force-reloads instead of silently
+ * mutating a session that isn't theirs. fetchOrders() (used by both the
+ * initial load and the 30s polling fallback) and the socket handlers also
+ * detect a session mismatch independently and trigger the same resync, so
+ * a stale tab left open gets caught even without an explicit write attempt.
  *
- * Fixes:
- *   - No emojis
- *   - Toast top-right
- *   - Cart never covers entire screen — capped at 50vh, scrolls internally
- *   - Header subtitle correct for parcel vs dine-in (uses backend is_parcel flag)
- *   - Stale closure bug in order_closed fixed
- *   - Socket.io live updates
- *   - 30s polling fallback
- *   - Back-button trap (history pushState guard + bfcache hard-reload fallback)
- *
- *   - FIX (bootstrap screen on refresh): previously the initial screen was
- *     decided purely from `existingOrders.length > 0 ? 'ordered' : 'menu'`,
- *     which never checked ctx.table_status even though it's fetched. So a
- *     customer who requested the bill and then simply REFRESHED the kiosk
- *     page (no back button involved at all) was dropped back onto the
- *     orderable "menu"/"ordered" screen — complete with "Add More Items" —
- *     even though the table was already sitting in 'waiting_bill' status
- *     server-side. This is very likely the actual root cause behind most
- *     of what looked like "back button" issues: a refresh (or any fresh
- *     load of the kiosk URL) landed on the wrong screen regardless of how
- *     the page got reloaded. Bootstrap now checks table_status first and
- *     goes straight to 'bill_requested' when it's 'waiting_bill', before
- *     falling back to the existingOrders-based logic.
+ * (All other fix comments from earlier rounds — back-button trap, bfcache
+ * fallback, bootstrap screen selection — remain as before.)
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -46,6 +31,7 @@ interface KioskCtx {
   table_seats:     number;
   table_status:    string;
   is_parcel:       boolean;
+  session_id:      string | null; // FIX (#12)
   restaurant_name: string;
   brand_color:     string;
   currency_symbol: string;
@@ -78,11 +64,19 @@ async function kGet<T>(tok: string, path: string): Promise<T> {
   return r.json();
 }
 
+// FIX (#12): preserves the `session_changed` flag from a 409 response so
+// callers can distinguish "table turned over, please resync" from any
+// other kind of failure.
 async function kPost<T>(tok: string, path: string, body: object): Promise<T> {
   const r = await fetch(`${API}/api/kiosk/${tok}${path}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
-  if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error((b as any).error || `${r.status}`); }
+  if (!r.ok) {
+    const b = await r.json().catch(() => ({}));
+    const err: any = new Error((b as any).error || `${r.status}`);
+    err.session_changed = !!(b as any).session_changed;
+    throw err;
+  }
   return r.json();
 }
 
@@ -104,7 +98,6 @@ function Toast({ msg, type }: { msg: string; type: 'ok'|'err'|'info' }) {
   );
 }
 
-// Icon components — no emojis
 function IconChef({ c, s=18 }:{ c:string; s?:number }) {
   return <svg width={s} height={s} fill="none" viewBox="0 0 24 24" stroke={c} strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8.25v-1.5m0 1.5c-1.355 0-2.697.056-4.024.166C6.845 8.51 6 9.473 6 10.608v2.513m6-4.871c1.355 0 2.697.056 4.024.166C17.155 8.51 18 9.473 18 10.608v2.513M6 13.121v2.634a1.5 1.5 0 001.5 1.5h9a1.5 1.5 0 001.5-1.5v-2.634m-12 0a2.25 2.25 0 00-.75 1.657v.003c0 .621.503 1.125 1.125 1.125h13.5c.621 0 1.125-.504 1.125-1.125v-.003a2.25 2.25 0 00-.75-1.657m-12 0l-.375-.375m12.375.375l.375-.375" /></svg>;
 }
@@ -141,13 +134,12 @@ export default function KioskView({ token }: { token: string }) {
   const [screen,     setScreen]     = useState<Screen>('menu');
   const [busy,       setBusy]       = useState(false);
   const [toast,      setToast]      = useState<{ msg:string; type:'ok'|'err'|'info' }|null>(null);
-  // Cart is collapsed (pill) by default, expands when user taps it
   const [cartOpen,   setCartOpen]   = useState(false);
-  // Track cart panel height so we can pad the menu scroll area
   const [cartH,      setCartH]      = useState(0);
   const cartRef  = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket|null>(null);
   const tidRef    = useRef<string>('');
+  const sessionIdRef = useRef<string | null>(null); // FIX (#12)
   const pollRef   = useRef<ReturnType<typeof setInterval>|null>(null);
   const toastRef  = useRef<ReturnType<typeof setTimeout>|null>(null);
 
@@ -178,12 +170,26 @@ export default function KioskView({ token }: { token: string }) {
     toastRef.current = setTimeout(() => setToast(null), 3000);
   }, []);
 
+  // FIX (#12): detects a table turnover (server's current session no longer
+  // matches what this client believes) and force-resyncs instead of
+  // silently trusting/merging stale data. Used by initial load, the 30s
+  // poll, and after successfully placing this client's own order.
   const fetchOrders = useCallback(async (): Promise<Order[]> => {
-    try { const o = await kGet<Order[]>(token, '/orders'); setOrders(o); return o; }
-    catch { return []; }
+    try {
+      const o = await kGet<Order[]>(token, '/orders');
+      const incomingSessionId = (o[0] as any)?.session_id ?? null;
+      if (sessionIdRef.current && incomingSessionId && incomingSessionId !== sessionIdRef.current) {
+        window.location.reload();
+        return o;
+      }
+      if (!sessionIdRef.current && incomingSessionId) {
+        sessionIdRef.current = incomingSessionId;
+      }
+      setOrders(o);
+      return o;
+    } catch { return []; }
   }, [token]);
 
-  // Measure cart panel height whenever it changes so we can set menu padding
   useEffect(() => {
     if (!cartRef.current) { setCartH(0); return; }
     const ro = new ResizeObserver(entries => {
@@ -204,17 +210,12 @@ export default function KioskView({ token }: { token: string }) {
         ]);
         setCtx(c);
         tidRef.current = c.table_id;
+        sessionIdRef.current = c.session_id ?? null; // FIX (#12)
         setCats(categories);
         setItems(its);
         setCatId(categories[0]?.id ?? null);
         setOrders(existingOrders);
 
-        // FIX: check table_status FIRST. Previously this only looked at
-        // existingOrders.length, so a refresh after "Request Bill" (which
-        // sets the table to 'waiting_bill' server-side but doesn't change
-        // the order count) dropped the customer back onto the orderable
-        // menu/ordered screen with "Add More Items" available — no back
-        // button involved at all, just a plain page reload.
         if (c.table_status === 'waiting_bill') {
           setScreen('bill_requested');
         } else if (existingOrders.length > 0) {
@@ -231,25 +232,38 @@ export default function KioskView({ token }: { token: string }) {
     const sock = io(API || window.location.origin, { transports: ['websocket', 'polling'] });
     socketRef.current = sock;
 
+    // FIX (#12): each handler now also checks whether the incoming order's
+    // session_id differs from this client's own remembered session — if
+    // so, the table has turned over to a different party while we were
+    // still connected, and we force-resync instead of merging their order
+    // into our local state (which would otherwise leak a stranger's live
+    // order to us, or vice versa).
+    const isForeignSession = (order: Order): boolean => {
+      const orderSessionId = (order as any).session_id as string | undefined;
+      return !!(sessionIdRef.current && orderSessionId && orderSessionId !== sessionIdRef.current);
+    };
+
     sock.on('order_delivered', ({ order }: { order: Order }) => {
       if (order.table_id !== tidRef.current) return;
+      if (isForeignSession(order)) { window.location.reload(); return; }
       setOrders(p => p.map(o => o.id === order.id ? order : o));
       showToast('Your food is ready', 'ok');
     });
 
     sock.on('order_updated', ({ order }: { order: Order }) => {
       if (order.table_id !== tidRef.current) return;
+      if (isForeignSession(order)) { window.location.reload(); return; }
       setOrders(p => p.some(o => o.id === order.id) ? p.map(o => o.id === order.id ? order : o) : [...p, order]);
     });
 
     sock.on('new_order', ({ order }: { order: Order }) => {
       if (order.table_id !== tidRef.current) return;
+      if (isForeignSession(order)) { window.location.reload(); return; }
       setOrders(p => p.some(o => o.id === order.id) ? p : [...p, order]);
     });
 
     sock.on('order_closed', ({ tableId }: { tableId: string }) => {
       if (tableId !== tidRef.current) return;
-      // Fetch fresh to avoid stale-closure bug
       kGet<Order[]>(token, '/orders').then(fresh => {
         setOrders(fresh);
         if (!fresh.some(o => o.status === 'active' || o.status === 'delivered'))
@@ -275,7 +289,6 @@ export default function KioskView({ token }: { token: string }) {
       if (i !== -1) { const u=[...p]; u[i]={...u[i],quantity:u[i].quantity+1}; return u; }
       return [...p,{ menu_item_id:item.id, name:item.name, price:item.price, quantity:1, note:'' }];
     });
-    // Auto-open briefly so user sees the item was added, then collapses
     setCartOpen(true);
   }, []);
 
@@ -299,13 +312,24 @@ export default function KioskView({ token }: { token: string }) {
       const base   = active ? active.items.map(i=>({
         menu_item_id:i.menu_item_id, name:i.name, price:i.price, quantity:i.quantity, note:i.note||'',
       })) : [];
-      await kPost(token, '/order', { items:[...base,...cart] });
+      // FIX (#12): sends the client's remembered session so the server can
+      // reject a stale/foreign write.
+      const result = await kPost<Order>(token, '/order', {
+        items:[...base,...cart],
+        client_session_id: sessionIdRef.current,
+      });
+      if ((result as any)?.session_id) sessionIdRef.current = (result as any).session_id;
       setCart([]);
       setCartOpen(false);
       await fetchOrders();
       setScreen('ordered');
       showToast('Order sent to kitchen', 'ok');
     } catch (e: any) {
+      if (e.session_changed) {
+        showToast('This table has changed — refreshing…', 'info');
+        setTimeout(() => window.location.reload(), 1200);
+        return;
+      }
       showToast(e.message || 'Failed to place order', 'err');
     } finally { setBusy(false); }
   };
@@ -315,10 +339,15 @@ export default function KioskView({ token }: { token: string }) {
     if (busy) return;
     setBusy(true);
     try {
-      await kPost(token, '/bill', {});
+      await kPost(token, '/bill', { client_session_id: sessionIdRef.current });
       await fetchOrders();
       setScreen('bill_requested');
     } catch (e: any) {
+      if (e.session_changed) {
+        showToast('This table has changed — refreshing…', 'info');
+        setTimeout(() => window.location.reload(), 1200);
+        return;
+      }
       showToast(e.message || 'Failed to request bill', 'err');
     } finally { setBusy(false); }
   };
@@ -347,7 +376,6 @@ export default function KioskView({ token }: { token: string }) {
     <div style={{ ...S.center('#18181b'), height:'100dvh', maxWidth:480, margin:'0 auto' }}>
       <style>{CSS}</style>
       <div style={{ textAlign:'center', padding:'0 40px' }}>
-        {/* Icon */}
         <div style={{ width:64,height:64,borderRadius:18,background:'#1f1f23',border:'1px solid #3f3f46',
           display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 24px' }}>
           <svg width={28} height={28} fill="none" viewBox="0 0 24 24" stroke="#52525b" strokeWidth={1.5}>
@@ -392,7 +420,6 @@ export default function KioskView({ token }: { token: string }) {
         {toast && <Toast msg={toast.msg} type={toast.type} />}
         <Header ctx={ctx} brand={brand} />
         <div style={{ flex:1, overflowY:'auto', padding:'16px 16px 32px' }}>
-          {/* Status banner */}
           <div style={{ display:'flex',alignItems:'center',gap:12,padding:'14px 16px',borderRadius:14,background:`${brand}12`,border:`1.5px solid ${brand}30`,marginBottom:16 }}>
             <div style={{ width:36,height:36,borderRadius:10,background:`${brand}20`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>
               <IconBell c={brand} s={18} />
@@ -403,7 +430,6 @@ export default function KioskView({ token }: { token: string }) {
             </div>
           </div>
 
-          {/* Bill summary card */}
           <div style={{ background:'#1f1f23',borderRadius:14,border:'1px solid #2a2a2e',overflow:'hidden' }}>
             <div style={{ padding:'12px 16px',borderBottom:'1px solid #2a2a2e' }}>
               <p style={{ color:'#52525b',fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'.1em',margin:0,fontFamily:FF }}>Bill Summary</p>
@@ -421,7 +447,6 @@ export default function KioskView({ token }: { token: string }) {
                 </div>
               ))}
             </div>
-            {/* Totals */}
             <div style={{ padding:'12px 16px',borderTop:'1px solid #2a2a2e',background:'#18181b' }}>
               <Row label="Subtotal" val={`${sym}${sub.toFixed(2)}`} dim />
               <Row label={`Tax (${ctx.tax_percent}%)`} val={`${sym}${tax.toFixed(2)}`} dim />
@@ -447,7 +472,6 @@ export default function KioskView({ token }: { token: string }) {
         {toast && <Toast msg={toast.msg} type={toast.type} />}
         <Header ctx={ctx} brand={brand} />
         <div style={{ flex:1, overflowY:'auto', padding:'16px 16px 32px' }}>
-          {/* Status */}
           <div style={{ display:'flex',alignItems:'center',gap:12,padding:'14px 16px',borderRadius:14,
             background:activeRound?`${brand}12`:'#16a34a12',border:`1.5px solid ${activeRound?brand+'30':'#16a34a30'}`,marginBottom:16 }}>
             <div style={{ width:36,height:36,borderRadius:10,background:activeRound?`${brand}20`:'#16a34a20',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>
@@ -463,7 +487,6 @@ export default function KioskView({ token }: { token: string }) {
             </div>
           </div>
 
-          {/* Order rounds */}
           {orders.map((ord,ri) => {
             const isAct = ord.status==='active';
             const rt    = ord.items.reduce((s,i)=>s+i.price*i.quantity,0);
@@ -495,7 +518,6 @@ export default function KioskView({ token }: { token: string }) {
             );
           })}
 
-          {/* Running total */}
           <div style={{ background:'#1f1f23',border:'1px solid #2a2a2e',borderRadius:14,padding:'14px 16px',marginBottom:16 }}>
             <Row label="Subtotal" val={`${sym}${sub.toFixed(2)}`} dim />
             <Row label={`Tax (${ctx.tax_percent}%)`} val={`${sym}${tax.toFixed(2)}`} dim />
@@ -506,7 +528,6 @@ export default function KioskView({ token }: { token: string }) {
           </div>
         </div>
 
-        {/* Action strip */}
         <div style={{ padding:'12px 16px 28px',borderTop:'1px solid #27272a',background:'#18181b',display:'flex',flexDirection:'column',gap:10,flexShrink:0 }}>
           <Btn label="Add More Items" onClick={()=>setScreen('menu')} outline color={brand} />
           <Btn label="Request Bill" onClick={reqBill} busy={busy} color="#16a34a" bg="#16a34a12" border="#16a34a30" />
@@ -523,10 +544,8 @@ export default function KioskView({ token }: { token: string }) {
       <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} type={toast.type} />}
 
-      {/* ── Header ── */}
       <Header ctx={ctx} brand={brand} />
 
-      {/* ── Category tabs ── */}
       <div style={{ flexShrink:0, display:'flex', gap:8, overflowX:'auto', padding:'10px 16px',
         borderBottom:'1px solid #27272a', scrollbarWidth:'none' }}>
         {cats.map(c => (
@@ -543,7 +562,6 @@ export default function KioskView({ token }: { token: string }) {
         ))}
       </div>
 
-      {/* ── Order status mini-bar ── */}
       {hasOrders && (
         <button onClick={()=>setScreen('ordered')} style={{
           width:'100%', padding:'9px 16px', background:`${brand}10`,
@@ -559,7 +577,6 @@ export default function KioskView({ token }: { token: string }) {
         </button>
       )}
 
-      {/* ── Menu scroll area ── */}
       <div style={{ flex:1, overflowY:'auto', minHeight:0, padding:`12px 12px 0` }}>
         <div style={{
           display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:10,
@@ -579,7 +596,6 @@ export default function KioskView({ token }: { token: string }) {
                 borderRadius:12, overflow:'hidden', textAlign:'left',
                 cursor:'pointer', padding:0, transition:'border-color .15s', position:'relative',
               }}>
-                {/* Image area */}
                 <div style={{ width:'100%', paddingTop:'62%', position:'relative', background:'#27272a' }}>
                   {item.image_path
                     ? <img src={`${API}${item.image_path}`} alt={item.name}
@@ -596,7 +612,6 @@ export default function KioskView({ token }: { token: string }) {
                     </div>
                   )}
                 </div>
-                {/* Info */}
                 <div style={{ padding:'9px 11px 11px' }}>
                   <p style={{ color:'#e4e4e7',fontSize:12,fontWeight:600,margin:'0 0 2px',lineHeight:1.3,fontFamily:FF }}>{item.name}</p>
                   {item.description && (
@@ -615,14 +630,12 @@ export default function KioskView({ token }: { token: string }) {
         </div>
       </div>
 
-      {/* ── Request bill strip (no cart) ── */}
       {hasOrders && cartQty===0 && screen==='menu' && (
         <div style={{ padding:'10px 16px 24px',borderTop:'1px solid #27272a',flexShrink:0,background:'#18181b' }}>
           <Btn label="Request Bill" onClick={reqBill} busy={busy} color="#16a34a" bg="#16a34a12" border="#16a34a30" />
         </div>
       )}
 
-      {/* ── Cart ── */}
       {cartQty > 0 && (
         <div ref={cartRef} style={{
           position:      'fixed',

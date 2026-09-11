@@ -4,19 +4,26 @@
  * backend/routes/kiosk.js
  *
  * FIXES:
- * 1. Added GET /api/kiosk/lan-ip — returns the server's LAN IP so the QR
- *    modal can build a URL that works on phones on the same WiFi.
- * 2. POST /:token/bill now emits a dedicated 'bill_requested' socket event
- *    so WaiterView can show a toast/chime alerting the waiter.
- * 3. POST /:token/order emits 'tables_updated' consistently.
- * 4. FIX (archived parcel slot QR still live): resolveToken() previously
- *    matched purely on kiosk_token, with no check on is_archived. Once a
- *    parcel slot was billed and soft-deleted (DELETE /api/parcel/slot/:id
- *    sets is_archived=1), its QR/token kept working — a customer who still
- *    had the QR (or re-scanned a printed one) could place a brand-new order
- *    against a table row that's now invisible in WaiterView (which filters
- *    is_archived=0), producing a "phantom" order tied to a table no staff
- *    member can find or bill. resolveToken() now excludes archived tables.
+ * 1. GET /api/kiosk/lan-ip.
+ * 2. POST /:token/bill emits 'bill_requested'.
+ * 3. POST /:token/order emits 'tables_updated'.
+ * 4. resolveToken() excludes archived tables.
+ * 5. FIX (#12 — session-scoped kiosk access): the kiosk previously
+ *    authenticated purely by table token, with no concept of WHICH
+ *    dining session a connected client belongs to. Once a table's
+ *    session ended and a new party was seated, anyone holding the old
+ *    (still-valid, since table tokens are intentionally permanent)
+ *    link could see and interact with the NEW party's live order — not
+ *    just place a phantom order, but potentially add items to or
+ *    request the bill for a session that isn't theirs. GET /:token now
+ *    returns the table's current session_id; POST /:token/order and
+ *    POST /:token/bill accept an optional client_session_id and REJECT
+ *    the write (409) if it doesn't match the table's actual current
+ *    session — a stale client always gets bounced and forced to resync
+ *    to reality instead of silently mutating the wrong session. A
+ *    client that never had a session yet (table was empty at its own
+ *    bootstrap) is unaffected — placing a genuinely first order always
+ *    succeeds.
  */
 
 const express  = require('express');
@@ -49,13 +56,22 @@ function ensureToken(tableId) {
   return token;
 }
 
-// FIX: excludes archived (soft-deleted) tables — a QR for a removed parcel
-// slot must stop working the moment it's archived, not stay live forever.
 function resolveToken(token) {
   if (!token) return null;
   return db.prepare(
     "SELECT * FROM tables WHERE kiosk_token = ? AND (is_archived = 0 OR is_archived IS NULL)"
   ).get(token) || null;
+}
+
+// FIX (#12): the table's current "live" session — whoever is sitting there
+// right now, if anyone. null means the table is empty / no open session.
+function getCurrentSessionId(tableId) {
+  const row = db.prepare(`
+    SELECT session_id FROM orders
+    WHERE table_id = ? AND status IN ('active','delivered')
+    ORDER BY created_at DESC LIMIT 1
+  `).get(tableId);
+  return row?.session_id || null;
 }
 
 // ── LAN IP helper ─────────────────────────────────────────────────────────
@@ -116,7 +132,6 @@ router.get('/:token', (req, res) => {
   if (!table) return res.status(404).json({ error: 'Invalid or expired QR code' });
 
   const S = getSettings();
-
   const isParcelSlot = /^P\d+$/.test(table.id);
 
   res.json({
@@ -126,6 +141,9 @@ router.get('/:token', (req, res) => {
     table_seats:   table.seats,
     table_status:  table.status,
     is_parcel:     isParcelSlot,
+    // FIX (#12): the client captures this at bootstrap and must present
+    // it back on every write — see getCurrentSessionId() comment above.
+    session_id:    getCurrentSessionId(table.id),
 
     restaurant_name:  S.restaurant_name  || 'Restaurant',
     brand_color:      S.brand_color      || '#f97316',
@@ -192,10 +210,24 @@ router.post('/:token/order', (req, res) => {
   const table = resolveToken(req.params.token);
   if (!table) return res.status(404).json({ error: 'Invalid QR code' });
 
-  const { items } = req.body;
+  const { items, client_session_id } = req.body;
   if (!items || !items.length) return res.status(400).json({ error: 'items required' });
 
   const table_id = table.id;
+
+  // FIX (#12): reject writes from a client whose remembered session no
+  // longer matches the table's actual current session — this is what
+  // stops a stale/returning client from silently adding items onto a
+  // DIFFERENT party's now-live order. A client that never captured a
+  // session yet (table was empty at its own bootstrap) sends null/undefined
+  // and is unaffected — a genuinely first order always succeeds.
+  const currentSessionIdForOrder = getCurrentSessionId(table_id);
+  if (currentSessionIdForOrder && client_session_id && client_session_id !== currentSessionIdForOrder) {
+    return res.status(409).json({
+      error: "This table's session has changed. Please rescan the QR code to continue.",
+      session_changed: true,
+    });
+  }
 
   if (_pendingKiosk.has(table_id)) {
     return res.status(409).json({ error: 'Order already being processed. Please wait.' });
@@ -305,6 +337,17 @@ router.post('/:token/bill', (req, res) => {
 
   if (table.status === 'empty') {
     return res.status(400).json({ error: 'No active order on this table.' });
+  }
+
+  // FIX (#12): same session-scoping guard as /order — a stale client can't
+  // request the bill for a session that isn't theirs.
+  const { client_session_id } = req.body || {};
+  const currentSessionIdForBill = getCurrentSessionId(table.id);
+  if (currentSessionIdForBill && client_session_id && client_session_id !== currentSessionIdForBill) {
+    return res.status(409).json({
+      error: "This table's session has changed. Please rescan the QR code to continue.",
+      session_changed: true,
+    });
   }
 
   const activeOrders = db.prepare(
