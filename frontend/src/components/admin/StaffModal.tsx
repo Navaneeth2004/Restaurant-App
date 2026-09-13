@@ -1,8 +1,8 @@
 /**
  * components/admin/StaffModal.tsx
  *
- * Modal for adding a new staff member.
- * Shows an error if the chosen PIN is already in use by another staff member.
+ * FIX (accidental data loss): removed backdrop click-to-close — name/PIN/
+ * confirm-PIN/role were all lost on an accidental outside click before.
  */
 
 import React, { useState } from 'react';
@@ -35,7 +35,6 @@ export default function StaffModal({ onSave, onClose }: Props) {
     try {
       await onSave({ name: name.trim(), pin, role });
     } catch (e: any) {
-      // 409 = PIN taken (set by parent via toast, but also show inline)
       setError(e?.message || 'Failed to add staff.');
     } finally {
       setSaving(false);
@@ -43,10 +42,7 @@ export default function StaffModal({ onSave, onClose }: Props) {
   };
 
   return (
-    <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div
         className="rounded-xl border border-surface-border bg-surface-card p-5 w-full max-w-sm animate-slide-up"
         onClick={e => e.stopPropagation()}

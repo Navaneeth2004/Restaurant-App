@@ -1,8 +1,7 @@
 /**
  * components/admin/ChangePinModal.tsx
  *
- * Modal for changing a staff member's PIN.
- * Shows an inline error if the new PIN is already taken by another member.
+ * FIX (accidental data loss): removed backdrop click-to-close.
  */
 
 import React, { useState } from 'react';
@@ -35,10 +34,7 @@ export default function ChangePinModal({ staff, onSave, onClose }: Props) {
   };
 
   return (
-    <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div
         className="rounded-xl border border-surface-border bg-surface-card p-5 w-full max-w-sm animate-slide-up"
         onClick={e => e.stopPropagation()}

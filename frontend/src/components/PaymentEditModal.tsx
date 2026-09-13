@@ -83,15 +83,6 @@ export default function PaymentEditModal({
   const diff = effectivePaid - grandTotal;
   const diffIsTiny = Math.abs(diff) < 0.01;
 
-  // FIX (#5.5): previously fired Promise.all(orderIds.map(id =>
-  // updateOrderPayment(id, ...))) — one PATCH request per order in the
-  // session. The backend's PATCH /orders/:id/payment always resolves to
-  // the SAME canonical (most-recent) row for a given session regardless
-  // of which order id in that session is targeted, and is fully
-  // idempotent — so N calls produce byte-identical end state to 1 call.
-  // A session's orders are chronologically sorted (see sessions.ts), so
-  // orderIds[orderIds.length - 1] is the most recent order, matching
-  // exactly what the backend's own canonical-row resolution converges to.
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -122,7 +113,11 @@ export default function PaymentEditModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={onClose}>
+    // FIX (accidental data loss): removed onClick={onClose} from the
+    // backdrop. This form can hold a typed amount, split entries, and a
+    // GSTIN — an accidental tap outside the card used to silently discard
+    // all of it. Closing now only happens via the explicit Cancel button.
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
       <div className="rounded-xl border border-surface-border bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-bold text-white text-sm">Edit Payment Method</h3>

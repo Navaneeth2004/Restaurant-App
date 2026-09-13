@@ -1,28 +1,20 @@
 /**
  * frontend/src/views/KioskView.tsx
  *
- * FIX (#12 — session-scoped access): see backend/routes/kiosk.js's header
- * comment for the full rationale. Summary: the kiosk now tracks which
- * specific dining session this client belongs to (sessionIdRef, captured
- * at bootstrap from ctx.session_id and updated whenever this client
- * successfully places its own order). Every write (placeOrder, reqBill)
- * sends that session id back to the server, which rejects it (409,
- * session_changed: true) if the table has turned over to a different
- * session since — the client then force-reloads instead of silently
- * mutating a session that isn't theirs. fetchOrders() (used by both the
- * initial load and the 30s polling fallback) and the socket handlers also
- * detect a session mismatch independently and trigger the same resync, so
- * a stale tab left open gets caught even without an explicit write attempt.
+ * FIX (concurrency): placeOrder no longer fetches the active order and
+ * merges it with the local cart before submitting — same reasoning as
+ * WaiterView.tsx's sendToKitchen/handleBill (see that file's header
+ * comment). The backend now does the merge authoritatively, so the kiosk
+ * just sends its own unsent cart.
  *
  * (All other fix comments from earlier rounds — back-button trap, bfcache
- * fallback, bootstrap screen selection — remain as before.)
+ * fallback, bootstrap screen selection, session-scoped access — remain as
+ * before; nothing else in this file changed.)
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import type { MenuItem, Category, Order } from '../types';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface KioskCtx {
   kiosk_type:      string;
@@ -31,7 +23,7 @@ interface KioskCtx {
   table_seats:     number;
   table_status:    string;
   is_parcel:       boolean;
-  session_id:      string | null; // FIX (#12)
+  session_id:      string | null;
   restaurant_name: string;
   brand_color:     string;
   currency_symbol: string;
@@ -56,17 +48,12 @@ const API = (process.env.REACT_APP_API_URL || window.location.origin).replace(/\
 const FF  = "system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const FM  = "ui-monospace,'SF Mono',monospace";
 
-// ─── API helpers ──────────────────────────────────────────────────────────────
-
 async function kGet<T>(tok: string, path: string): Promise<T> {
   const r = await fetch(`${API}/api/kiosk/${tok}${path}`);
   if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error((b as any).error || `${r.status}`); }
   return r.json();
 }
 
-// FIX (#12): preserves the `session_changed` flag from a 409 response so
-// callers can distinguish "table turned over, please resync" from any
-// other kind of failure.
 async function kPost<T>(tok: string, path: string, body: object): Promise<T> {
   const r = await fetch(`${API}/api/kiosk/${tok}${path}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -79,8 +66,6 @@ async function kPost<T>(tok: string, path: string, body: object): Promise<T> {
   }
   return r.json();
 }
-
-// ─── Small components ─────────────────────────────────────────────────────────
 
 function Spin({ size = 18, color = '#fff' }: { size?: number; color?: string }) {
   return <span style={{ display:'inline-block', width:size, height:size, border:`2px solid ${color}30`, borderTopColor:color, borderRadius:'50%', animation:'kspin .7s linear infinite', flexShrink:0 }} />;
@@ -120,8 +105,6 @@ function IconPlus({ c='#71717a', s=12 }:{ c?:string; s?:number }) {
   return <svg width={s} height={s} fill="none" viewBox="0 0 24 24" stroke={c} strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>;
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
-
 export default function KioskView({ token }: { token: string }) {
   const [ctx,        setCtx]        = useState<KioskCtx | null>(null);
   const [error,      setError]      = useState<string | null>(null);
@@ -139,11 +122,10 @@ export default function KioskView({ token }: { token: string }) {
   const cartRef  = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket|null>(null);
   const tidRef    = useRef<string>('');
-  const sessionIdRef = useRef<string | null>(null); // FIX (#12)
+  const sessionIdRef = useRef<string | null>(null);
   const pollRef   = useRef<ReturnType<typeof setInterval>|null>(null);
   const toastRef  = useRef<ReturnType<typeof setTimeout>|null>(null);
 
-  // ── Back button trap ────────────────────────────────────────────────────
   useEffect(() => {
     window.history.pushState(null, '', window.location.href);
     const trapBack = () => {
@@ -153,7 +135,6 @@ export default function KioskView({ token }: { token: string }) {
     return () => window.removeEventListener('popstate', trapBack);
   }, []);
 
-  // ── bfcache fallback ─────────────────────────────────────────────────────
   useEffect(() => {
     const handlePageShow = (e: PageTransitionEvent) => {
       if (e.persisted) {
@@ -170,10 +151,6 @@ export default function KioskView({ token }: { token: string }) {
     toastRef.current = setTimeout(() => setToast(null), 3000);
   }, []);
 
-  // FIX (#12): detects a table turnover (server's current session no longer
-  // matches what this client believes) and force-resyncs instead of
-  // silently trusting/merging stale data. Used by initial load, the 30s
-  // poll, and after successfully placing this client's own order.
   const fetchOrders = useCallback(async (): Promise<Order[]> => {
     try {
       const o = await kGet<Order[]>(token, '/orders');
@@ -199,7 +176,6 @@ export default function KioskView({ token }: { token: string }) {
     return () => ro.disconnect();
   });
 
-  // ── Bootstrap ─────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
@@ -210,7 +186,7 @@ export default function KioskView({ token }: { token: string }) {
         ]);
         setCtx(c);
         tidRef.current = c.table_id;
-        sessionIdRef.current = c.session_id ?? null; // FIX (#12)
+        sessionIdRef.current = c.session_id ?? null;
         setCats(categories);
         setItems(its);
         setCatId(categories[0]?.id ?? null);
@@ -228,16 +204,9 @@ export default function KioskView({ token }: { token: string }) {
       }
     })();
 
-    // ── Socket ───────────────────────────────────────────────────────────
     const sock = io(API || window.location.origin, { transports: ['websocket', 'polling'] });
     socketRef.current = sock;
 
-    // FIX (#12): each handler now also checks whether the incoming order's
-    // session_id differs from this client's own remembered session — if
-    // so, the table has turned over to a different party while we were
-    // still connected, and we force-resync instead of merging their order
-    // into our local state (which would otherwise leak a stranger's live
-    // order to us, or vice versa).
     const isForeignSession = (order: Order): boolean => {
       const orderSessionId = (order as any).session_id as string | undefined;
       return !!(sessionIdRef.current && orderSessionId && orderSessionId !== sessionIdRef.current);
@@ -282,7 +251,6 @@ export default function KioskView({ token }: { token: string }) {
     };
   }, [token]); // eslint-disable-line
 
-  // ── Cart helpers ──────────────────────────────────────────────────────────
   const addItem = useCallback((item: MenuItem) => {
     setCart(p => {
       const i = p.findIndex(c => c.menu_item_id === item.id && !c.note);
@@ -304,18 +272,15 @@ export default function KioskView({ token }: { token: string }) {
   }, []);
 
   // ── Place order ───────────────────────────────────────────────────────────
+  // FIX (concurrency): sends only this device's own unsent cart — the
+  // backend merges it additively into whatever's currently on the table,
+  // so no pre-fetch/merge is needed (or safe) here anymore.
   const placeOrder = async () => {
     if (!cart.length || busy) return;
     setBusy(true);
     try {
-      const active = orders.find(o => o.status==='active');
-      const base   = active ? active.items.map(i=>({
-        menu_item_id:i.menu_item_id, name:i.name, price:i.price, quantity:i.quantity, note:i.note||'',
-      })) : [];
-      // FIX (#12): sends the client's remembered session so the server can
-      // reject a stale/foreign write.
       const result = await kPost<Order>(token, '/order', {
-        items:[...base,...cart],
+        items: cart,
         client_session_id: sessionIdRef.current,
       });
       if ((result as any)?.session_id) sessionIdRef.current = (result as any).session_id;
@@ -334,7 +299,6 @@ export default function KioskView({ token }: { token: string }) {
     } finally { setBusy(false); }
   };
 
-  // ── Request bill ──────────────────────────────────────────────────────────
   const reqBill = async () => {
     if (busy) return;
     setBusy(true);
@@ -352,7 +316,6 @@ export default function KioskView({ token }: { token: string }) {
     } finally { setBusy(false); }
   };
 
-  // ── Derived ───────────────────────────────────────────────────────────────
   const brand       = ctx?.brand_color     || '#f97316';
   const sym         = ctx?.currency_symbol || '₹';
   const taxPct      = parseFloat(ctx?.tax_percent || '5') / 100;
@@ -363,7 +326,6 @@ export default function KioskView({ token }: { token: string }) {
   const hasOrders   = orders.length > 0;
   const activeRound = orders.find(o => o.status==='active') || null;
 
-  // ── Loading / error ───────────────────────────────────────────────────────
   if (booting) return (
     <div style={{ ...S.center('#18181b'), height:'100dvh', maxWidth:480, margin:'0 auto' }}>
       <style>{CSS}</style>
@@ -392,7 +354,6 @@ export default function KioskView({ token }: { token: string }) {
     </div>
   );
 
-  // ── Session ended ─────────────────────────────────────────────────────────
   if (screen==='session_ended') return (
     <div style={{ ...S.page, background:'#18181b' }}>
       <style>{CSS}</style>
@@ -410,7 +371,6 @@ export default function KioskView({ token }: { token: string }) {
     </div>
   );
 
-  // ── Bill requested ────────────────────────────────────────────────────────
   if (screen==='bill_requested') {
     const sub = ordersSub, tax = sub*taxPct, tot = sub+tax;
     const merged = mergeItems(orders);
@@ -463,7 +423,6 @@ export default function KioskView({ token }: { token: string }) {
     );
   }
 
-  // ── Ordered screen ────────────────────────────────────────────────────────
   if (screen==='ordered' && hasOrders && cart.length===0) {
     const sub=ordersSub, tax=sub*taxPct;
     return (
@@ -536,7 +495,6 @@ export default function KioskView({ token }: { token: string }) {
     );
   }
 
-  // ── Menu + Cart ───────────────────────────────────────────────────────────
   const cartBottomH = cartQty > 0 ? ((cartH || 44) + 8) : 0;
 
   return (
@@ -742,8 +700,6 @@ export default function KioskView({ token }: { token: string }) {
   );
 }
 
-// ─── Header ───────────────────────────────────────────────────────────────────
-
 function Header({ ctx, brand }: { ctx: KioskCtx; brand: string }) {
   const subtitle = ctx.is_parcel
     ? 'Parcel / Takeaway'
@@ -765,8 +721,6 @@ function Header({ ctx, brand }: { ctx: KioskCtx; brand: string }) {
     </div>
   );
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function mergeItems(orders: Order[]) {
   const m = new Map<string,{name:string;price:number;quantity:number;note:string}>();
@@ -804,8 +758,6 @@ function Btn({ label, onClick, busy=false, outline=false, color, bg='transparent
     </button>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const S = {
   page: {

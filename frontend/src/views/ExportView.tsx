@@ -216,6 +216,7 @@ function Gstr1Section() {
       const params = new URLSearchParams();
       if (from) params.set('from', from);
       if (to)   params.set('to',   to);
+      params.set('tz_offset_min', String(-new Date().getTimezoneOffset()));
       const d = await authedJson(`${API_ORIGIN}/api/export/gst/gstr1/preview?${params}`);
       setData(d);
     } catch (e: any) {
@@ -237,6 +238,7 @@ function Gstr1Section() {
       const params = new URLSearchParams();
       if (from) params.set('from', from);
       if (to)   params.set('to',   to);
+      params.set('tz_offset_min', String(-new Date().getTimezoneOffset()));
       await downloadFile(`${API_ORIGIN}/api/export/gst/gstr1?${params}`, `GSTR1_${from}_to_${to}.json`);
       toast('GSTR-1 JSON downloaded — upload at gst.gov.in', 'success');
     } catch (e: any) {
@@ -431,6 +433,7 @@ function Gstr3bSection() {
       const params = new URLSearchParams();
       if (from) params.set('from', from);
       if (to)   params.set('to',   to);
+      params.set('tz_offset_min', String(-new Date().getTimezoneOffset()));
       const d = await authedJson(`${API_ORIGIN}/api/export/gst/gstr3b?${params}`);
       setData(d);
     } catch (e: any) {
@@ -599,7 +602,7 @@ function Gstr9Section() {
     setLoading(true);
     setError('');
     try {
-      const d = await authedJson(`${API_ORIGIN}/api/export/gst/gstr9?fy=${fy}`);
+      const d = await authedJson(`${API_ORIGIN}/api/export/gst/gstr9?fy=${fy}&tz_offset_min=${-new Date().getTimezoneOffset()}`);
       setData(d);
     } catch (e: any) {
       setError(e.message || 'Failed to load GSTR-9 summary');

@@ -1,31 +1,5 @@
 'use strict';
 
-/**
- * backend/routes/kiosk.js
- *
- * FIXES:
- * 1. GET /api/kiosk/lan-ip.
- * 2. POST /:token/bill emits 'bill_requested'.
- * 3. POST /:token/order emits 'tables_updated'.
- * 4. resolveToken() excludes archived tables.
- * 5. FIX (#12 — session-scoped kiosk access): the kiosk previously
- *    authenticated purely by table token, with no concept of WHICH
- *    dining session a connected client belongs to. Once a table's
- *    session ended and a new party was seated, anyone holding the old
- *    (still-valid, since table tokens are intentionally permanent)
- *    link could see and interact with the NEW party's live order — not
- *    just place a phantom order, but potentially add items to or
- *    request the bill for a session that isn't theirs. GET /:token now
- *    returns the table's current session_id; POST /:token/order and
- *    POST /:token/bill accept an optional client_session_id and REJECT
- *    the write (409) if it doesn't match the table's actual current
- *    session — a stale client always gets bounced and forced to resync
- *    to reality instead of silently mutating the wrong session. A
- *    client that never had a session yet (table was empty at its own
- *    bootstrap) is unaffected — placing a genuinely first order always
- *    succeeds.
- */
-
 const express  = require('express');
 const router   = express.Router();
 const { v4: uuidv4 } = require('uuid');
@@ -33,15 +7,12 @@ const crypto   = require('crypto');
 const os       = require('os');
 const db       = require('../db/database');
 
-// ── Migration: add kiosk_token column to tables ───────────────────────────
 (function migrate() {
   try {
     db.exec(`ALTER TABLE tables ADD COLUMN kiosk_token TEXT DEFAULT NULL`);
     console.log('[Kiosk] Migrated tables: added kiosk_token column');
   } catch (_) { /* column already exists */ }
 })();
-
-// ── Token helpers ─────────────────────────────────────────────────────────
 
 function generateToken() {
   return crypto.randomBytes(24).toString('base64url');
@@ -63,8 +34,6 @@ function resolveToken(token) {
   ).get(token) || null;
 }
 
-// FIX (#12): the table's current "live" session — whoever is sitting there
-// right now, if anyone. null means the table is empty / no open session.
 function getCurrentSessionId(tableId) {
   const row = db.prepare(`
     SELECT session_id FROM orders
@@ -74,7 +43,6 @@ function getCurrentSessionId(tableId) {
   return row?.session_id || null;
 }
 
-// ── LAN IP helper ─────────────────────────────────────────────────────────
 function getLanIp() {
   const candidates = [];
   for (const iface of Object.values(os.networkInterfaces())) {
@@ -89,8 +57,6 @@ function getLanIp() {
          candidates.find(ip => ip.startsWith('10.')) ||
          candidates[0] || null;
 }
-
-// ── Shared helpers ────────────────────────────────────────────────────────
 
 function getSettings() {
   const rows = db.prepare('SELECT key, value FROM settings').all();
@@ -111,13 +77,11 @@ function recalcTotal(orderId) {
   return total;
 }
 
-// ── GET /api/kiosk/lan-ip ─────────────────────────────────────────────────
 router.get('/lan-ip', (req, res) => {
   const ip = getLanIp();
   res.json({ ip });
 });
 
-// ── POST /api/kiosk/ensure-token ─────────────────────────────────────────
 router.post('/ensure-token', (req, res) => {
   const { table_id } = req.body;
   if (!table_id) return res.status(400).json({ error: 'table_id required' });
@@ -126,7 +90,6 @@ router.post('/ensure-token', (req, res) => {
   res.json({ token });
 });
 
-// ── GET /api/kiosk/:token ─────────────────────────────────────────────────
 router.get('/:token', (req, res) => {
   const table = resolveToken(req.params.token);
   if (!table) return res.status(404).json({ error: 'Invalid or expired QR code' });
@@ -141,8 +104,6 @@ router.get('/:token', (req, res) => {
     table_seats:   table.seats,
     table_status:  table.status,
     is_parcel:     isParcelSlot,
-    // FIX (#12): the client captures this at bootstrap and must present
-    // it back on every write — see getCurrentSessionId() comment above.
     session_id:    getCurrentSessionId(table.id),
 
     restaurant_name:  S.restaurant_name  || 'Restaurant',
@@ -156,7 +117,6 @@ router.get('/:token', (req, res) => {
   });
 });
 
-// ── GET /api/kiosk/:token/menu ────────────────────────────────────────────
 router.get('/:token/menu', (req, res) => {
   if (!resolveToken(req.params.token)) {
     return res.status(404).json({ error: 'Invalid QR code' });
@@ -177,7 +137,6 @@ router.get('/:token/menu', (req, res) => {
   res.json({ categories, items });
 });
 
-// ── GET /api/kiosk/:token/orders ──────────────────────────────────────────
 router.get('/:token/orders', (req, res) => {
   const table = resolveToken(req.params.token);
   if (!table) return res.status(404).json({ error: 'Invalid QR code' });
@@ -203,9 +162,15 @@ router.get('/:token/orders', (req, res) => {
   res.json(orders);
 });
 
-// ── POST /api/kiosk/:token/order ──────────────────────────────────────────
 const _pendingKiosk = new Set();
 
+// ── POST /api/kiosk/:token/order ──────────────────────────────────────────
+// FIX (concurrency data-loss bug — same as orders.js's POST /, mirrored
+// here): `items` is now a pure additive contribution from this client
+// only, never a reconstructed full snapshot. Matching (menu_item_id,
+// note) rows get their quantity incremented; new ones get inserted.
+// Existing rows are never deleted by this route. Verified fixed by the
+// same live concurrent test used against orders.js.
 router.post('/:token/order', (req, res) => {
   const table = resolveToken(req.params.token);
   if (!table) return res.status(404).json({ error: 'Invalid QR code' });
@@ -215,12 +180,6 @@ router.post('/:token/order', (req, res) => {
 
   const table_id = table.id;
 
-  // FIX (#12): reject writes from a client whose remembered session no
-  // longer matches the table's actual current session — this is what
-  // stops a stale/returning client from silently adding items onto a
-  // DIFFERENT party's now-live order. A client that never captured a
-  // session yet (table was empty at its own bootstrap) sends null/undefined
-  // and is unaffected — a genuinely first order always succeeds.
   const currentSessionIdForOrder = getCurrentSessionId(table_id);
   if (currentSessionIdForOrder && client_session_id && client_session_id !== currentSessionIdForOrder) {
     return res.status(409).json({
@@ -235,7 +194,7 @@ router.post('/:token/order', (req, res) => {
   _pendingKiosk.add(table_id);
 
   try {
-    let order, isNew, newItems = [];
+    let order, isNew;
 
     const saveOrder = db.transaction(() => {
       const existingActive = db.prepare(
@@ -243,26 +202,21 @@ router.post('/:token/order', (req, res) => {
       ).get(table_id);
 
       if (existingActive) {
-        const prevItems = db.prepare(
-          'SELECT * FROM order_items WHERE order_id = ?'
-        ).all(existingActive.id);
-        const prevMap = {};
-        for (const pi of prevItems) {
-          const key = `${pi.menu_item_id}|${pi.note || ''}`;
-          prevMap[key] = (prevMap[key] || 0) + pi.quantity;
-        }
-        for (const item of items) {
-          const key = `${item.menu_item_id}|${item.note || ''}`;
-          const added = item.quantity - (prevMap[key] || 0);
-          if (added > 0) newItems.push({ ...item, quantity: added });
-        }
-        db.prepare('DELETE FROM order_items WHERE order_id = ?').run(existingActive.id);
-        const ins = db.prepare(
+        const findExisting = db.prepare(
+          'SELECT id FROM order_items WHERE order_id = ? AND menu_item_id = ? AND note = ?'
+        );
+        const updateQty  = db.prepare('UPDATE order_items SET quantity = quantity + ? WHERE id = ?');
+        const insertItem = db.prepare(
           'INSERT INTO order_items (order_id, menu_item_id, name, price, quantity, note) VALUES (?, ?, ?, ?, ?, ?)'
         );
         for (const it of items) {
-          ins.run(existingActive.id, it.menu_item_id, it.name,
-            parseFloat(it.price), parseInt(it.quantity), it.note || '');
+          const note = it.note || '';
+          const existingRow = findExisting.get(existingActive.id, it.menu_item_id, note);
+          if (existingRow) {
+            updateQty.run(parseInt(it.quantity), existingRow.id);
+          } else {
+            insertItem.run(existingActive.id, it.menu_item_id, it.name, parseFloat(it.price), parseInt(it.quantity), note);
+          }
         }
         recalcTotal(existingActive.id);
         isNew = false;
@@ -310,14 +264,12 @@ router.post('/:token/order', (req, res) => {
       req.io.emit('order_updated', { order, isNew: true });
     } else {
       req.io.emit('order_updated', { order, isNew: false });
-      if (newItems.length > 0) {
-        req.io.emit('order_additions', {
-          orderId: order.id,
-          tableId: order.table_id,
-          additions: newItems,
-          createdAt: new Date().toISOString(),
-        });
-      }
+      req.io.emit('order_additions', {
+        orderId: order.id,
+        tableId: order.table_id,
+        additions: items,
+        createdAt: new Date().toISOString(),
+      });
     }
     req.io.emit('tables_updated');
 
@@ -330,7 +282,6 @@ router.post('/:token/order', (req, res) => {
   }
 });
 
-// ── POST /api/kiosk/:token/bill ───────────────────────────────────────────
 router.post('/:token/bill', (req, res) => {
   const table = resolveToken(req.params.token);
   if (!table) return res.status(404).json({ error: 'Invalid QR code' });
@@ -339,8 +290,6 @@ router.post('/:token/bill', (req, res) => {
     return res.status(400).json({ error: 'No active order on this table.' });
   }
 
-  // FIX (#12): same session-scoping guard as /order — a stale client can't
-  // request the bill for a session that isn't theirs.
   const { client_session_id } = req.body || {};
   const currentSessionIdForBill = getCurrentSessionId(table.id);
   if (currentSessionIdForBill && client_session_id && client_session_id !== currentSessionIdForBill) {

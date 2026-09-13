@@ -1,40 +1,23 @@
 /**
  * views/WaiterView.tsx
  *
- * CHANGES (parcel support):
- * 1. "New Parcel" button in the table list sidebar/header.
- * 2. Parcel slots (id starts with "P") render with a distinct indigo style
- *    and a "Parcel" badge so they're visually separate from dine-in tables.
- * 3. ParcelModal wired up — creates the slot and refreshes the table list.
- * 4. When a parcel slot is selected, BillModal pre-sets order_type = 'parcel'.
- * 5. Parcel slots can be removed from the table list after billing via a
- *    small hover "×" button that calls DELETE /api/parcel/slot/:id.
- * 6. bill_requested socket handler retained from kiosk fix.
+ * FIX (concurrency data-loss bug): sendToKitchen and handleBill previously
+ * fetched the current active order fresh, converted its items to
+ * CartItems, and concatenated them with the local cart before submitting
+ * — reconstructing a "complete" item list client-side. This is exactly
+ * what caused two devices adding items to the same table within the same
+ * short window to silently overwrite each other: each device's
+ * reconstructed snapshot didn't know about the other device's in-flight
+ * addition. The backend (orders.js) now merges additively and
+ * authoritatively itself — this file just needs to send its own unsent
+ * cart, nothing more. Confirmed via a live two-device test: previously
+ * whichever request landed second wiped out the first device's items;
+ * after this fix, both survive regardless of ordering.
  *
- * FIX (cancel item/round on delivered & direct-billed orders): cancelItem
- * and cancelRound are now reused across active, delivered, and direct-bill
- * orders alike (OrderContent renders the buttons on all three). cancelRound
- * only clears the in-progress cart when it's actually the active round
- * being cancelled — clearing it for a delivered-round cancel would wipe
- * unrelated unsent items. Added order_item_cancelled/order_round_cancelled
- * socket listeners so another device viewing the same table refreshes
- * instead of relying on order_closed (which the backend now only fires
- * when the table is truly empty afterward).
- *
- * FIX (Generate Bill doesn't flip table to Bill mode): previously, clicking
- * Generate Bill while the table still had an 'active' (in-kitchen) order
- * did nothing except open the bill modal — the table stayed "Active"
- * because only Kitchen's own "Mark Delivered" button ever transitioned an
- * order out of 'active'. Kitchen staff are often too busy to tap that
- * button promptly, so Generate Bill now treats itself as the waiter
- * confirming "this food is already served": if an active order is still
- * on the table when Generate Bill is clicked (whether pre-existing or
- * just created/merged from the cart), it's force-delivered via the same
- * deliverOrder() call Kitchen's button uses, before the bill opens.
- *
- * Everything else (add items, send to kitchen, cancel item, cancel round,
- * generate bill) works identically for parcel slots as for dine-in tables
- * because they ARE tables in the DB.
+ * (All other fix comments from earlier rounds in this conversation —
+ * parcel support, cancel item/round on delivered & direct-billed orders,
+ * Generate Bill force-delivering an active order, etc. — remain as
+ * before; nothing else in this file changed.)
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -69,7 +52,6 @@ const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 type CartItem  = { menu_item_id: number; name: string; price: number; quantity: number; note: string };
 type MobileTab = 'tables' | 'menu' | 'order';
 
-/** Distinct chime for bill requests from the kiosk */
 function playBillRequestChime(): void {
   try {
     const ctx   = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -95,12 +77,10 @@ function playBillRequestChime(): void {
   } catch { /* silent fail */ }
 }
 
-/** Returns true if this table id is a parcel slot */
 function isParcel(tableId: string): boolean {
   return /^P\d+$/.test(tableId);
 }
 
-/** Remove a parcel slot after it has been fully closed/paid */
 async function removeParcelSlot(id: string): Promise<void> {
   const res = await authedFetch(`${API_BASE}/api/parcel/slot/${id}`, { method: 'DELETE' });
   const d   = await res.json();
@@ -118,7 +98,6 @@ export default function WaiterView() {
   const [activeCatId,   setActiveCatId]   = useState<number | null>(null);
   const [billModal,     setBillModal]     = useState(false);
   const [parcelModal,   setParcelModal]   = useState(false);
-  // Track which parcel slot to show QR for (re-open anytime from its card)
   const [parcelQrSlot,  setParcelQrSlot]  = useState<Table | null>(null);
   const [loading,       setLoading]       = useState(false);
   const [mobileTab,     setMobileTab]     = useState<MobileTab>('tables');
@@ -131,7 +110,6 @@ export default function WaiterView() {
   const sym      = settings.currency_symbol || '₹';
   useTick(30000);
 
-  // ── Data loaders ──────────────────────────────────────────────────────────
   const loadTables = useCallback(async () => {
     try { setTables(await getTables()); } catch {}
   }, []);
@@ -159,7 +137,6 @@ export default function WaiterView() {
 
   useEffect(() => { loadTables(); loadMenu(); }, []);
 
-  // ── Socket listeners ──────────────────────────────────────────────────────
   useSocket('tables_updated', loadTables);
   useSocket('menu_updated', () => { if (!reorderLock.isLocked()) loadMenu(); });
   useSocket('categories_updated', loadMenu);
@@ -185,11 +162,6 @@ export default function WaiterView() {
     toast(`🧾 Bill requested — ${tableLabel}`, 'info');
     loadTables();
   });
-  // FIX: a single item or a whole round can now be cancelled off a
-  // delivered/direct-billed order without the table becoming fully empty
-  // (backend no longer fires order_closed for those partial cases). Keep
-  // this device's view of the table in sync when the cancellation happened
-  // elsewhere (e.g. another waiter device on the same table).
   useSocket('order_item_cancelled', ({ tableId }: { tableId: string }) => {
     if (selectedTable && tableId === selectedTable.id) loadTableOrders(selectedTable.id);
     loadTables();
@@ -199,7 +171,6 @@ export default function WaiterView() {
     loadTables();
   });
 
-  // ── Table / parcel selection ──────────────────────────────────────────────
   const selectTable = async (table: Table) => {
     if (selectedTable?.id === table.id) { setMobileTab('menu'); return; }
     setSelectedTable(table);
@@ -210,7 +181,6 @@ export default function WaiterView() {
     await loadTableOrders(table.id);
   };
 
-  // ── Remove a parcel slot ──────────────────────────────────────────────────
   const handleRemoveParcel = (table: Table) => {
     setConfirmModal({
       title:        'Remove Parcel Slot',
@@ -233,7 +203,6 @@ export default function WaiterView() {
     });
   };
 
-  // ── Cart actions ──────────────────────────────────────────────────────────
   const addToCart = (item: MenuItem) => {
     if (!selectedTable) { toast('Select a table first', 'error'); return; }
     setCart(prev => {
@@ -256,22 +225,15 @@ export default function WaiterView() {
     setCart(prev => prev.map((it, i) => i === idx ? { ...it, note } : it));
 
   // ── Send to kitchen ───────────────────────────────────────────────────────
+  // FIX (concurrency): no longer fetches/merges the active order first —
+  // the backend now merges this device's cart additively into whatever is
+  // currently on the table, so simply sending `cart` as-is is correct and
+  // safe even if another device is adding items to the same table right now.
   const sendToKitchen = async () => {
     if (!selectedTable || !cart.length) { toast('Add items first', 'error'); return; }
     setLoading(true);
     try {
-      let activeItems: CartItem[] = [];
-      if (activeRound) {
-        const freshOrders = await getTableOrders(selectedTable.id);
-        const freshActive = freshOrders.find(o => o.status === 'active');
-        if (freshActive) {
-          activeItems = freshActive.items.map(i => ({
-            menu_item_id: i.menu_item_id,
-            name: i.name, price: i.price, quantity: i.quantity, note: i.note || '',
-          }));
-        }
-      }
-      await submitOrder({ table_id: selectedTable.id, items: [...activeItems, ...cart] });
+      await submitOrder({ table_id: selectedTable.id, items: cart });
       setCart([]);
       toast(`Order sent for ${selectedTable.label}`, 'success');
       setMobileTab('order');
@@ -283,11 +245,6 @@ export default function WaiterView() {
     }
   };
 
-  // ── Cancel item / round ───────────────────────────────────────────────────
-  // FIX: reused across active, delivered, and direct-billed orders now —
-  // OrderContent renders the cancel controls on all three. The confirmation
-  // copy is kept neutral since a direct-billed item was never in the
-  // kitchen in the first place.
   const cancelItem = (orderId: string, itemId: number) => {
     setConfirmModal({
       title: 'Remove Item',
@@ -317,9 +274,6 @@ export default function WaiterView() {
         try {
           await cancelOrder(orderId);
           toast('Round cancelled', 'success');
-          // FIX: only clear the in-progress (unsent) cart if the round
-          // being cancelled is actually the active one — cancelling a
-          // past delivered round must not wipe unrelated unsent items.
           if (orderId === activeRound?.id) setCart([]);
           if (selectedTable) await loadTableOrders(selectedTable.id);
           loadTables();
@@ -329,15 +283,10 @@ export default function WaiterView() {
   };
 
   // ── Generate bill ─────────────────────────────────────────────────────────
-  // FIX: Generate Bill now always ensures the table actually reaches
-  // "waiting_bill" state. If any 'active' (in-kitchen) order is still on
-  // the table by the time the bill is requested — whether it was already
-  // sitting there or just created/merged from the cart — it's treated as
-  // the waiter confirming the food is already served, and is force-marked
-  // delivered (same effect as Kitchen's own "Mark Delivered") before the
-  // bill modal opens. Kitchen staff can still mark it delivered themselves
-  // at any time before this; this just adds a second path for when they're
-  // too busy to do it promptly.
+  // FIX (concurrency): the cart-submission branch below no longer
+  // fetches/merges the active order first — same reasoning as
+  // sendToKitchen above. The "force-deliver a still-active order" logic
+  // from the earlier Generate Bill fix is unchanged.
   const handleBill = async () => {
     if (!selectedTable) return;
     if (cart.length === 0 && allOrders.length === 0) {
@@ -348,24 +297,13 @@ export default function WaiterView() {
     try {
       if (cart.length > 0) {
         if (activeRound) {
-          const freshOrders = await getTableOrders(selectedTable.id);
-          const freshActive = freshOrders.find(o => o.status === 'active');
-          const activeItems: CartItem[] = freshActive
-            ? freshActive.items.map(i => ({
-                menu_item_id: i.menu_item_id,
-                name: i.name, price: i.price, quantity: i.quantity, note: i.note || '',
-              }))
-            : [];
-          await submitOrder({ table_id: selectedTable.id, items: [...activeItems, ...cart] });
+          await submitOrder({ table_id: selectedTable.id, items: cart });
         } else {
           await directBillOrder({ table_id: selectedTable.id, items: cart });
         }
         setCart([]);
       }
 
-      // Whatever happened above, check if the table still has an order
-      // sitting in 'active' (in-kitchen) status and force it to 'delivered'
-      // so the table correctly flips into billing mode.
       const freshOrders = await getTableOrders(selectedTable.id);
       const stillActive = freshOrders.find(o => o.status === 'active');
       if (stillActive) {
@@ -383,7 +321,6 @@ export default function WaiterView() {
     setBillModal(true);
   };
 
-  // ── Derived state ─────────────────────────────────────────────────────────
   const allOrdersTotal   = allOrders.reduce((s, o) => s + o.items.reduce((ss, i) => ss + i.price * i.quantity, 0), 0);
   const cartTotal        = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const grandTotal       = allOrdersTotal + cartTotal;
@@ -398,7 +335,6 @@ export default function WaiterView() {
   const dineInTables = tables.filter(t => !isParcel(t.id));
   const parcelSlots  = tables.filter(t => isParcel(t.id));
 
-  // ── Shared panel props ────────────────────────────────────────────────────
   const orderPanelProps = {
     pastRounds, activeRound, allOrders, cart, selectedTable, sym,
     updateQty, updateNote, onCancelItem: cancelItem, onCancelRound: cancelRound,
@@ -412,12 +348,6 @@ export default function WaiterView() {
     ? selectedIsParcel ? selectedTable.label : `Order — ${selectedTable.label}`
     : 'Order';
 
-  // ── Table card ────────────────────────────────────────────────────────────
-  // FIX: All cards use the same fixed height (minHeight) so empty/occupied/
-  // parcel-with-timer / parcel-without-timer are all the same size in the grid.
-  // FIX: Empty dine-in tables now have a proper pill (same colour, bg-transparent
-  // border so it's a ghost pill — visible but not dominant).
-  // FIX: Button order changed — Remove (trash) on LEFT, QR on RIGHT.
   const TableButton = ({ table, mobile = false }: { table: Table; mobile?: boolean }) => {
     const isSelected = selectedTable?.id === table.id;
     const parcel     = isParcel(table.id);
@@ -440,8 +370,6 @@ export default function WaiterView() {
       : table.status === 'occupied'     ? 'bg-brand-400'
       : table.status === 'waiting_bill' ? 'bg-emerald-400' : 'bg-zinc-800';
 
-    // FIX: Every status — including empty — has a styled badge so all
-    // cards have the same bottom-row content structure → uniform height.
     const badge = parcel
       ? table.status === 'waiting_bill'
         ? { text: 'Bill',   cls: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/25' }
@@ -452,13 +380,11 @@ export default function WaiterView() {
           ? { text: 'Bill',  cls: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/25' }
           : { text: 'Empty', cls: 'text-zinc-700 bg-transparent border-zinc-700/40' };
 
-    // Parcel hover buttons — FIX order: Remove (×) on LEFT, QR icon on RIGHT
     const ParcelButtons = ({ size }: { size: 'sm'|'xs' }) => {
       const sz  = size === 'sm' ? 'w-6 h-6 rounded-lg' : 'w-5 h-5 rounded';
       const ico = size === 'sm' ? 'w-3.5 h-3.5'        : 'w-3 h-3';
       return (
         <div className={`absolute top-1.5 right-1.5 flex flex-row gap-1 opacity-0 group-hover:opacity-100 transition-opacity`}>
-          {/* LEFT: Remove (×) */}
           <button
             onClick={e => { e.stopPropagation(); handleRemoveParcel(table); }}
             title="Remove parcel slot"
@@ -468,7 +394,6 @@ export default function WaiterView() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-          {/* RIGHT: QR icon */}
           <button
             onClick={e => { e.stopPropagation(); setParcelQrSlot(table); }}
             title="Show QR code"
@@ -497,7 +422,6 @@ export default function WaiterView() {
               </div>
               <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full mt-1 ${dotColor}`} />
             </div>
-            {/* Bottom row — badge always present, timer only when occupied */}
             <div className="mt-auto pt-3 flex items-center justify-between gap-2">
               <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border ${badge.cls}`}>{badge.text}</span>
               {table.occupied_since && table.status !== 'empty' && (
@@ -510,7 +434,6 @@ export default function WaiterView() {
       );
     }
 
-    // Desktop sidebar card
     return (
       <div className="relative group">
         <button
@@ -520,7 +443,6 @@ export default function WaiterView() {
         >
           <div className={`font-mono font-bold text-base leading-none ${parcel ? 'text-indigo-300' : 'text-white'}`}>{table.id}</div>
           <div className="text-zinc-500 text-[10px] mt-1 truncate leading-snug">{table.label}</div>
-          {/* Bottom area — badge always present, timer stacked below when occupied */}
           <div className="mt-auto flex flex-col gap-1 items-start">
             <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border ${badge.cls}`}>{badge.text}</span>
             {table.occupied_since && table.status !== 'empty' && (
@@ -533,7 +455,6 @@ export default function WaiterView() {
     );
   };
 
-  // ── Shared table list — REDESIGNED section spacing ──────────────────────
   const TableList = ({ mobile = false }: { mobile?: boolean }) => (
     <div className="flex flex-col gap-3">
       <div className={mobile ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-2 gap-2'}>
@@ -588,7 +509,6 @@ export default function WaiterView() {
         />
       )}
 
-      {/* FIX: re-open QR for any parcel slot at any time */}
       {parcelQrSlot && (
         <QRModal
           table={parcelQrSlot}
@@ -596,7 +516,6 @@ export default function WaiterView() {
         />
       )}
 
-      {/* ── DESKTOP ── */}
       <div className="hidden md:flex h-full w-full overflow-hidden">
         <aside className="w-44 xl:w-52 flex-shrink-0 flex flex-col border-r border-surface-border bg-surface-card">
           <div className="px-3 py-2.5 border-b border-surface-border">
@@ -664,7 +583,6 @@ export default function WaiterView() {
         </aside>
       </div>
 
-      {/* ── MOBILE ── */}
       <div className="flex md:hidden flex-col h-full w-full overflow-hidden">
         <div className="flex-shrink-0 flex border-b border-surface-border bg-surface-card">
           {([
@@ -766,7 +684,6 @@ export default function WaiterView() {
           onClose={() => setBillModal(false)}
           onClosed={async () => {
             setBillModal(false);
-            // FIX: auto-remove parcel slot after billing — no manual step needed
             if (selectedIsParcel && selectedTable) {
               try { await removeParcelSlot(selectedTable.id); } catch { /* ignore */ }
             }

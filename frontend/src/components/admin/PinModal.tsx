@@ -1,8 +1,9 @@
 /**
  * components/admin/PinModal.tsx
  *
- * FIX (dedup): the numpad grid is now the shared PinPad component instead
- * of a duplicated copy of LoginScreen.tsx's grid.
+ * FIX (accidental data loss): removed the backdrop onClick that closed the
+ * modal when clicking outside the card — a partially-typed PIN was lost.
+ * Cancel button is the only way to dismiss now.
  */
 import React, { useState } from 'react';
 import { useToast } from '../../context/ToastContext';
@@ -53,10 +54,7 @@ export function PinModal({ title = 'Admin PIN Required', subtitle, onSuccess, on
   };
 
   return (
-    <div
-      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4"
-      onClick={e => { if (e.target === e.currentTarget) onCancel(); }}
-    >
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4">
       <div className="bg-surface-card border border-surface-border rounded-2xl p-5 w-full max-w-xs animate-slide-up shadow-2xl">
         <div className="text-center mb-5">
           <div className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-brand-500/15 border border-brand-500/25 mb-3">

@@ -1,8 +1,9 @@
 /**
  * components/admin/MenuItemModal.tsx
  *
- * Add / Edit menu item modal.
- * Extracted from AdminMenu.tsx.
+ * FIX (accidental data loss): removed backdrop click-to-close — this form
+ * holds name/description/price/category/photo, all lost on an accidental
+ * outside click previously. Cancel button is the only way to dismiss now.
  */
 
 import React, { useState, useRef } from 'react';
@@ -57,10 +58,7 @@ export default function MenuItemModal({ item, categories, onSave, onClose }: Pro
   };
 
   return (
-    <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div
         className="rounded-xl border border-surface-border bg-surface-card p-5 w-full max-w-lg animate-slide-up"
         onClick={e => e.stopPropagation()}
@@ -70,7 +68,6 @@ export default function MenuItemModal({ item, categories, onSave, onClose }: Pro
         </h3>
 
         <div className="grid grid-cols-2 gap-4">
-          {/* Left: fields */}
           <div className="space-y-3">
             <div>
               <label className="label">Name</label>
@@ -137,7 +134,6 @@ export default function MenuItemModal({ item, categories, onSave, onClose }: Pro
             </label>
           </div>
 
-          {/* Right: photo */}
           <div>
             <label className="label">Photo</label>
             <div

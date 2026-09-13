@@ -21,13 +21,18 @@ if /i "%CONFIRM%" neq "Y" (
     exit /b 0
 )
 
-set "APP_ROOT=%~dp0..\..\"
-pushd "%APP_ROOT%"
-set "APP_ROOT=%CD%"
-popd
+set "SCRIPT_DIR=%~dp0"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+for %%I in ("%SCRIPT_DIR%\..\..") do set "APP_ROOT=%%~fI"
 
 echo.
-echo  [1/5] Checking for git...
+echo  [1/6] Stopping any running POS server...
+for /f "tokens=5" %%p in ('netstat -aon ^| findstr ":4000" ^| findstr "LISTENING"') do (
+    taskkill /PID %%p /F >nul 2>&1
+)
+echo  [OK] Port 4000 is clear
+
+echo  [2/6] Checking for git...
 where git >nul 2>&1
 if errorlevel 1 (
     echo  [ERROR] Git not found. Install from https://git-scm.com
@@ -36,7 +41,7 @@ if errorlevel 1 (
 )
 echo  [OK] Git found
 
-echo  [2/5] Backing up your data...
+echo  [3/6] Backing up your data...
 if not exist "%APP_ROOT%\backend\data" (
     echo  [INFO] No data folder found yet — nothing to backup
 ) else (
@@ -46,7 +51,7 @@ if not exist "%APP_ROOT%\backend\data" (
     echo  [OK] Data backed up to backups\data_%TODAY%
 )
 
-echo  [3/5] Pulling latest code from GitHub...
+echo  [4/6] Pulling latest code from GitHub...
 cd /d "%APP_ROOT%"
 git pull origin main
 if errorlevel 1 (
@@ -61,7 +66,7 @@ if errorlevel 1 (
 )
 echo  [OK] Code updated
 
-echo  [4/5] Installing backend packages...
+echo  [5/6] Installing backend packages...
 cd /d "%APP_ROOT%\backend"
 call npm install
 if errorlevel 1 (
@@ -71,7 +76,7 @@ if errorlevel 1 (
 )
 echo  [OK] Backend packages ready
 
-echo  [5/5] Building frontend...
+echo  [6/6] Building frontend...
 cd /d "%APP_ROOT%\frontend"
 if exist build rmdir /s /q build >nul 2>&1
 call npm install --legacy-peer-deps

@@ -26,43 +26,38 @@ const zipUpload = multer({
 
 // ── Indian state codes for GST ────────────────────────────────────────────
 const STATE_CODES = {
-  'Andaman and Nicobar Islands': '35',
-  'Andhra Pradesh': '37',
-  'Arunachal Pradesh': '12',
-  'Assam': '18',
-  'Bihar': '10',
-  'Chandigarh': '04',
-  'Chhattisgarh': '22',
-  'Dadra and Nagar Haveli and Daman and Diu': '26',
-  'Delhi': '07',
-  'Goa': '30',
-  'Gujarat': '24',
-  'Haryana': '06',
-  'Himachal Pradesh': '02',
-  'Jammu and Kashmir': '01',
-  'Jharkhand': '20',
-  'Karnataka': '29',
-  'Kerala': '32',
-  'Ladakh': '38',
-  'Lakshadweep': '31',
-  'Madhya Pradesh': '23',
-  'Maharashtra': '27',
-  'Manipur': '14',
-  'Meghalaya': '17',
-  'Mizoram': '15',
-  'Nagaland': '13',
-  'Odisha': '21',
-  'Puducherry': '34',
-  'Punjab': '03',
-  'Rajasthan': '08',
-  'Sikkim': '11',
-  'Tamil Nadu': '33',
-  'Telangana': '36',
-  'Tripura': '16',
-  'Uttar Pradesh': '09',
-  'Uttarakhand': '05',
-  'West Bengal': '19',
+  'Andaman and Nicobar Islands': '35', 'Andhra Pradesh': '37', 'Arunachal Pradesh': '12',
+  'Assam': '18', 'Bihar': '10', 'Chandigarh': '04', 'Chhattisgarh': '22',
+  'Dadra and Nagar Haveli and Daman and Diu': '26', 'Delhi': '07', 'Goa': '30',
+  'Gujarat': '24', 'Haryana': '06', 'Himachal Pradesh': '02', 'Jammu and Kashmir': '01',
+  'Jharkhand': '20', 'Karnataka': '29', 'Kerala': '32', 'Ladakh': '38', 'Lakshadweep': '31',
+  'Madhya Pradesh': '23', 'Maharashtra': '27', 'Manipur': '14', 'Meghalaya': '17',
+  'Mizoram': '15', 'Nagaland': '13', 'Odisha': '21', 'Puducherry': '34', 'Punjab': '03',
+  'Rajasthan': '08', 'Sikkim': '11', 'Tamil Nadu': '33', 'Telangana': '36', 'Tripura': '16',
+  'Uttar Pradesh': '09', 'Uttarakhand': '05', 'West Bengal': '19',
 };
+
+// ── FIX (GST date boundary): local-day helpers, same tz_offset_min-aware
+// pattern already used in reports.js/tables.js. created_at is stored UTC,
+// but every date the user picks (or a default computed from "today") is a
+// LOCAL calendar date — comparing them directly, as this file used to,
+// meant orders in the first ~5.5 hours of any IST day were misfiled into
+// the previous day's return period, which can misstate a real filing. ─────
+function localDateExprAliased(alias, tzOffsetMin) {
+  const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0;
+  const sign = offset >= 0 ? '+' : '-';
+  const mins = Math.abs(Math.round(offset));
+  return `substr(datetime(${alias}.created_at, '${sign}${mins} minutes'), 1, 10)`;
+}
+function getLocalToday(tzOffsetMin) {
+  const offset = Number.isFinite(tzOffsetMin) ? tzOffsetMin : 0;
+  const now = new Date(Date.now() + offset * 60000);
+  return now.toISOString().split('T')[0];
+}
+function parseTz(req) {
+  return req.query.tz_offset_min !== undefined ? parseInt(req.query.tz_offset_min, 10) : 0;
+}
+function round2(n) { return Math.round(n * 100) / 100; }
 
 // ── MENU EXPORT ───────────────────────────────────────────────────────────
 router.get('/menu', (req, res) => {
@@ -188,9 +183,10 @@ router.post(
 );
 
 // ── REVENUE EXPORT — Professional CSV / JSON ─────────────────────────────
-// NOTE: kept available in the backend (and the underlying API is unchanged)
-// even though the "Detailed Report" UI section has been removed from the
-// Export tab in the frontend. Nothing else relies on hiding this route.
+// NOTE: this plain revenue export (not a GST filing) has the same
+// UTC-vs-local date-boundary characteristic as the GST routes below, but
+// is left untouched here — it was flagged as out of scope for the "GST"
+// fix specifically. Same fix pattern applies if you want it done too.
 router.get('/revenue', (req, res) => {
   const { from, to, format = 'json' } = req.query;
   const today    = new Date().toISOString().split('T')[0];
@@ -461,11 +457,22 @@ router.get('/revenue', (req, res) => {
   });
 });
 
-// ── Shared helper used by both the GSTR-1 JSON export and its preview ─────
-function computeGstr1Data(from, to) {
-  const today    = new Date().toISOString().split('T')[0];
+// ── FIX (GST): shared helper for the GSTR-1 routes ────────────────────────
+// Now: (1) filters orders by LOCAL date (tz_offset_min-aware) instead of
+// comparing a local date string directly against UTC created_at, and
+// (2) uses each order's OWN tax_percent_snapshot (the rate actually in
+// effect when it was closed) instead of applying today's current
+// tax_percent to every historical order — so changing your tax rate once
+// no longer silently rewrites every past filing's numbers the next time
+// it's regenerated. Orders closed before this fix existed have a NULL
+// snapshot and fall back to the current setting (best available answer
+// for genuinely old data — there's no way to recover what rate was
+// actually in effect for orders closed before this column existed).
+function computeGstr1Data(from, to, tzOffsetMin) {
+  const today    = getLocalToday(tzOffsetMin);
   const dateFrom = from || today.slice(0, 7) + '-01';
   const dateTo   = to   || today;
+  const dateExprO = localDateExprAliased('o', tzOffsetMin);
 
   const settingsRows = db.prepare('SELECT key, value FROM settings').all();
   const S = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
@@ -475,10 +482,7 @@ function computeGstr1Data(from, to) {
   const stateName   = S.state_name || 'Kerala';
   const stateCode   = STATE_CODES[stateName] || '32';
   const sacCode     = S.sac_code || '9963';
-  const taxPct      = parseFloat(S.tax_percent || '5');
-  const taxRate     = taxPct;
-  const cgstRate    = taxRate / 2;
-  const sgstRate    = taxRate / 2;
+  const currentTaxRate = parseFloat(S.tax_percent || '5');
 
   const fromDate  = new Date(dateFrom + 'T00:00:00');
   const retPeriod = String(fromDate.getMonth() + 1).padStart(2, '0') + String(fromDate.getFullYear());
@@ -487,39 +491,48 @@ function computeGstr1Data(from, to) {
     SELECT o.*
     FROM orders o
     WHERE o.status = 'closed'
-      AND substr(o.created_at,1,10) >= ?
-      AND substr(o.created_at,1,10) <= ?
+      AND ${dateExprO} >= ?
+      AND ${dateExprO} <= ?
     ORDER BY o.created_at ASC
   `).all(dateFrom, dateTo);
 
   orders.forEach(o => {
     o.items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(o.id);
+    // FIX (GST): the rate actually charged on THIS order, not "today's" rate.
+    o._taxRate = (typeof o.tax_percent_snapshot === 'number' && o.tax_percent_snapshot !== null)
+      ? o.tax_percent_snapshot
+      : currentTaxRate;
   });
 
   const b2bOrders  = orders.filter(o => o.customer_gstin && o.customer_gstin.trim());
   const b2cOrders  = orders.filter(o => !o.customer_gstin || !o.customer_gstin.trim());
 
-  function round2(n) { return Math.round(n * 100) / 100; }
-
-  // ── B2CS aggregate ───────────────────────────────────────────────────────
+  // ── B2CS aggregate — grouped by (rate, place of supply), since orders
+  // in the range may have been closed under different historical rates.
   const b2csMap = {};
   for (const o of b2cOrders) {
+    const taxRate  = o._taxRate;
+    const cgstRate = taxRate / 2;
+    const sgstRate = taxRate / 2;
     const taxableValue = round2(o.total);
     const key = `OE|${taxRate}|${stateCode}`;
     if (!b2csMap[key]) {
-      b2csMap[key] = { sply_ty: 'INTRA', typ: 'OE', pos: stateCode, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 };
+      b2csMap[key] = { sply_ty: 'INTRA', typ: 'OE', pos: stateCode, rt: taxRate, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 };
     }
     b2csMap[key].txval = round2(b2csMap[key].txval + taxableValue);
     b2csMap[key].camt  = round2(b2csMap[key].camt  + taxableValue * cgstRate / 100);
     b2csMap[key].samt  = round2(b2csMap[key].samt  + taxableValue * sgstRate / 100);
   }
-  const b2csArray = Object.values(b2csMap).map(r => ({ ...r, rt: taxRate }));
+  const b2csArray = Object.values(b2csMap);
 
   // ── B2B invoices ─────────────────────────────────────────────────────────
   const b2bMap = {};
   for (const o of b2bOrders) {
     const gstin_b2b = o.customer_gstin.trim().toUpperCase();
     if (!b2bMap[gstin_b2b]) b2bMap[gstin_b2b] = { ctin: gstin_b2b, inv: [] };
+    const taxRate  = o._taxRate;
+    const cgstRate = taxRate / 2;
+    const sgstRate = taxRate / 2;
     const taxableValue = round2(o.total);
     const cgstAmt = round2(taxableValue * cgstRate / 100);
     const sgstAmt = round2(taxableValue * sgstRate / 100);
@@ -537,14 +550,17 @@ function computeGstr1Data(from, to) {
   const b2bArray = Object.values(b2bMap);
 
   const totalTaxable = round2(orders.reduce((s, o) => s + o.total, 0));
-  const totalCgst    = round2(totalTaxable * cgstRate / 100);
-  const totalSgst    = round2(totalTaxable * sgstRate / 100);
+  const totalCgst    = round2(orders.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0));
+  const totalSgst    = round2(orders.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0));
 
-  // Sums broken out for the preview UI
   const b2cTaxable = round2(b2cOrders.reduce((s, o) => s + o.total, 0));
   const b2bTaxable = round2(b2bOrders.reduce((s, o) => s + o.total, 0));
   const b2bInvoiceCount = b2bOrders.length;
   const b2cInvoiceCount = b2cOrders.length;
+  const b2cCgst = round2(b2cOrders.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0));
+  const b2cSgst = round2(b2cOrders.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0));
+  const b2bCgst = round2(b2bOrders.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0));
+  const b2bSgst = round2(b2bOrders.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0));
 
   let itemQty = 0;
   if (orders.length > 0) {
@@ -555,21 +571,24 @@ function computeGstr1Data(from, to) {
 
   return {
     dateFrom, dateTo, retPeriod,
-    gstin, legalName, stateName, stateCode, sacCode, taxRate, cgstRate, sgstRate,
+    gstin, legalName, stateName, stateCode, sacCode,
+    // NOTE: displayed as a single representative rate (the CURRENT setting)
+    // — actual totals below are computed per-order from each order's own
+    // historical snapshot, which may include a mix of rates if the
+    // restaurant changed its tax percentage during the period.
+    taxRate: currentTaxRate,
     orders, b2bOrders, b2cOrders, b2csArray, b2bArray,
     totalTaxable, totalCgst, totalSgst,
     b2cTaxable, b2bTaxable, b2bInvoiceCount, b2cInvoiceCount, itemQty,
+    b2cCgst, b2cSgst, b2bCgst, b2bSgst,
     round2,
   };
 }
 
-// ── GST GSTR-1 Preview — structured summary for on-screen table preview ──
-// Mirrors the shape used by GSTR-3B/GSTR-9 so the frontend can render the
-// same kind of clean copy-friendly table before the user downloads the
-// actual portal JSON.
+// ── GST GSTR-1 Preview ─────────────────────────────────────────────────────
 router.get('/gst/gstr1/preview', (req, res) => {
   const { from, to } = req.query;
-  const d = computeGstr1Data(from, to);
+  const d = computeGstr1Data(from, to, parseTz(req));
 
   res.json({
     period:        { from: d.dateFrom, to: d.dateTo },
@@ -583,19 +602,18 @@ router.get('/gst/gstr1/preview', (req, res) => {
     order_count:   d.orders.length,
     item_qty:      d.itemQty,
 
-    // Table-friendly breakdown — B2CS (walk-in aggregate) vs B2B
     b2cs: {
       invoice_count: d.b2cInvoiceCount,
       taxable_value: d.b2cTaxable,
-      central_tax:   d.round2(d.b2cTaxable * d.cgstRate / 100),
-      state_ut_tax:  d.round2(d.b2cTaxable * d.sgstRate / 100),
+      central_tax:   d.b2cCgst,
+      state_ut_tax:  d.b2cSgst,
     },
     b2b: {
       gstin_count:   d.b2bArray.length,
       invoice_count: d.b2bInvoiceCount,
       taxable_value: d.b2bTaxable,
-      central_tax:   d.round2(d.b2bTaxable * d.cgstRate / 100),
-      state_ut_tax:  d.round2(d.b2bTaxable * d.sgstRate / 100),
+      central_tax:   d.b2bCgst,
+      state_ut_tax:  d.b2bSgst,
     },
     totals: {
       taxable_value: d.totalTaxable,
@@ -618,12 +636,9 @@ router.get('/gst/gstr1/preview', (req, res) => {
 });
 
 // ── GST GSTR-1 JSON Export ────────────────────────────────────────────────
-// Generates a portal-uploadable GSTR-1 JSON for the given period.
-// B2CS (B2C Small, below ₹2.5L per invoice) aggregate is the standard
-// path for restaurants. B2B invoices are included when customer_gstin is set.
 router.get('/gst/gstr1', (req, res) => {
   const { from, to } = req.query;
-  const d = computeGstr1Data(from, to);
+  const d = computeGstr1Data(from, to, parseTz(req));
 
   const periodLabel = from ? `${d.dateFrom}_to_${d.dateTo}` : d.retPeriod;
 
@@ -668,70 +683,66 @@ router.get('/gst/gstr1', (req, res) => {
 });
 
 // ── GST GSTR-3B Summary ───────────────────────────────────────────────────
-// Returns a JSON summary for GSTR-3B manual filing (on-screen use).
 router.get('/gst/gstr3b', (req, res) => {
   const { from, to } = req.query;
-  const today    = new Date().toISOString().split('T')[0];
+  const tzOffsetMin = parseTz(req);
+  const today    = getLocalToday(tzOffsetMin);
   const dateFrom = from || today.slice(0, 7) + '-01';
   const dateTo   = to   || today;
+  const dateExprO = localDateExprAliased('o', tzOffsetMin);
 
   const settingsRows = db.prepare('SELECT key, value FROM settings').all();
   const S = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
-  const taxPct   = parseFloat(S.tax_percent || '5');
-  const cgstRate = taxPct / 2;
-  const sgstRate = taxPct / 2;
+  const currentTaxRate = parseFloat(S.tax_percent || '5');
 
   const orders = db.prepare(`
-    SELECT o.total, o.customer_gstin
+    SELECT o.total, o.customer_gstin, o.tax_percent_snapshot
     FROM orders o
     WHERE o.status = 'closed'
-      AND substr(o.created_at,1,10) >= ?
-      AND substr(o.created_at,1,10) <= ?
+      AND ${dateExprO} >= ?
+      AND ${dateExprO} <= ?
   `).all(dateFrom, dateTo);
 
-  const totalTaxable = orders.reduce((s, o) => s + o.total, 0);
-  const totalCgst    = totalTaxable * cgstRate / 100;
-  const totalSgst    = totalTaxable * sgstRate / 100;
-  const totalIgst    = 0; // intra-state restaurants
+  // FIX (GST): per-order rate (its own historical snapshot), not "today's" rate.
+  const withRate = orders.map(o => ({
+    ...o,
+    _taxRate: (typeof o.tax_percent_snapshot === 'number' && o.tax_percent_snapshot !== null)
+      ? o.tax_percent_snapshot
+      : currentTaxRate,
+  }));
+
+  const totalTaxable = withRate.reduce((s, o) => s + o.total, 0);
+  const totalCgst    = withRate.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0);
+  const totalSgst    = withRate.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0);
+  const totalIgst    = 0;
   const totalInclTax = totalTaxable + totalCgst + totalSgst;
-  const b2bCount     = orders.filter(o => o.customer_gstin && o.customer_gstin.trim()).length;
+  const b2bCount     = withRate.filter(o => o.customer_gstin && o.customer_gstin.trim()).length;
 
-  function round2(n) { return Math.round(n * 100) / 100; }
+  const b2bOrders = withRate.filter(o => o.customer_gstin && o.customer_gstin.trim());
+  const b2bTaxableTotal = b2bOrders.reduce((s, o) => s + o.total, 0);
+  const b2bCgstTotal    = b2bOrders.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0);
+  const b2bSgstTotal    = b2bOrders.reduce((s, o) => s + o.total * (o._taxRate / 2) / 100, 0);
 
-  // ── Table 4 — ITC note ───────────────────────────────────────────────────
-  // Restaurants filing at the 5% rate (Notification 11/2017-CT(R), as
-  // amended) are explicitly barred from claiming Input Tax Credit — for
-  // them, ITC = ₹0 in every field is the correct and complete answer.
-  //
-  // Restaurants filing at any other rate (most commonly 18%, e.g. hotel
-  // restaurants above the declared-tariff threshold, or those who've opted
-  // into the regular scheme) ARE eligible to claim ITC on their inputs
-  // (ingredients, packaging, rent, utilities, etc). This app has no record
-  // of purchase invoices, so we can't compute that figure — telling them to
-  // enter ₹0 would be wrong and could cause them to overpay tax. Instead we
-  // point them to their own purchase records.
-  const itcClaimed = taxPct === 5
+  // Weighted-average display rate, since the period may span a rate change.
+  const displayTaxPct = totalTaxable > 0
+    ? round2((totalCgst + totalSgst) / totalTaxable * 100)
+    : currentTaxRate;
+
+  const itcClaimed = displayTaxPct === 5
     ? {
         note: 'ITC not applicable — restaurants filing at 5% GST cannot claim input tax credit.',
-        integrated_tax: 0,
-        central_tax:    0,
-        state_ut_tax:   0,
-        cess:           0,
+        integrated_tax: 0, central_tax: 0, state_ut_tax: 0, cess: 0,
       }
     : {
-        note: `You're filing at ${taxPct}% GST, which is eligible for Input Tax Credit. This app doesn't track your purchase invoices, so enter your eligible ITC here from your own purchase records — do not enter ₹0 by default.`,
-        integrated_tax: null,
-        central_tax:    null,
-        state_ut_tax:   null,
-        cess:           null,
+        note: `Your effective rate for this period is ${displayTaxPct}%, which may be eligible for Input Tax Credit. This app doesn't track your purchase invoices, so enter your eligible ITC here from your own purchase records — do not enter ₹0 by default.`,
+        integrated_tax: null, central_tax: null, state_ut_tax: null, cess: null,
       };
 
   res.json({
     period:       { from: dateFrom, to: dateTo },
     gstin:        S.gstin || '',
     legal_name:   S.legal_name || S.restaurant_name || '',
-    tax_rate:     taxPct,
-    // Table 3.1 — Outward taxable supplies
+    tax_rate:     displayTaxPct,
     outward_taxable: {
       total_taxable_value: round2(totalTaxable),
       integrated_tax:      round2(totalIgst),
@@ -741,22 +752,18 @@ router.get('/gst/gstr3b', (req, res) => {
       total_tax:           round2(totalCgst + totalSgst),
       total_incl_tax:      round2(totalInclTax),
     },
-    // Table 3.1(a) — Intra-state B2C (most restaurant sales)
     intrastate_b2c: {
-      taxable_value: round2(totalTaxable - orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0)),
-      central_tax:   round2((totalTaxable - orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0)) * cgstRate / 100),
-      state_ut_tax:  round2((totalTaxable - orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0)) * sgstRate / 100),
+      taxable_value: round2(totalTaxable - b2bTaxableTotal),
+      central_tax:   round2(totalCgst - b2bCgstTotal),
+      state_ut_tax:  round2(totalSgst - b2bSgstTotal),
     },
-    // Table 3.1(b) — Intra-state B2B
     intrastate_b2b: {
-      taxable_value: round2(orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0)),
-      central_tax:   round2(orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0) * cgstRate / 100),
-      state_ut_tax:  round2(orders.filter(o => o.customer_gstin).reduce((s, o) => s + o.total, 0) * sgstRate / 100),
+      taxable_value: round2(b2bTaxableTotal),
+      central_tax:   round2(b2bCgstTotal),
+      state_ut_tax:  round2(b2bSgstTotal),
       invoice_count: b2bCount,
     },
-    // Table 4 — ITC (branches based on tax rate — see itcClaimed above)
     itc_claimed: itcClaimed,
-    // Table 6.1 — Tax paid
     tax_paid: {
       integrated_tax: round2(totalIgst),
       central_tax:    round2(totalCgst),
@@ -768,20 +775,8 @@ router.get('/gst/gstr3b', (req, res) => {
 });
 
 // ── GST GSTR-9 Annual Return Summary ─────────────────────────────────────
-// Aggregates a full Indian financial year (April 1 – March 31) into the
-// tables needed to manually file GSTR-9 on the GST portal.
-//
-// Key tables produced:
-//   Table 4  — details of advances, inward/outward supplies on which tax is payable
-//   Table 5  — outward supplies on which tax is not payable (nil/exempt) — N/A here
-//   Table 9  — details of tax paid as declared in returns filed during the year
-//   Table 17 — HSN-wise summary of outward supplies
-//
-// Query param:
-//   ?fy=2024-25  (defaults to current Indian financial year)
 router.get('/gst/gstr9', (req, res) => {
   const now = new Date();
-  // Indian financial year starts April 1. If current month < April, FY started last year.
   const currentFyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
 
   let fyStart = currentFyStart;
@@ -793,52 +788,55 @@ router.get('/gst/gstr9', (req, res) => {
   const fyEnd    = fyStart + 1;
   const dateFrom = `${fyStart}-04-01`;
   const dateTo   = `${fyEnd}-03-31`;
-  const fyLabel  = `${fyStart}-${String(fyEnd).slice(2)}`; // e.g. "2024-25"
+  const fyLabel  = `${fyStart}-${String(fyEnd).slice(2)}`;
+
+  const tzOffsetMin = parseTz(req);
+  const dateExprO   = localDateExprAliased('o', tzOffsetMin);
 
   const settingsRows = db.prepare('SELECT key, value FROM settings').all();
   const S = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
 
-  const taxPct   = parseFloat(S.tax_percent || '5');
-  const cgstRate = taxPct / 2;
-  const sgstRate = taxPct / 2;
+  const currentTaxRate = parseFloat(S.tax_percent || '5');
   const sacCode  = S.sac_code || '9963';
 
-  function round2(n) { return Math.round(n * 100) / 100; }
-
   const orders = db.prepare(`
-    SELECT o.id, o.total, o.customer_gstin, o.order_type,
+    SELECT o.id, o.total, o.customer_gstin, o.order_type, o.tax_percent_snapshot,
            o.session_id, o.created_at,
-           substr(o.created_at, 1, 7) as month_key
+           ${localDateExprAliased('o', tzOffsetMin).replace('1, 10', '1, 7')} as month_key
     FROM orders o
     WHERE o.status = 'closed'
-      AND substr(o.created_at, 1, 10) >= ?
-      AND substr(o.created_at, 1, 10) <= ?
+      AND ${dateExprO} >= ?
+      AND ${dateExprO} <= ?
     ORDER BY o.created_at ASC
   `).all(dateFrom, dateTo);
 
-  // Outward supply totals
+  // FIX (GST): per-order historical rate instead of today's setting.
+  orders.forEach(o => {
+    o._taxRate = (typeof o.tax_percent_snapshot === 'number' && o.tax_percent_snapshot !== null)
+      ? o.tax_percent_snapshot
+      : currentTaxRate;
+  });
+
   const totalTaxable  = round2(orders.reduce((s, o) => s + (o.total || 0), 0));
   const b2bTaxable    = round2(orders.filter(o => o.customer_gstin?.trim()).reduce((s, o) => s + (o.total || 0), 0));
   const b2cTaxable    = round2(totalTaxable - b2bTaxable);
   const parcelTaxable = round2(orders.filter(o => o.order_type === 'parcel').reduce((s, o) => s + (o.total || 0), 0));
   const dineInTaxable = round2(totalTaxable - parcelTaxable);
 
-  const totalCgst     = round2(totalTaxable * cgstRate / 100);
-  const totalSgst     = round2(totalTaxable * sgstRate / 100);
+  const totalCgst = round2(orders.reduce((s, o) => s + (o.total || 0) * (o._taxRate / 2) / 100, 0));
+  const totalSgst = round2(orders.reduce((s, o) => s + (o.total || 0) * (o._taxRate / 2) / 100, 0));
   const totalTax      = round2(totalCgst + totalSgst);
   const totalInclTax  = round2(totalTaxable + totalTax);
 
-  // Unique dining sessions (visits)
   const uniqueSessions = new Set(orders.map(o => o.session_id || o.id)).size;
 
-  // Monthly breakdown — used by Table 9 (verify each GSTR-3B month sums correctly)
   const monthMap = {};
   for (const o of orders) {
     const mk = o.month_key;
     if (!monthMap[mk]) monthMap[mk] = { month: mk, taxable: 0, cgst: 0, sgst: 0, orders: 0, sessions: new Set() };
     monthMap[mk].taxable = round2(monthMap[mk].taxable + (o.total || 0));
-    monthMap[mk].cgst    = round2(monthMap[mk].cgst    + (o.total || 0) * cgstRate / 100);
-    monthMap[mk].sgst    = round2(monthMap[mk].sgst    + (o.total || 0) * sgstRate / 100);
+    monthMap[mk].cgst    = round2(monthMap[mk].cgst    + (o.total || 0) * (o._taxRate / 2) / 100);
+    monthMap[mk].sgst    = round2(monthMap[mk].sgst    + (o.total || 0) * (o._taxRate / 2) / 100);
     monthMap[mk].orders++;
     monthMap[mk].sessions.add(o.session_id || o.id);
   }
@@ -854,8 +852,6 @@ router.get('/gst/gstr9', (req, res) => {
       sessions: m.sessions.size,
     }));
 
-  // Table 17 — HSN/SAC summary
-  // Fetch all items for these orders to get item-level quantities
   let itemQty = 0;
   if (orders.length > 0) {
     const ids = orders.map(o => `'${o.id.replace(/'/g,"''")}'`).join(',');
@@ -878,10 +874,13 @@ router.get('/gst/gstr9', (req, res) => {
     cess:    0,
   }];
 
-  // ITC applicability note (same logic as GSTR-3B)
-  const itcNote = taxPct === 5
+  // Weighted-average display rate for the ITC note, since a full FY is the
+  // most likely period to span a genuine rate change.
+  const displayTaxPct = totalTaxable > 0 ? round2(totalTax / totalTaxable * 100) : currentTaxRate;
+
+  const itcNote = displayTaxPct === 5
     ? 'ITC not applicable — restaurants filing at 5% GST (Notification 11/2017-CT(R)) cannot claim input tax credit. Enter ₹0 in all ITC fields (Part II, Table 6).'
-    : `Filing at ${taxPct}% GST — ITC may be claimable on your inputs. Enter eligible amounts from your purchase records in Table 6. This app does not track purchase invoices.`;
+    : `Effective rate for this year was ${displayTaxPct}% — ITC may be claimable on your inputs. Enter eligible amounts from your purchase records in Table 6. This app does not track purchase invoices.`;
 
   res.json({
     fy:            fyLabel,
@@ -890,35 +889,27 @@ router.get('/gst/gstr9', (req, res) => {
     legal_name:    S.legal_name || S.restaurant_name || '',
     state_name:    S.state_name || 'Kerala',
     sac_code:      sacCode,
-    tax_rate:      taxPct,
+    tax_rate:      displayTaxPct,
     order_count:   orders.length,
     session_count: uniqueSessions,
 
-    // Part II — Table 4 & 5: Outward taxable supplies
     outward: {
-      // Table 4A — supplies made to registered persons (B2B)
       b2b_taxable:     b2bTaxable,
-      b2b_cgst:        round2(b2bTaxable * cgstRate / 100),
-      b2b_sgst:        round2(b2bTaxable * sgstRate / 100),
-      // Table 4C — supplies made to unregistered persons (B2C)
+      b2b_cgst:        round2(orders.filter(o => o.customer_gstin?.trim()).reduce((s, o) => s + (o.total || 0) * (o._taxRate / 2) / 100, 0)),
+      b2b_sgst:        round2(orders.filter(o => o.customer_gstin?.trim()).reduce((s, o) => s + (o.total || 0) * (o._taxRate / 2) / 100, 0)),
       b2c_taxable:     b2cTaxable,
-      b2c_cgst:        round2(b2cTaxable * cgstRate / 100),
-      b2c_sgst:        round2(b2cTaxable * sgstRate / 100),
-      // Totals
+      b2c_cgst:        round2(orders.filter(o => !o.customer_gstin?.trim()).reduce((s, o) => s + (o.total || 0) * (o._taxRate / 2) / 100, 0)),
+      b2c_sgst:        round2(orders.filter(o => !o.customer_gstin?.trim()).reduce((s, o) => s + (o.total || 0) * (o._taxRate / 2) / 100, 0)),
       total_taxable:   totalTaxable,
       total_cgst:      totalCgst,
       total_sgst:      totalSgst,
       total_igst:      0,
       total_cess:      0,
       total_incl_tax:  totalInclTax,
-      // Breakdown by order type (informational, not a GSTR-9 field)
       dine_in_taxable: dineInTaxable,
       parcel_taxable:  parcelTaxable,
     },
 
-    // Part II — Table 9: Tax paid as declared in GSTR-3B filings
-    // GSTR-9 asks you to enter what you declared and paid each month.
-    // This is the annual sum — cross-check each row against your GSTR-3B filings.
     tax_paid: {
       integrated_tax: 0,
       central_tax:    totalCgst,
@@ -927,16 +918,12 @@ router.get('/gst/gstr9', (req, res) => {
       total:          totalTax,
     },
 
-    // Part II — Table 6: ITC availed (as declared in GSTR-3B)
     itc_note: itcNote,
-    itc: taxPct === 5
+    itc: displayTaxPct === 5
       ? { integrated_tax: 0, central_tax: 0, state_ut_tax: 0, cess: 0 }
-      : null,  // null = user must enter from their own purchase records
+      : null,
 
-    // Part V — Table 17: HSN-wise outward summary
     hsn_summary: hsnSummary,
-
-    // Monthly breakdown — cross-check Table 9 against each month's GSTR-3B
     monthly_breakdown: monthlyBreakdown,
   });
 });
