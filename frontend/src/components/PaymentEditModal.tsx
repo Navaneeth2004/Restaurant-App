@@ -23,8 +23,9 @@ interface Props {
   currentPaymentDetails?: any;
   currentOrderType?: OrderType | null;
   currentCustomerGstin?: string | null;
+  currentCreatedAt?: string | null;
   onClose: () => void;
-  onSaved: (newMethod: string, newDetails?: any, newAmountPaid?: number, newOrderType?: OrderType, newGstin?: string) => void;
+  onSaved: (newMethod: string, newDetails?: any, newAmountPaid?: number, newOrderType?: OrderType, newGstin?: string, newCreatedAt?: string) => void;
 }
 
 function parseSplitDetails(details: any): SplitEntry[] | null {
@@ -41,8 +42,24 @@ function parseSplitDetails(details: any): SplitEntry[] | null {
   }
 }
 
+// FIX: local-time-safe formatters for <input type="date"/"time"> — using
+// toISOString() directly would shift the displayed value by the user's
+// UTC offset, showing the wrong day/time in the pickers.
+function toDateInputValue(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function toTimeInputValue(d: Date): string {
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
 export default function PaymentEditModal({
   orderIds, currentMethod, total, currentAmountPaid, currentPaymentDetails, currentOrderType, currentCustomerGstin,
+  currentCreatedAt,
   onClose, onSaved,
 }: Props) {
   const settings    = useSettings();
@@ -63,6 +80,13 @@ export default function PaymentEditModal({
   const [orderType,     setOrderType]     = useState<OrderType>(currentOrderType || 'dine_in');
   const [customerGstin, setCustomerGstin] = useState(currentCustomerGstin || '');
   const [saving,        setSaving]        = useState(false);
+
+  // FIX: lets the waiter backdate an order — e.g. logging a dine-in visit
+  // from a couple of days ago straight from Reports → History.
+  const initialOrderDate = currentCreatedAt ? new Date(currentCreatedAt) : new Date();
+  const [orderDate, setOrderDate] = useState(toDateInputValue(initialOrderDate));
+  const [orderTime, setOrderTime] = useState(toTimeInputValue(initialOrderDate));
+
   const toast = useToast();
 
   const splitTotal = splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
@@ -95,6 +119,11 @@ export default function PaymentEditModal({
       const targetOrderId = orderIds[orderIds.length - 1];
       if (!targetOrderId) throw new Error('No order to update');
 
+      // FIX: combine the date/time pickers (local time) into an ISO string
+      // to send as the session's new created_at.
+      const combined = new Date(`${orderDate}T${orderTime}:00`);
+      const newCreatedAt = Number.isNaN(combined.getTime()) ? undefined : combined.toISOString();
+
       await updateOrderPayment(targetOrderId, {
         payment_method:  method,
         payment_details: paymentDetails,
@@ -102,9 +131,10 @@ export default function PaymentEditModal({
         amount_paid:     finalAmountPaid,
         order_type:      orderType,
         customer_gstin:  customerGstin.trim() || undefined,
+        created_at:      newCreatedAt,
       } as any);
       toast('Payment updated', 'success');
-      onSaved(method, paymentDetails, finalAmountPaid, orderType, customerGstin.trim() || undefined);
+      onSaved(method, paymentDetails, finalAmountPaid, orderType, customerGstin.trim() || undefined, newCreatedAt);
     } catch (e: any) {
       toast(e.response?.data?.error || 'Failed to update payment', 'error');
     } finally {
@@ -137,6 +167,25 @@ export default function PaymentEditModal({
             )}
           </div>
         )}
+
+        <label className="label mb-2">Order Date &amp; Time</label>
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <input
+            type="date"
+            className="input py-1.5 text-xs"
+            value={orderDate}
+            onChange={e => setOrderDate(e.target.value)}
+          />
+          <input
+            type="time"
+            className="input py-1.5 text-xs"
+            value={orderTime}
+            onChange={e => setOrderTime(e.target.value)}
+          />
+        </div>
+        <p className="text-zinc-600 text-[10px] -mt-3 mb-4">
+          Change this to log an order that actually happened earlier — e.g. backdating a visit from a couple of days ago.
+        </p>
 
         <label className="label mb-2">Order Type</label>
         <div

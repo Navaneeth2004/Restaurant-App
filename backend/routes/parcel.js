@@ -40,6 +40,14 @@ function runMigration() {
       // Mark any slots already created with P-style ids
       db.exec("UPDATE tables SET is_parcel = 1 WHERE id GLOB 'P[0-9]*'");
     }
+    if (!cols.includes('customer_name')) {
+      db.exec('ALTER TABLE tables ADD COLUMN customer_name TEXT DEFAULT NULL');
+      console.log('[Parcel] Migration: added customer_name column');
+    }
+    if (!cols.includes('customer_phone')) {
+      db.exec('ALTER TABLE tables ADD COLUMN customer_phone TEXT DEFAULT NULL');
+      console.log('[Parcel] Migration: added customer_phone column');
+    }
     _migrated = true;
   } catch (err) {
     console.error('[Parcel] Migration error:', err.message);
@@ -71,7 +79,7 @@ function nextParcelId() {
 // ── POST /api/parcel/slot ─────────────────────────────────────────────────
 router.post('/slot', (req, res) => {
   const db = getDb();
-  const { customer_name } = req.body || {};
+  const { customer_name, customer_phone } = req.body || {};
 
   try {
     const id    = nextParcelId();
@@ -84,9 +92,11 @@ router.post('/slot', (req, res) => {
       'SELECT MAX(sort_order) as m FROM tables'
     ).get()?.m ?? 0;
 
+    // FIX: persist customer_name/customer_phone as real columns (not just
+    // folded into label) so the Bill screen can auto-fill them later.
     db.prepare(
-      'INSERT INTO tables (id, label, seats, status, sort_order, is_parcel, is_archived) VALUES (?, ?, ?, ?, ?, 1, 0)'
-    ).run(id, label, 0, 'empty', maxOrder + 1);
+      'INSERT INTO tables (id, label, seats, status, sort_order, is_parcel, is_archived, customer_name, customer_phone) VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)'
+    ).run(id, label, 0, 'empty', maxOrder + 1, customer_name?.trim() || null, customer_phone?.trim() || null);
 
     const token = crypto.randomBytes(24).toString('base64url');
     db.prepare('UPDATE tables SET kiosk_token = ? WHERE id = ?').run(token, id);

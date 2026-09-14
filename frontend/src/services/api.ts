@@ -91,6 +91,7 @@ export const updateOrderPayment = (
     customer_gstin?: string;
     amount_paid?: number;
     order_type?: 'dine_in' | 'parcel';
+    created_at?: string;
   }
 ): Promise<void> => api.patch(`/orders/${id}/payment`, payment).then(r => r.data);
 

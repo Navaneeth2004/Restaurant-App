@@ -33,6 +33,8 @@ export interface Table {
   occupied_since: string | null;
   session_id?: string | null;
   is_parcel?: boolean;
+  customer_name?: string | null;
+  customer_phone?: string | null;
 }
 
 export interface OrderItem {

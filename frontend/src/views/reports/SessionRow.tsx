@@ -99,6 +99,9 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const [orderType, setOrderType] = useState<'dine_in' | 'parcel' | null>(session.orderType ?? null);
   // FIX: now backed by a real field on TableSession instead of always undefined.
   const [customerGstin, setCustomerGstin] = useState<string | null>(session.customerGstin ?? null);
+  // FIX: lets the displayed date/time update immediately after backdating
+  // a session via PaymentEditModal, without needing a full history reload.
+  const [startedAt, setStartedAt] = useState<string>(session.startedAt);
 
   const tax       = session.totalAmount * taxPct;
   const billTotal = session.totalAmount + tax;
@@ -106,7 +109,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const paidDiff  = paidTotal - billTotal;
   const hasDiff   = Math.abs(paidDiff) >= 0.01;
 
-  const date = new Date(session.startedAt);
+  const date = new Date(startedAt);
 
   // Display label — "Parcel 1" for parcel slots, "Table T1" otherwise.
   const displayLabel = tableDisplayLabel(session.tableId);
@@ -140,7 +143,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
           // FIX: forward the real customerGstin so a B2B reprint from
           // History can actually display it — previously this field was
           // structurally always undefined on TableSession.
-          session={{ ...session, paymentMethod, paymentDetails, customerGstin }}
+          session={{ ...session, paymentMethod, paymentDetails, customerGstin, startedAt }}
           onClose={() => setShowBill(false)}
         />
       )}
@@ -153,9 +156,10 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
           currentOrderType={orderType}
           // FIX: pre-fill with the real saved value instead of always blank.
           currentCustomerGstin={customerGstin}
+          currentCreatedAt={startedAt}
           total={session.totalAmount}
           onClose={() => setShowPaymentEdit(false)}
-          onSaved={(newMethod, newDetails, newAmountPaid, newOrderType, newGstin) => {
+          onSaved={(newMethod, newDetails, newAmountPaid, newOrderType, newGstin, newCreatedAt) => {
             setPaymentMethod(newMethod);
             setPaymentDetails(newDetails ?? null);
             if (typeof newAmountPaid === 'number') {
@@ -172,6 +176,9 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
             // already-displayed GSTIN even though nothing changed server-side.
             if (newGstin) {
               setCustomerGstin(newGstin);
+            }
+            if (newCreatedAt) {
+              setStartedAt(newCreatedAt);
             }
             setShowPaymentEdit(false);
           }}

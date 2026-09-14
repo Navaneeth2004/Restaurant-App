@@ -59,7 +59,6 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
   return ReactDOM.createPortal(
     <div
       className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[99999] flex items-center justify-center p-4"
-      onClick={onClose}
     >
       <div
         className="rounded-xl border border-red-500/40 bg-surface-card p-5 w-full max-w-sm animate-slide-up shadow-2xl"

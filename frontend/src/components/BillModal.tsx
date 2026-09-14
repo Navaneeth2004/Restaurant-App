@@ -38,12 +38,16 @@ interface Props {
   isHistory?:       boolean;
   cartItems?:       { menu_item_id: number; name: string; price: number; quantity: number; note: string }[];
   defaultOrderType?: 'dine_in' | 'parcel';
+  defaultCustomerName?:  string;
+  defaultCustomerPhone?: string;
 }
 
 export default function BillModal({
   orders, orderId, table, onClose, onClosed,
   isHistory = false, cartItems = [],
   defaultOrderType = 'dine_in',
+  defaultCustomerName = '',
+  defaultCustomerPhone = '',
 }: Props) {
   const settings = useSettings();
   const toast    = useToast();
@@ -88,8 +92,10 @@ export default function BillModal({
   const [splits,         setSplits]         = React.useState<SplitEntry[]>([
     { method: 'cash', amount: '' }, { method: 'upi', amount: '' },
   ]);
-  const [customerName,   setCustomerName]   = React.useState('');
-  const [customerPhone,  setCustomerPhone]  = React.useState('');
+  // FIX: pre-fill from the parcel slot's saved customer details (if any)
+  // so the waiter isn't asked for name/phone a second time at billing.
+  const [customerName,   setCustomerName]   = React.useState(defaultCustomerName);
+  const [customerPhone,  setCustomerPhone]  = React.useState(defaultCustomerPhone);
   const [customerGstin,  setCustomerGstin]  = React.useState('');
   const [paying,         setPaying]         = React.useState(false);
 

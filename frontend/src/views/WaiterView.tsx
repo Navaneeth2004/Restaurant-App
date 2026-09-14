@@ -681,6 +681,8 @@ export default function WaiterView() {
           orderId={billOrderId || 'cart-only'}
           table={selectedTable}
           defaultOrderType={selectedIsParcel ? 'parcel' : 'dine_in'}
+          defaultCustomerName={selectedIsParcel ? (selectedTable.customer_name || '') : ''}
+          defaultCustomerPhone={selectedIsParcel ? (selectedTable.customer_phone || '') : ''}
           onClose={() => setBillModal(false)}
           onClosed={async () => {
             setBillModal(false);

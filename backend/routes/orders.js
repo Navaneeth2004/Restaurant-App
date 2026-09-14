@@ -484,7 +484,7 @@ router.patch('/:id/close', (req, res) => {
 });
 
 router.patch('/:id/payment', (req, res) => {
-  const { payment_method, payment_details, change_amount, customer_name, customer_phone, customer_gstin, amount_paid, order_type } = req.body || {};
+  const { payment_method, payment_details, change_amount, customer_name, customer_phone, customer_gstin, amount_paid, order_type, created_at } = req.body || {};
   if (!payment_method) return res.status(400).json({ error: 'payment_method required' });
 
   try {
@@ -524,6 +524,37 @@ router.patch('/:id/payment', (req, res) => {
         SET amount_paid = NULL
         WHERE table_id = ? AND session_id = ? AND id != ?
       `).run(order.table_id, order.session_id, targetId);
+    }
+
+    // FIX: allow backdating a whole session (e.g. logging an order that
+    // actually happened a couple of days ago). Every order row in the
+    // session is shifted by the same delta, so multi-round timing relative
+    // to each other is preserved instead of collapsing every round onto
+    // one timestamp.
+    if (created_at) {
+      const newDate = new Date(created_at);
+      if (!Number.isNaN(newDate.getTime())) {
+        const sessionOrders = order.session_id
+          ? db.prepare(
+              'SELECT id, created_at, delivered_at FROM orders WHERE table_id = ? AND session_id = ?'
+            ).all(order.table_id, order.session_id)
+          : [order];
+
+        const earliest = sessionOrders.reduce((min, o) =>
+          new Date(o.created_at).getTime() < new Date(min.created_at).getTime() ? o : min
+        , sessionOrders[0]);
+
+        const deltaMs = newDate.getTime() - new Date(earliest.created_at).getTime();
+
+        const updateOrderDate = db.prepare('UPDATE orders SET created_at = ?, delivered_at = ? WHERE id = ?');
+        for (const o of sessionOrders) {
+          const shiftedCreated   = new Date(new Date(o.created_at).getTime() + deltaMs).toISOString();
+          const shiftedDelivered = o.delivered_at
+            ? new Date(new Date(o.delivered_at).getTime() + deltaMs).toISOString()
+            : null;
+          updateOrderDate.run(shiftedCreated, shiftedDelivered, o.id);
+        }
+      }
     }
 
     res.json({ success: true });
