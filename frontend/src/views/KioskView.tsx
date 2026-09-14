@@ -1,19 +1,27 @@
 /**
  * frontend/src/views/KioskView.tsx
  *
- * FIX (concurrency): placeOrder no longer fetches the active order and
- * merges it with the local cart before submitting — same reasoning as
- * WaiterView.tsx's sendToKitchen/handleBill (see that file's header
- * comment). The backend now does the merge authoritatively, so the kiosk
- * just sends its own unsent cart.
+ * FIX (order/bill confirmation): customers previously placed an order or
+ * requested the bill with a single tap, no confirmation step at all — an
+ * accidental tap could send a wrong order to the kitchen or request the
+ * bill prematurely. Both actions now go through a confirmation dialog
+ * (reusing the shared ConfirmModal component) before actually firing.
+ *
+ * FIX (wording): every customer-facing "Delivered" label has been renamed
+ * to "Ready". "Delivered" implied a waiter had physically brought the
+ * food to the table — but the system only actually knows that KITCHEN
+ * marked it done; it has no way to know whether it's physically reached
+ * the customer yet. "Ready" is accurate to what's actually known instead
+ * of overclaiming.
  *
  * (All other fix comments from earlier rounds — back-button trap, bfcache
- * fallback, bootstrap screen selection, session-scoped access — remain as
- * before; nothing else in this file changed.)
+ * fallback, bootstrap screen selection, session-scoped access, additive
+ * item merge — remain as before; nothing else in this file changed.)
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
+import ConfirmModal from '../components/ConfirmModal';
 import type { MenuItem, Category, Order } from '../types';
 
 interface KioskCtx {
@@ -119,6 +127,13 @@ export default function KioskView({ token }: { token: string }) {
   const [toast,      setToast]      = useState<{ msg:string; type:'ok'|'err'|'info' }|null>(null);
   const [cartOpen,   setCartOpen]   = useState(false);
   const [cartH,      setCartH]      = useState(0);
+  // FIX: generic confirm-dialog state shared by both "place order" and
+  // "request bill" — reuses the same ConfirmModal component already used
+  // throughout the admin/waiter side of the app.
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string; message: string; confirmLabel: string; onConfirm: () => void;
+  } | null>(null);
+
   const cartRef  = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket|null>(null);
   const tidRef    = useRef<string>('');
@@ -271,10 +286,7 @@ export default function KioskView({ token }: { token: string }) {
     setCart(p => p.map((it,idx) => idx===i ? {...it,note} : it));
   }, []);
 
-  // ── Place order ───────────────────────────────────────────────────────────
-  // FIX (concurrency): sends only this device's own unsent cart — the
-  // backend merges it additively into whatever's currently on the table,
-  // so no pre-fetch/merge is needed (or safe) here anymore.
+  // ── Place order (actual submission — called only after confirmation) ─────
   const placeOrder = async () => {
     if (!cart.length || busy) return;
     setBusy(true);
@@ -299,6 +311,23 @@ export default function KioskView({ token }: { token: string }) {
     } finally { setBusy(false); }
   };
 
+  // FIX: confirmation step before the order actually goes to the kitchen.
+  const confirmAndPlaceOrder = () => {
+    if (!cart.length || busy) return;
+    const cartQty  = cart.reduce((s, i) => s + i.quantity, 0);
+    const cartSub  = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+    const sym      = ctx?.currency_symbol || '₹';
+    setConfirmModal({
+      title: hasOrders ? 'Add to Order?' : 'Confirm Your Order',
+      message: `Send ${cartQty} item${cartQty !== 1 ? 's' : ''} (${sym}${cartSub.toFixed(2)}) to the kitchen? ${
+        cart.map(i => `${i.quantity}× ${i.name}`).join(', ')
+      }`,
+      confirmLabel: hasOrders ? 'Add to Order' : 'Place Order',
+      onConfirm: () => { setConfirmModal(null); placeOrder(); },
+    });
+  };
+
+  // ── Request bill (actual submission — called only after confirmation) ────
   const reqBill = async () => {
     if (busy) return;
     setBusy(true);
@@ -314,6 +343,19 @@ export default function KioskView({ token }: { token: string }) {
       }
       showToast(e.message || 'Failed to request bill', 'err');
     } finally { setBusy(false); }
+  };
+
+  // FIX: confirmation step before the bill is actually requested.
+  const confirmAndRequestBill = () => {
+    if (busy) return;
+    const sym = ctx?.currency_symbol || '₹';
+    const total = ordersSub * (1 + taxPct);
+    setConfirmModal({
+      title: 'Request the Bill?',
+      message: `Request the bill for ${sym}${total.toFixed(2)}? You won't be able to add more items after this unless staff reopens the table.`,
+      confirmLabel: 'Request Bill',
+      onConfirm: () => { setConfirmModal(null); reqBill(); },
+    });
   };
 
   const brand       = ctx?.brand_color     || '#f97316';
@@ -423,12 +465,22 @@ export default function KioskView({ token }: { token: string }) {
     );
   }
 
+  // FIX (wording): "Delivered" → "Ready" throughout this screen.
   if (screen==='ordered' && hasOrders && cart.length===0) {
     const sub=ordersSub, tax=sub*taxPct;
     return (
       <div style={{ ...S.page, background:'#18181b' }}>
         <style>{CSS}</style>
         {toast && <Toast msg={toast.msg} type={toast.type} />}
+        {confirmModal && (
+          <ConfirmModal
+            title={confirmModal.title}
+            message={confirmModal.message}
+            confirmLabel={confirmModal.confirmLabel}
+            onConfirm={confirmModal.onConfirm}
+            onCancel={() => setConfirmModal(null)}
+          />
+        )}
         <Header ctx={ctx} brand={brand} />
         <div style={{ flex:1, overflowY:'auto', padding:'16px 16px 32px' }}>
           <div style={{ display:'flex',alignItems:'center',gap:12,padding:'14px 16px',borderRadius:14,
@@ -438,7 +490,7 @@ export default function KioskView({ token }: { token: string }) {
             </div>
             <div>
               <p style={{ color:activeRound?brand:'#16a34a',fontSize:14,fontWeight:700,margin:'0 0 2px',fontFamily:FF }}>
-                {activeRound ? 'Order in kitchen' : 'All items delivered'}
+                {activeRound ? 'Order in kitchen' : 'All items ready'}
               </p>
               <p style={{ color:'#71717a',fontSize:12,margin:0,fontFamily:FF }}>
                 {activeRound ? 'Your food is being prepared.' : 'Add more items or request the bill below.'}
@@ -455,7 +507,7 @@ export default function KioskView({ token }: { token: string }) {
                   <div style={{ display:'flex',alignItems:'center',gap:7 }}>
                     <span style={{ width:7,height:7,borderRadius:'50%',background:isAct?brand:'#16a34a',display:'inline-block',flexShrink:0 }}/>
                     <span style={{ color:isAct?brand:'#16a34a',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'.08em',fontFamily:FF }}>
-                      {orders.length>1?`Round ${ri+1} — `:''}{isAct?'In Kitchen':'Delivered'}
+                      {orders.length>1?`Round ${ri+1} — `:''}{isAct?'In Kitchen':'Ready'}
                     </span>
                   </div>
                   <span style={{ color:'#52525b',fontSize:12,fontFamily:FM }}>{sym}{rt.toFixed(2)}</span>
@@ -489,7 +541,7 @@ export default function KioskView({ token }: { token: string }) {
 
         <div style={{ padding:'12px 16px 28px',borderTop:'1px solid #27272a',background:'#18181b',display:'flex',flexDirection:'column',gap:10,flexShrink:0 }}>
           <Btn label="Add More Items" onClick={()=>setScreen('menu')} outline color={brand} />
-          <Btn label="Request Bill" onClick={reqBill} busy={busy} color="#16a34a" bg="#16a34a12" border="#16a34a30" />
+          <Btn label="Request Bill" onClick={confirmAndRequestBill} busy={busy} color="#16a34a" bg="#16a34a12" border="#16a34a30" />
         </div>
       </div>
     );
@@ -501,6 +553,15 @@ export default function KioskView({ token }: { token: string }) {
     <div style={{ ...S.page, background:'#18181b', position:'relative' }}>
       <style>{CSS}</style>
       {toast && <Toast msg={toast.msg} type={toast.type} />}
+      {confirmModal && (
+        <ConfirmModal
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmLabel={confirmModal.confirmLabel}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal(null)}
+        />
+      )}
 
       <Header ctx={ctx} brand={brand} />
 
@@ -527,7 +588,7 @@ export default function KioskView({ token }: { token: string }) {
           display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer', flexShrink:0,
         }}>
           <span style={{ color:brand, fontSize:12, fontWeight:600, fontFamily:FF }}>
-            {activeRound ? 'Order in kitchen' : 'Order delivered'} — tap to view
+            {activeRound ? 'Order in kitchen' : 'Order ready'} — tap to view
           </span>
           <span style={{ color:brand, fontSize:12, fontFamily:FM, fontWeight:700 }}>
             {sym}{(ordersSub*(1+taxPct)).toFixed(2)}
@@ -590,7 +651,7 @@ export default function KioskView({ token }: { token: string }) {
 
       {hasOrders && cartQty===0 && screen==='menu' && (
         <div style={{ padding:'10px 16px 24px',borderTop:'1px solid #27272a',flexShrink:0,background:'#18181b' }}>
-          <Btn label="Request Bill" onClick={reqBill} busy={busy} color="#16a34a" bg="#16a34a12" border="#16a34a30" />
+          <Btn label="Request Bill" onClick={confirmAndRequestBill} busy={busy} color="#16a34a" bg="#16a34a12" border="#16a34a30" />
         </div>
       )}
 
@@ -679,7 +740,7 @@ export default function KioskView({ token }: { token: string }) {
               }}>{sym}{cartSub.toFixed(2)}</span>
             </button>
 
-            <button onClick={placeOrder} disabled={busy} style={{
+            <button onClick={confirmAndPlaceOrder} disabled={busy} style={{
               flexShrink:0,
               height:44, padding:'0 18px',
               background:busy?'#3f3f46':brand, color:'#fff', border:'none',
