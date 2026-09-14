@@ -1,4 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react';
+/**
+ * AdminRestaurant.tsx
+ *
+ * FIX (grey-out save button): previously the Save button was always
+ * clickable, and a `saved` flag (true only briefly right after a
+ * successful save) was the only "state" tracked — meaning on first load,
+ * or any time a while had passed since the last save, the button looked
+ * identical whether or not anything had actually changed. Now tracks a
+ * real dirty-state: a `baseline` snapshot is captured on initial load and
+ * refreshed after every successful save, and the button is disabled
+ * whenever the current form (including logo changes) exactly matches
+ * that baseline — i.e. genuinely nothing to save.
+ *
+ * FIX (field limits): screenshots showed unbounded text fields
+ * (restaurant name, phone, address, bill footer, currency symbol) and an
+ * unbounded tax percentage overflowing the whole layout. Added maxLength
+ * to every free-text field, and a numeric clamp (in addition to the
+ * existing HTML min/max, which alone don't stop keyboard entry beyond the
+ * range) for Tax % and Kitchen Overdue Minutes.
+ *
+ * FIX (removed redundant "saved" text): the "All changes saved" /
+ * "Saves everything above..." toggling caption next to the Save button
+ * was redundant with both the toast shown on save and the now-accurate
+ * disabled/enabled button state. Replaced with a single static caption.
+ */
+
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { getSettings, updateSettings, uploadLogo } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -9,6 +35,25 @@ import type { Settings } from '../../types';
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 const PRESETS = ['#f97316','#e11d48','#8b5cf6','#0ea5e9','#10b981','#eab308','#6366f1','#f43f5e','#0f172a'];
 const OVERDUE_PRESETS = [10, 15, 20, 30, 45, 60];
+
+// ── Field limits ────────────────────────────────────────────────────────
+const LIMITS = {
+  restaurant_name: 60,
+  phone:           20,
+  address:         120,
+  bill_footer:     150,
+  currency_symbol: 4,
+  legal_name:      100,
+  sac_code:        8,
+  gstin:           15,
+};
+const TAX_MIN = 0, TAX_MAX = 30;
+const OVERDUE_MIN = 1, OVERDUE_MAX = 240;
+
+function clamp(n: number, min: number, max: number): number {
+  if (Number.isNaN(n)) return min;
+  return Math.min(max, Math.max(min, n));
+}
 
 // All Indian states/UTs with GST state codes
 const INDIAN_STATES: { name: string; code: string }[] = [
@@ -70,18 +115,20 @@ function SectionCard({
   );
 }
 
+type FormShape = Partial<Settings & {
+  logo_url?: string;
+  kitchen_overdue_mins?: string;
+  gstin?: string;
+  legal_name?: string;
+  state_name?: string;
+  sac_code?: string;
+  b2b_enabled?: string;
+}>;
+
 export default function AdminRestaurant() {
   const liveSettings = useSettings();
 
-  const [form, setForm] = useState<Partial<Settings & {
-    logo_url?: string;
-    kitchen_overdue_mins?: string;
-    gstin?: string;
-    legal_name?: string;
-    state_name?: string;
-    sac_code?: string;
-    b2b_enabled?: string;
-  }>>(() => ({
+  const initialForm: FormShape = {
     restaurant_name:      liveSettings.restaurant_name || '',
     address:              (liveSettings as any).address              || '',
     phone:                (liveSettings as any).phone                || '',
@@ -95,7 +142,9 @@ export default function AdminRestaurant() {
     state_name:           (liveSettings as any).state_name           || 'Kerala',
     sac_code:             (liveSettings as any).sac_code             || '9963',
     b2b_enabled:          (liveSettings as any).b2b_enabled          || 'false',
-  }));
+  };
+
+  const [form, setForm] = useState<FormShape>(() => initialForm);
 
   const [logoUrl,     setLogoUrl]     = useState<string>((liveSettings as any).logo_url || '');
   const [logoPreview, setLogoPreview] = useState<string>(
@@ -104,22 +153,32 @@ export default function AdminRestaurant() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [removeFlag,  setRemoveFlag]  = useState(false);
   const [saving,      setSaving]      = useState(false);
-  const [saved,       setSaved]       = useState(false);
+
+  // FIX (dirty-state tracking): snapshot of {form, logoUrl} as of the
+  // last load or successful save. The Save button is disabled whenever
+  // the current state exactly matches this baseline.
+  const [baseline, setBaseline] = useState<string>(() => JSON.stringify({ ...initialForm, logo_url: initialForm.logo_url || '' }));
+
   const logoRef = useRef<HTMLInputElement>(null);
   const toast   = useToast();
 
   useEffect(() => {
     getSettings().then(s => {
-      setForm(prev => ({
-        ...prev,
-        ...s,
-        kitchen_overdue_mins: (s as any).kitchen_overdue_mins || prev.kitchen_overdue_mins || '20',
-        gstin:       (s as any).gstin       || '',
-        legal_name:  (s as any).legal_name  || '',
-        state_name:  (s as any).state_name  || 'Kerala',
-        sac_code:    (s as any).sac_code    || '9963',
-        b2b_enabled: (s as any).b2b_enabled || 'false',
-      }));
+      setForm(prev => {
+        const next = {
+          ...prev,
+          ...s,
+          kitchen_overdue_mins: (s as any).kitchen_overdue_mins || prev.kitchen_overdue_mins || '20',
+          gstin:       (s as any).gstin       || '',
+          legal_name:  (s as any).legal_name  || '',
+          state_name:  (s as any).state_name  || 'Kerala',
+          sac_code:    (s as any).sac_code    || '9963',
+          b2b_enabled: (s as any).b2b_enabled || 'false',
+        };
+        const lurl = (s as any).logo_url as string;
+        setBaseline(JSON.stringify({ ...next, logo_url: lurl || '' }));
+        return next;
+      });
       const lurl = (s as any).logo_url as string;
       if (lurl) {
         setLogoUrl(lurl);
@@ -128,7 +187,17 @@ export default function AdminRestaurant() {
     }).catch(() => {});
   }, []);
 
-  const set = (k: string, v: string) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
+  const set = (k: string, v: string) => { setForm(f => ({ ...f, [k]: v })); };
+
+  // FIX: generic clamp-on-change for numeric fields — HTML's min/max on
+  // <input type="number"> only affects the spinner arrows, not the
+  // keyboard, so without this a user can freely type e.g. "1000000".
+  const setClamped = (k: 'tax_percent' | 'kitchen_overdue_mins', raw: string, min: number, max: number) => {
+    if (raw === '') { set(k, ''); return; } // allow temporarily empty while typing
+    const n = parseFloat(raw);
+    if (Number.isNaN(n)) return;
+    set(k, String(clamp(n, min, max)));
+  };
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -136,16 +205,21 @@ export default function AdminRestaurant() {
     setPendingFile(file);
     setLogoPreview(URL.createObjectURL(file));
     setRemoveFlag(false);
-    setSaved(false);
   };
 
   const handleRemoveLogo = () => {
     setPendingFile(null);
     setLogoPreview('');
     setRemoveFlag(true);
-    setSaved(false);
     if (logoRef.current) logoRef.current.value = '';
   };
+
+  // FIX: whether there's anything meaningful to save right now.
+  const isDirty = useMemo(() => {
+    if (pendingFile || removeFlag) return true;
+    const current = JSON.stringify({ ...form, logo_url: logoUrl || '' });
+    return current !== baseline;
+  }, [form, logoUrl, pendingFile, removeFlag, baseline]);
 
   const save = async () => {
     setSaving(true);
@@ -166,7 +240,9 @@ export default function AdminRestaurant() {
       }
       await updateSettings({ ...form, logo_url: finalLogoUrl } as any);
       toast('Settings saved', 'success');
-      setSaved(true);
+      // FIX: baseline now reflects what's actually saved, so the button
+      // immediately greys out again until the next real change.
+      setBaseline(JSON.stringify({ ...form, logo_url: finalLogoUrl || '' }));
     } catch {
       toast('Failed to save', 'error');
     } finally {
@@ -215,21 +291,37 @@ export default function AdminRestaurant() {
           <div className="space-y-3 min-w-0">
             <div>
               <label className="label">Restaurant Name</label>
-              <input className="input" placeholder="ABC Restaurant" value={(form.restaurant_name as string) || ''} onChange={e => set('restaurant_name', e.target.value)} />
+              <input
+                className="input" placeholder="ABC Restaurant" maxLength={LIMITS.restaurant_name}
+                value={(form.restaurant_name as string) || ''}
+                onChange={e => set('restaurant_name', e.target.value)}
+              />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="label">Phone Number</label>
-                <input className="input" placeholder="+91 98765 43210" value={(form.phone as string) || ''} onChange={e => set('phone', e.target.value)} />
+                <input
+                  className="input" placeholder="+91 98765 43210" maxLength={LIMITS.phone}
+                  value={(form.phone as string) || ''}
+                  onChange={e => set('phone', e.target.value)}
+                />
               </div>
               <div>
                 <label className="label">Address</label>
-                <input className="input" placeholder="123 Main Street" value={(form.address as string) || ''} onChange={e => set('address', e.target.value)} />
+                <input
+                  className="input" placeholder="123 Main Street" maxLength={LIMITS.address}
+                  value={(form.address as string) || ''}
+                  onChange={e => set('address', e.target.value)}
+                />
               </div>
             </div>
             <div>
               <label className="label">Bill Footer</label>
-              <input className="input" placeholder="Thank you for dining with us!" value={(form.bill_footer as string) || ''} onChange={e => set('bill_footer', e.target.value)} />
+              <input
+                className="input" placeholder="Thank you for dining with us!" maxLength={LIMITS.bill_footer}
+                value={(form.bill_footer as string) || ''}
+                onChange={e => set('bill_footer', e.target.value)}
+              />
             </div>
           </div>
         </div>
@@ -243,16 +335,20 @@ export default function AdminRestaurant() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="label">Currency Symbol</label>
-            <input className="input" value={(form.currency_symbol as string) || ''} onChange={e => set('currency_symbol', e.target.value)} />
+            <input
+              className="input" maxLength={LIMITS.currency_symbol}
+              value={(form.currency_symbol as string) || ''}
+              onChange={e => set('currency_symbol', e.target.value)}
+            />
           </div>
           <div>
             <label className="label">Tax % (GST)</label>
             <div className="relative">
               <input
                 className="input pr-9 font-mono"
-                type="number" min="0" max="30" step="0.5"
+                type="number" min={TAX_MIN} max={TAX_MAX} step="0.5"
                 value={(form.tax_percent as string) || ''}
-                onChange={e => set('tax_percent', e.target.value)}
+                onChange={e => setClamped('tax_percent', e.target.value, TAX_MIN, TAX_MAX)}
               />
               <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-500 text-sm pointer-events-none">%</span>
             </div>
@@ -282,7 +378,7 @@ export default function AdminRestaurant() {
             <input
               className="input font-mono uppercase"
               placeholder="22AAAAA0000A1Z5"
-              maxLength={15}
+              maxLength={LIMITS.gstin}
               value={(form.gstin as string) || ''}
               onChange={e => set('gstin', e.target.value.toUpperCase())}
             />
@@ -293,6 +389,7 @@ export default function AdminRestaurant() {
             <input
               className="input"
               placeholder="As per GST registration"
+              maxLength={LIMITS.legal_name}
               value={(form.legal_name as string) || ''}
               onChange={e => set('legal_name', e.target.value)}
             />
@@ -318,8 +415,10 @@ export default function AdminRestaurant() {
             <input
               className="input font-mono"
               placeholder="9963"
+              maxLength={LIMITS.sac_code}
+              inputMode="numeric"
               value={(form.sac_code as string) || '9963'}
-              onChange={e => set('sac_code', e.target.value)}
+              onChange={e => set('sac_code', e.target.value.replace(/\D/g, '').slice(0, LIMITS.sac_code))}
             />
             <p className="text-zinc-700 text-[10px] mt-1">9963 = Restaurant services (default)</p>
           </div>
@@ -420,10 +519,10 @@ export default function AdminRestaurant() {
           <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-raised border border-surface-border">
             <span className="text-zinc-500 text-xs flex-shrink-0">Custom</span>
             <input
-              type="number" min={1} max={240}
+              type="number" min={OVERDUE_MIN} max={OVERDUE_MAX}
               className="input py-1.5 text-xs font-mono flex-1"
               value={(form.kitchen_overdue_mins as string) || ''}
-              onChange={e => set('kitchen_overdue_mins', e.target.value)}
+              onChange={e => setClamped('kitchen_overdue_mins', e.target.value, OVERDUE_MIN, OVERDUE_MAX)}
             />
             <span className="text-zinc-500 text-xs flex-shrink-0">minutes</span>
           </div>
@@ -432,7 +531,11 @@ export default function AdminRestaurant() {
 
       {/* ── Single save action for the whole page ──────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 py-3 border-t border-surface-border">
-        <button className="btn btn-brand w-full sm:w-auto px-6 py-2.5 text-sm font-semibold flex items-center justify-center gap-2" onClick={save} disabled={saving}>
+        <button
+          className="btn btn-brand w-full sm:w-auto px-6 py-2.5 text-sm font-semibold flex items-center justify-center gap-2"
+          onClick={save}
+          disabled={saving || !isDirty}
+        >
           {saving ? (
             <>
               <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
@@ -447,17 +550,10 @@ export default function AdminRestaurant() {
             </>
           )}
         </button>
-        {saved && !saving && (
-          <span className="text-emerald-400 text-xs flex items-center justify-center gap-1.5">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-            </svg>
-            All changes saved
-          </span>
-        )}
-        {!saved && !saving && (
-          <span className="text-zinc-600 text-xs text-center sm:text-left">Saves everything above, including GST and branding</span>
-        )}
+        {/* FIX: removed the "All changes saved" flash — redundant with the
+            toast on save and the now-accurate disabled button state. Kept
+            a single static caption instead. */}
+        <span className="text-zinc-600 text-xs text-center sm:text-left">Saves everything above, including GST and branding</span>
       </div>
 
       {/* Admin Lock Settings */}

@@ -1,8 +1,13 @@
 /**
  * AdminLockSettings.tsx
  * Settings panel shown inside Admin > Restaurant to configure the admin lock.
+ *
+ * FIX: removed the transient "Saved" badge that flashed for 2s after
+ * toggling the lock on/off or changing the timeout. It was redundant —
+ * the toggle itself visibly updates instantly, there's no separate save
+ * step here to confirm — and the flashing text was distracting.
  */
-import React, { useState } from 'react';
+import React from 'react';
 import { useAdminLock } from '../../context/AdminLockContext';
 
 const TIMEOUTS = [
@@ -34,30 +39,17 @@ export function TogglePill({ enabled, onChange }: { enabled: boolean; onChange: 
 
 export default function AdminLockSettings() {
   const { config, setConfig } = useAdminLock();
-  const [saved, setSaved] = useState(false);
 
-  const flash = () => { setSaved(true); setTimeout(() => setSaved(false), 2000); };
-
-  const toggle = () => { setConfig({ ...config, enabled: !config.enabled }); flash(); };
-  const setTimeoutMins = (t: number) => { setConfig({ ...config, timeout_mins: t }); flash(); };
+  const toggle = () => { setConfig({ ...config, enabled: !config.enabled }); };
+  const setTimeoutMins = (t: number) => { setConfig({ ...config, timeout_mins: t }); };
 
   return (
     <div className="rounded-xl border border-surface-border bg-surface-card p-5">
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div>
-          <h3 className="font-bold text-white text-sm mb-0.5">Admin Panel Lock</h3>
-          <p className="text-zinc-500 text-xs leading-relaxed">
-            Require a PIN to access the Admin tab and to perform sensitive actions like downloading reports, exporting menus, connecting Google Drive, and resetting the app.
-          </p>
-        </div>
-        {saved && (
-          <span className="text-emerald-400 text-xs flex items-center gap-1 flex-shrink-0">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-            </svg>
-            Saved
-          </span>
-        )}
+      <div className="mb-4">
+        <h3 className="font-bold text-white text-sm mb-0.5">Admin Panel Lock</h3>
+        <p className="text-zinc-500 text-xs leading-relaxed">
+          Require a PIN to access the Admin tab and to perform sensitive actions like downloading reports, exporting menus, connecting Google Drive, and resetting the app.
+        </p>
       </div>
 
       {/* Enable toggle */}
