@@ -6,6 +6,10 @@ The app has two parts: a **backend** (Node.js server) and a **frontend** (React 
 The frontend needs to be *built* into static files before deployment. Once built, you only
 need Node.js on the restaurant computer — no npm, no compiling, no internet required to run.
 
+The database is **sql.js** (SQLite compiled to WASM), so there is no native module to build —
+this works out of the box on any OS/Node combination without Visual Studio, Xcode command line
+tools, or `windows-build-tools`.
+
 ---
 
 ## Step 1 — Build on YOUR computer (one time)
@@ -93,6 +97,23 @@ which means the URL you bookmark on phones stops working. **Do this once to make
 
 ---
 
+## Security — keep this on the local network only
+
+This app currently has **no protection against a hostile network** — the API auth token is
+served to any device that asks, and CORS is wide open. That's an acceptable tradeoff for a
+POS that only ever runs on a restaurant's own private WiFi, but it means:
+
+- **Never forward port 4000 (or 3000) on your router to the internet.**
+- **Do not set up a DDNS hostname or public domain pointing at this server.**
+- Keep the POS computer and all staff/kiosk devices on the restaurant's own WiFi — not a
+  network you don't control.
+- If you ever want staff or customers to reach this from outside the restaurant (remote
+  admin access, off-site ordering, etc.), that requires additional hardening first —
+  real per-request authentication, a restricted CORS policy, and HTTPS. Don't expose the
+  raw server publicly until that work is done.
+
+---
+
 ## Accessing from phones and tablets
 
 All devices must be on the **same Wi-Fi network** as the POS computer.
@@ -140,7 +161,8 @@ To have the POS start when the computer turns on:
 
 **Data lost after restart**
 → Data is in `backend/data/restaurant.db` — this file persists across restarts
-→ Back it up periodically by copying it to a USB drive
+→ Back it up periodically by copying it to a USB drive, or use the built-in
+  Local Auto-Backup / Google Drive Backup features under the Backup tab
 
 ---
 

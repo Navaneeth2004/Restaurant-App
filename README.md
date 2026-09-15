@@ -10,7 +10,7 @@ A full-stack Point of Sale system with real-time kitchen display, order manageme
 - A modern browser (Chrome recommended for kitchen display)
 - All devices must be on the **same Wi-Fi network**
 
-> **Windows users:** If you get a `better-sqlite3` error during install, see the fix below.
+> The database runs on **sql.js** (pure JavaScript/WASM SQLite) — there is **no native module to compile**, so `npm install` should just work on any platform, including Windows, without build tools of any kind.
 
 ---
 
@@ -30,28 +30,7 @@ cd ../frontend
 npm install
 ```
 
----
-
-### Step 1b — Windows fix for `better-sqlite3`
-
-If you see this error during `npm install` in the backend:
-```
-gyp ERR! find VS You need to install the latest version of Visual Studio
-```
-
-Run this command instead to install the prebuilt Windows binary:
-
-```bash
-cd backend
-npm install --ignore-scripts
-npm install better-sqlite3 --build-from-source=false
-```
-
-If that still fails, run this one-liner to install the Windows C++ build tools (only needed once):
-```bash
-npm install --global windows-build-tools
-```
-Then re-run `npm install` in the backend folder.
+Both installs are pure JavaScript — no compilation step, no Visual Studio / build tools required on any OS.
 
 ---
 
@@ -99,6 +78,14 @@ The app opens at **http://localhost:3000**
 
 ---
 
+## Security note — LAN only
+
+This app is built for **private use on a trusted local network** (the restaurant's own WiFi). The API token used for authentication is fetched by the browser automatically and is not hardened against a hostile network — anyone who can reach the server's IP on the LAN can reach the API.
+
+**Do not port-forward this app to the public internet or put it behind a public domain/DDNS as-is.** If you ever need remote/internet access, that requires additional work (proper per-request authentication, restricted CORS, HTTPS) before exposing it beyond your local network.
+
+---
+
 ## Default Login PINs
 
 | Role    | PIN  |
@@ -121,23 +108,29 @@ Change these in **Admin → Staff** after first login.
 
 ### Kitchen Display
 - All active orders shown as cards
-- Live timer on each order — turns red after 15 minutes
+- Live timer on each order — turns red after the configured overdue threshold
 - Sound chime on every new order (Web Audio, no files needed)
 - "Mark as Delivered" closes the order from kitchen
 
 ### Admin Panel
-- **Restaurant**: name, address, bill footer, currency, tax %, brand color
-- **Tables**: add/delete/edit tables with seat count
+- **Restaurant**: name, address, bill footer, currency, tax %, brand color, GST settings
+- **Tables**: add/delete/edit tables with seat count, drag to reorder, QR codes for customer self-ordering
 - **Menu Items**: add/edit/delete with image upload, description, price, category, availability toggle
 - **Categories**: add/rename/delete menu categories
 - **Staff**: add/remove staff with PIN and role
-- Admin can access all views (Waiter, Kitchen, Reports, Admin)
+- Admin can access all views (Waiter, Kitchen, Reports, Export, Backup, Admin)
 
 ### Reports
 - Today's revenue, order count, active orders, occupied tables
 - 30-day revenue bar chart
 - Top selling items today
-- Full order history with date filter
+- Full order history with date filter and search
+
+### Export
+- GSTR-1, GSTR-3B, and GSTR-9 GST filing exports/previews
+
+### Backup
+- Manual download/restore, local scheduled auto-backup, and Google Drive backup
 
 ---
 
@@ -146,8 +139,9 @@ Change these in **Admin → Staff** after first login.
 ```
 restaurant-pos/
 ├── backend/
-│   ├── db/database.js          # SQLite setup and seed data
+│   ├── db/database.js          # sql.js (SQLite via WASM) setup and seed data
 │   ├── middleware/attachIo.js  # Attaches socket.io to requests
+│   ├── middleware/auth.js      # Shared-secret API token auth
 │   ├── routes/
 │   │   ├── settings.js
 │   │   ├── categories.js
@@ -155,7 +149,13 @@ restaurant-pos/
 │   │   ├── tables.js
 │   │   ├── orders.js
 │   │   ├── staff.js
-│   │   └── reports.js
+│   │   ├── reports.js
+│   │   ├── export.js           # GST filing exports
+│   │   ├── backup.js           # Local + Google Drive backup
+│   │   ├── reset.js            # Factory reset
+│   │   ├── parcel.js           # Parcel/takeaway slots
+│   │   ├── kiosk.js            # Customer self-order QR flow
+│   │   └── bug-report.js
 │   ├── server.js               # Express + Socket.IO entry point
 │   └── package.json
 │
@@ -163,15 +163,15 @@ restaurant-pos/
 │   ├── .env                    # API URL config — edit this for your IP
 │   └── src/
 │       ├── components/         # Shared UI (LoginScreen, TopBar, BillModal)
-│       ├── context/            # Auth, Toast, Settings providers
-│       ├── hooks/              # useSocket, useTimer
-│       ├── services/           # api.js, socket.js
-│       ├── utils/sound.js      # Kitchen chime (Web Audio)
-│       └── views/              # WaiterView, KitchenView, AdminView, ReportsView
-│           └── admin/          # Admin sub-tabs
+│       ├── context/            # Auth, Toast, Settings, AdminLock providers
+│       ├── hooks/               # useSocket, useTick, useSortable
+│       ├── services/            # api.ts, socket.ts
+│       ├── utils/                # sound, diagnostics, sessions, authedFetch, etc.
+│       └── views/               # WaiterView, KitchenView, AdminView, ReportsView, ExportView, BackupView, KioskView
+│           └── admin/           # Admin sub-tabs
 │
-├── uploads/                    # Food item images stored here
-├── data/                       # SQLite database (auto-created on first run)
+├── uploads/                    # Food item images + logo stored here
+├── backend/data/                # SQLite database file (auto-created on first run)
 └── README.md
 ```
 
@@ -184,8 +184,8 @@ restaurant-pos/
 | Frontend | React 18 |
 | Real-time | Socket.IO (WebSocket) |
 | Backend | Node.js + Express |
-| Database | SQLite via better-sqlite3 |
-| File uploads | Multer 2 |
+| Database | SQLite via sql.js (pure JS/WASM — no native build step) |
+| File uploads | Multer |
 | HTTP client | Axios |
 
 ---
