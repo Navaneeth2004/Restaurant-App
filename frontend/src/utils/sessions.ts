@@ -31,6 +31,7 @@ export interface TableSession {
   customerPhone: string | null;
   customerGstin: string | null;
   orderType:     'dine_in' | 'parcel' | null;
+  editedAt:      string | null;
 }
 
 const LEGACY_SESSION_GAP_MS = 4 * 60 * 60 * 1000;
@@ -108,6 +109,8 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       if ((order as any).customer_name)  existing.customerName  = (order as any).customer_name;
       if ((order as any).customer_phone) existing.customerPhone = (order as any).customer_phone;
       if ((order as any).customer_gstin) existing.customerGstin = (order as any).customer_gstin;
+      const oe = (order as any).edited_at as string | null | undefined;
+      if (oe && (!existing.editedAt || oe > existing.editedAt)) existing.editedAt = oe;
 
       for (const item of order.items) {
         const itemKey = `${item.name}||${item.note || ''}||${item.price}`;
@@ -154,6 +157,7 @@ export function groupOrdersIntoSessions(orders: Order[]): TableSession[] {
       customerPhone:  (order as any).customer_phone  || null,
       customerGstin:  (order as any).customer_gstin  || null,
       orderType:      (order as any).order_type || null,
+      editedAt:       ((order as any).edited_at as string | null) || null,
     };
 
     if (hasAmountPaid) amountPaidOwnerTime[key] = orderTimeMs;

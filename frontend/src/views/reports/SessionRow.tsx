@@ -3,60 +3,47 @@
  *
  * Expandable row for a single dining session in the history list.
  *
- * FIX (round count): "N rounds" badge and the Rounds breakdown list now use
- * session.kitchenRounds (orders that actually went through the kitchen)
- * instead of session.orders (which also includes direct-bill orders that
- * never touched the kitchen). A session with 1 direct-bill order + 2 kitchen
- * rounds now correctly shows "2 rounds", not "3 rounds".
+ * NEW (edited indicator): if the payment/details of a visit were changed via
+ * "Edit Payment", the row shows an amber "Edited" badge and the expanded view
+ * shows exactly when it was last edited (session.editedAt, from the
+ * orders.edited_at column).
  *
- * FIX (parcel label): the summary row and header used to always render
- * "Table {tableId}", which read as "Table P1" for parcel/takeaway orders —
- * nonsensical since there's no physical table. Now uses tableDisplayLabel()
- * from utils/sessions, which renders "Parcel 1" for parcel ids.
+ * NEW (delete record): a red Delete button. It ALWAYS asks for the admin PIN
+ * (even if the Admin Lock setting is off), and the PIN is re-checked on the
+ * server. Deleting removes the whole visit permanently from history, revenue
+ * and GST reports.
  *
- * FIX (customer GSTIN): PaymentEditModal accepts a currentCustomerGstin prop
- * to pre-fill the field, but this component never passed it — so the GSTIN
- * input always rendered blank when editing an order that already had one
- * saved, even though the backend correctly preserves the stored value.
- * Also, session.customerGstin didn't exist until utils/sessions.ts was
- * fixed to track it — meaning a reprinted bill from History could never
- * show the customer's GSTIN even when it was correctly stored on the order.
- * Both are now wired through: the modal is pre-filled with the real saved
- * value, edits update local state via the existing onSaved callback param,
- * and the value is forwarded into ReprintBill's session object.
- *
- * REDESIGN NOTES (unchanged from before):
- * - Summary row no longer crams icon + title + badges + amount + chevron
- *   into a single flex line. Title/badges sit on their own row that's
- *   free to wrap; amount + chevron sit on a second row pinned right.
- * - Badges wrap onto multiple lines gracefully instead of forcing the
- *   row taller in a lopsided way.
- * - Expanded panel: items / totals / payment are now visually distinct
- *   blocks (separated by the card background changing slightly + clear
- *   section labels) instead of one continuous stack of thin rows.
- * - "Amount Paid" and the over/short banner are now a single highlighted
- *   block instead of two separate flex rows competing for attention.
+ * (All earlier fixes — kitchen-round count, parcel labels, customer GSTIN,
+ * backdating, amount paid block — are unchanged.)
  */
 
 import React, { useState } from 'react';
 import PaymentBadge    from './PaymentBadge';
 import ReprintBill     from './ReprintBill';
 import PaymentEditModal from '../../components/PaymentEditModal';
+import ConfirmModal    from '../../components/ConfirmModal';
+import { PinModal }    from '../../components/admin/PinModal';
+import { useToast }    from '../../context/ToastContext';
+import { authedJson }  from '../../utils/authedFetch';
 import { tableDisplayLabel } from '../../utils/sessions';
 import type { TableSession } from '../../utils/sessions';
+
+const API = process.env.REACT_APP_API_URL || window.location.origin;
 
 interface Props {
   session: TableSession;
   sym:     string;
   taxPct:  number;
   brand:   string;
+  /** Called after the visit was deleted on the server, with the removed order ids. */
+  onDeleted?: (orderIds: string[]) => void;
 }
 
-/**
- * Small pill badge for Dine In / Parcel.
- * Per spec: this is a testing-stage app, so orders with no recorded type
- * (null/undefined) just default to showing "Dine In" rather than blank.
- */
+function fmtEdited(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}, ${d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+}
+
 function OrderTypeBadge({ type }: { type: 'dine_in' | 'parcel' | null }) {
   const resolved = type === 'parcel' ? 'parcel' : 'dine_in';
   const isParcel = resolved === 'parcel';
@@ -89,7 +76,9 @@ function DiffBadge({ diff, sym }: { diff: number; sym: string }) {
   );
 }
 
-export default function SessionRow({ session, sym, taxPct, brand }: Props) {
+export default function SessionRow({ session, sym, taxPct, brand, onDeleted }: Props) {
+  const toast = useToast();
+
   const [expanded,        setExpanded]        = useState(false);
   const [showBill,        setShowBill]        = useState(false);
   const [showPaymentEdit, setShowPaymentEdit] = useState(false);
@@ -97,11 +86,17 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const [paymentDetails,  setPaymentDetails]  = useState<any>(session.paymentDetails);
   const [amountPaid, setAmountPaid] = useState<number | null>(session.amountPaid ?? null);
   const [orderType, setOrderType] = useState<'dine_in' | 'parcel' | null>(session.orderType ?? null);
-  // FIX: now backed by a real field on TableSession instead of always undefined.
   const [customerGstin, setCustomerGstin] = useState<string | null>(session.customerGstin ?? null);
-  // FIX: lets the displayed date/time update immediately after backdating
-  // a session via PaymentEditModal, without needing a full history reload.
   const [startedAt, setStartedAt] = useState<string>(session.startedAt);
+
+  // NEW: when this visit was last edited (null = never edited)
+  const [editedAt, setEditedAt] = useState<string | null>(session.editedAt ?? null);
+
+  // NEW: delete flow
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [pinOpen,       setPinOpen]       = useState(false);
+  const [deleting,      setDeleting]      = useState(false);
+  const [gone,          setGone]          = useState(false);
 
   const tax       = session.totalAmount * taxPct;
   const billTotal = session.totalAmount + tax;
@@ -110,14 +105,8 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
   const hasDiff   = Math.abs(paidDiff) >= 0.01;
 
   const date = new Date(startedAt);
-
-  // Display label — "Parcel 1" for parcel slots, "Table T1" otherwise.
   const displayLabel = tableDisplayLabel(session.tableId);
 
-  // FIX: round count / "multi-round" status is based on KITCHEN rounds only.
-  // Direct-bill orders never reach the kitchen, so they must not count as
-  // a "round" — a session with 1 direct-bill order + 2 kitchen rounds is
-  // "2 rounds", not 3.
   const kitchenRounds = session.kitchenRounds ?? [];
   const isMultiRound  = kitchenRounds.length > 1;
   const hasDirectBill = session.orders.length > kitchenRounds.length;
@@ -136,13 +125,39 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
     } catch {}
   }
 
+  const verifyAdminPin = async (pin: string): Promise<boolean> => {
+    try {
+      const data = await authedJson(`${API}/api/staff/check-pin`, {
+        method: 'POST',
+        body: JSON.stringify({ pin }),
+      });
+      return data.valid === true;
+    } catch { return false; }
+  };
+
+  const doDelete = async (pin: string) => {
+    setPinOpen(false);
+    setDeleting(true);
+    try {
+      const r = await authedJson<{ deleted_ids?: string[] }>(`${API}/api/orders/delete-records`, {
+        method: 'POST',
+        body: JSON.stringify({ order_ids: orderIds, pin }),
+      });
+      toast('Record deleted', 'success');
+      setGone(true);
+      onDeleted?.(r.deleted_ids && r.deleted_ids.length ? r.deleted_ids : orderIds);
+    } catch (e: any) {
+      toast(e.message || 'Delete failed', 'error');
+      setDeleting(false);
+    }
+  };
+
+  if (gone) return null;
+
   return (
     <>
       {showBill && (
         <ReprintBill
-          // FIX: forward the real customerGstin so a B2B reprint from
-          // History can actually display it — previously this field was
-          // structurally always undefined on TableSession.
           session={{ ...session, paymentMethod, paymentDetails, customerGstin, startedAt }}
           onClose={() => setShowBill(false)}
         />
@@ -154,7 +169,6 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
           currentAmountPaid={amountPaid}
           currentPaymentDetails={paymentDetails}
           currentOrderType={orderType}
-          // FIX: pre-fill with the real saved value instead of always blank.
           currentCustomerGstin={customerGstin}
           currentCreatedAt={startedAt}
           total={session.totalAmount}
@@ -162,35 +176,39 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
           onSaved={(newMethod, newDetails, newAmountPaid, newOrderType, newGstin, newCreatedAt) => {
             setPaymentMethod(newMethod);
             setPaymentDetails(newDetails ?? null);
-            if (typeof newAmountPaid === 'number') {
-              setAmountPaid(newAmountPaid);
-            }
-            if (newOrderType) {
-              setOrderType(newOrderType);
-            }
-            // FIX: keep local state in sync after a successful edit. The
-            // modal only sends a value when the field is non-empty (backend
-            // COALESCEs on undefined, i.e. leaves the stored value alone),
-            // so only overwrite local state when a real value comes back —
-            // otherwise a blank submission would wrongly wipe the
-            // already-displayed GSTIN even though nothing changed server-side.
-            if (newGstin) {
-              setCustomerGstin(newGstin);
-            }
-            if (newCreatedAt) {
-              setStartedAt(newCreatedAt);
-            }
+            if (typeof newAmountPaid === 'number') setAmountPaid(newAmountPaid);
+            if (newOrderType) setOrderType(newOrderType);
+            if (newGstin) setCustomerGstin(newGstin);
+            if (newCreatedAt) setStartedAt(newCreatedAt);
+            // The server stamps edited_at on save; mirror it locally right away.
+            setEditedAt(new Date().toISOString());
             setShowPaymentEdit(false);
           }}
         />
       )}
 
-      <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden hover:border-zinc-600 transition-colors">
-        {/* ── Summary row ──────────────────────────────────────────────
-            Two-tier layout: table id + meta sits left, badges flow
-            beneath the title on their own line, amount + chevron sit
-            in a fixed-width column on the right that never gets
-            squeezed by badge wrapping. */}
+      {confirmDelete && (
+        <ConfirmModal
+          title="Delete this record?"
+          message={`${displayLabel} · ${date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} · ${sym}${billTotal.toFixed(2)}. It will be permanently removed from history, revenue and GST reports and cannot be restored. A record of the deletion is kept in Reports → Deleted.`}
+          confirmLabel="Continue"
+          danger
+          onConfirm={() => { setConfirmDelete(false); setPinOpen(true); }}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
+      {pinOpen && (
+        <PinModal
+          title="Admin PIN Required"
+          subtitle="Enter the admin PIN to delete this record"
+          verifyFn={verifyAdminPin}
+          onSuccess={doDelete}
+          onCancel={() => setPinOpen(false)}
+        />
+      )}
+
+      <div className={`rounded-xl border border-surface-border bg-surface-card overflow-hidden hover:border-zinc-600 transition-colors ${deleting ? 'opacity-50 pointer-events-none' : ''}`}>
+        {/* ── Summary row ── */}
         <button
           className="w-full px-3.5 sm:px-4 py-3 text-left flex items-start gap-3"
           onClick={() => setExpanded(e => !e)}
@@ -215,6 +233,17 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
               )}
               {paymentMethod && <PaymentBadge method={paymentMethod} />}
               {hasDiff && <DiffBadge diff={paidDiff} sym={sym} />}
+              {editedAt && (
+                <span
+                  className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full border whitespace-nowrap bg-amber-500/10 text-amber-400 border-amber-500/30"
+                  title={`Edited ${fmtEdited(editedAt)}`}
+                >
+                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                  </svg>
+                  Edited
+                </span>
+              )}
             </div>
 
             {session.customerName && (
@@ -233,7 +262,6 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
             </div>
           </div>
 
-          {/* Amount + chevron — fixed-width right column, never wraps */}
           <div className="flex-shrink-0 flex items-start gap-2 pl-1">
             <div className="text-right leading-tight">
               {hasDiff ? (
@@ -256,9 +284,20 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
           </div>
         </button>
 
-        {/* ── Expanded detail ──────────────────────────────────────────── */}
+        {/* ── Expanded detail ── */}
         {expanded && (
           <div className="border-t border-surface-border">
+            {/* Edited notice */}
+            {editedAt && (
+              <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-2 text-xs">
+                <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                </svg>
+                <span className="text-amber-400 font-semibold">This record was edited</span>
+                <span className="text-zinc-400">{fmtEdited(editedAt)}</span>
+              </div>
+            )}
+
             {/* Customer info */}
             {(session.customerName || session.customerPhone || customerGstin) && (
               <div className="px-4 pt-3 pb-3 border-b border-surface-border/60">
@@ -308,7 +347,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
               </div>
             </div>
 
-            {/* Totals block — distinct surface so it reads as its own card */}
+            {/* Totals */}
             <div className="mx-4 mb-3.5 rounded-lg bg-surface-raised/60 border border-surface-border/60 overflow-hidden">
               <div className="px-3.5 py-3 space-y-1">
                 <div className="flex justify-between text-xs text-zinc-500">
@@ -325,10 +364,9 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                 </div>
               </div>
 
-              {/* Amount paid — own highlighted strip, color reflects match/short/over */}
               <div className={`px-3.5 py-2.5 border-t flex items-center justify-between gap-2 ${
                 hasDiff
-                  ? (paidDiff < 0 ? 'bg-red-500/8 border-red-500/15' : 'bg-blue-500/8 border-blue-500/15')
+                  ? (paidDiff < 0 ? 'bg-red-500/8 border-red-500/15' : 'bg-blue-500/10 border-blue-500/15')
                   : 'bg-emerald-500/8 border-emerald-500/15'
               }`}>
                 <div>
@@ -374,9 +412,7 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
               )}
             </div>
 
-            {/* Rounds breakdown — kitchen rounds only; direct-bill orders are
-                folded into the bill silently elsewhere, matching how the
-                waiter-side OrderContent/TotalsBar already treat them. */}
+            {/* Kitchen rounds */}
             {kitchenRounds.length > 0 && (
               <div className="px-4 pb-3.5 pt-3 border-t border-surface-border/60">
                 <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-2">
@@ -423,6 +459,15 @@ export default function SessionRow({ session, sym, taxPct, brand }: Props) {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
                 </svg>
                 {paymentMethod ? 'Edit Payment' : 'Add Payment'}
+              </button>
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/25 text-red-400 text-xs font-semibold hover:bg-red-500/20 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                </svg>
+                Delete
               </button>
             </div>
           </div>

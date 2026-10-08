@@ -27,10 +27,11 @@ import { useSettings } from '../context/SettingsContext';
 
 import AnalyticsTab from './reports/AnalyticsTab';
 import HistoryTab   from './reports/HistoryTab';
+import DeletedTab   from './reports/DeletedTab';
 
 import type { ReportSummary, RevenueDay } from '../types';
 
-type Section = 'analytics' | 'history';
+type Section = 'analytics' | 'history' | 'deleted';
 
 export default function ReportsView() {
   const [section, setSection] = useState<Section>('analytics');
@@ -90,6 +91,7 @@ export default function ReportsView() {
           {([
             { key: 'analytics', label: 'Analytics' },
             { key: 'history',   label: 'History'   },
+            { key: 'deleted',   label: 'Deleted'   },
           ] as { key: Section; label: string }[]).map(({ key, label }) => (
             <button
               key={key}
@@ -118,6 +120,7 @@ export default function ReportsView() {
         {section === 'history' && (
           <HistoryTab sym={sym} taxPct={taxPct} brand={brand} />
         )}
+        {section === 'deleted' && <DeletedTab sym={sym} />}
       </div>
     </div>
   );

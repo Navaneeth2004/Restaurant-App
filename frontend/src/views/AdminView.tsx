@@ -22,7 +22,7 @@ export default function AdminView() {
   const [tab, setTab] = useState<AdminTab>('floor');
 
   const content: Record<AdminTab, React.ReactNode> = {
-    floor:      <AdminFloor />,
+    floor:      <div className="floor-theme-root h-full"><AdminFloor /></div>,
     restaurant: <AdminRestaurant />,
     tables:     <AdminTables />,
     menu: (

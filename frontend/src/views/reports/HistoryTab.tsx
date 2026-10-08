@@ -169,6 +169,10 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
     loadHistory(t, t);
   };
 
+  const handleDeleted = useCallback((ids: string[]) => {
+    setHistory(prev => prev.filter(o => !ids.includes(o.id)));
+  }, []);
+
   const allSessions = useMemo(() => groupOrdersIntoSessions(history), [history]);
 
   const sessions = useMemo(() => {
@@ -324,6 +328,7 @@ export default function HistoryTab({ sym, taxPct, brand }: Props) {
               sym={sym}
               taxPct={taxPct}
               brand={brand}
+              onDeleted={handleDeleted}
             />
           ))}
         </div>

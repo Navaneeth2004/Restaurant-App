@@ -16,6 +16,29 @@ const db      = require('../db/database');
   try { db.exec(`ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'dine_in'`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN customer_gstin TEXT DEFAULT NULL`); } catch (_) {}
   try { db.exec(`ALTER TABLE orders ADD COLUMN tax_percent_snapshot REAL DEFAULT NULL`); } catch (_) {}
+  try { db.exec(`ALTER TABLE orders ADD COLUMN edited_at TEXT DEFAULT NULL`); } catch (_) {}
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS deleted_records (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      deleted_at     TEXT NOT NULL,
+      deleted_by     TEXT,
+      table_id       TEXT,
+      table_label    TEXT,
+      visit_at       TEXT,
+      order_count    INTEGER DEFAULT 1,
+      subtotal       REAL DEFAULT 0,
+      bill_total     REAL DEFAULT 0,
+      amount_paid    REAL,
+      payment_method TEXT,
+      order_type     TEXT,
+      customer_name  TEXT,
+      customer_phone TEXT,
+      customer_gstin TEXT,
+      was_edited     INTEGER DEFAULT 0,
+      edited_at      TEXT,
+      items_json     TEXT
+    )`);
+  } catch (_) {}
 })();
 
 const _pendingTables = new Set();
@@ -518,6 +541,9 @@ router.patch('/:id/payment', (req, res) => {
            paidAmount, orderType,
            targetId);
 
+    const editedAt = new Date().toISOString();
+    db.prepare('UPDATE orders SET edited_at = ? WHERE id = ?').run(editedAt, targetId);
+
     if (order.session_id) {
       db.prepare(`
         UPDATE orders
@@ -557,11 +583,117 @@ router.patch('/:id/payment', (req, res) => {
       }
     }
 
-    res.json({ success: true });
+    res.json({ success: true, edited_at: editedAt });
   } catch (err) {
     console.error('[Orders] Payment update error:', err.message);
     res.status(500).json({ error: `Failed to update payment: ${err.message}` });
   }
+});
+
+// ── Admin-only permanent delete of CLOSED visits (+ audit log) ────────────
+let _bcrypt = null;
+try { _bcrypt = require('bcryptjs'); } catch (_) {}
+
+async function findAdminByPin(raw) {
+  const admins = db.prepare("SELECT name, pin FROM staff WHERE role = 'admin' AND active = 1").all();
+  for (const a of admins) {
+    const stored = String(a.pin || '');
+    if (_bcrypt && (stored.startsWith('$2a$') || stored.startsWith('$2b$'))) {
+      if (await _bcrypt.compare(String(raw), stored)) return a.name;
+    } else if (String(raw) === stored) {
+      return a.name;
+    }
+  }
+  return null;
+}
+
+router.post('/delete-records', async (req, res) => {
+  const { order_ids, pin } = req.body || {};
+  if (!Array.isArray(order_ids) || order_ids.length === 0) {
+    return res.status(400).json({ error: 'order_ids required' });
+  }
+  const adminName = pin ? await findAdminByPin(pin) : null;
+  if (!adminName) return res.status(403).json({ error: 'Incorrect admin PIN' });
+
+  try {
+    const deletedIds = db.transaction(() => {
+      const getOrder   = db.prepare('SELECT * FROM orders WHERE id = ?');
+      const getSession = db.prepare("SELECT * FROM orders WHERE table_id = ? AND session_id = ? AND status = 'closed' ORDER BY created_at ASC");
+      const getItems   = db.prepare('SELECT name, price, quantity, note FROM order_items WHERE order_id = ?');
+      const getLabel   = db.prepare('SELECT label FROM tables WHERE id = ?');
+      const insLog     = db.prepare(`INSERT INTO deleted_records
+        (deleted_at, deleted_by, table_id, table_label, visit_at, order_count, subtotal, bill_total,
+         amount_paid, payment_method, order_type, customer_name, customer_phone, customer_gstin,
+         was_edited, edited_at, items_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      const delItems   = db.prepare('DELETE FROM order_items WHERE order_id = ?');
+      const delOrder   = db.prepare('DELETE FROM orders WHERE id = ?');
+
+      const groups = new Map();
+      for (const id of order_ids) {
+        const o = getOrder.get(String(id));
+        if (!o || o.status !== 'closed') continue;
+        const key = o.session_id ? `${o.table_id}|${o.session_id}` : `single|${o.id}`;
+        if (groups.has(key)) continue;
+        groups.set(key, o.session_id ? getSession.all(o.table_id, o.session_id) : [o]);
+      }
+
+      const removed = [];
+      const now = new Date().toISOString();
+      for (const orders of groups.values()) {
+        if (!orders.length) continue;
+        const first = orders[0];
+
+        const merged = new Map();
+        for (const o of orders) {
+          for (const it of getItems.all(o.id)) {
+            const k = `${it.name}||${it.note || ''}||${it.price}`;
+            const ex = merged.get(k);
+            if (ex) ex.quantity += it.quantity;
+            else merged.set(k, { name: it.name, price: it.price, quantity: it.quantity, note: it.note || '' });
+          }
+        }
+
+        const subtotal = orders.reduce((s, o) => s + (o.total || 0), 0);
+        const snap     = orders.find(o => typeof o.tax_percent_snapshot === 'number');
+        const rate     = snap ? snap.tax_percent_snapshot : getTaxPercent() * 100;
+        const rev      = [...orders].reverse();
+        const paid     = rev.find(o => o.amount_paid != null);
+        const payer    = rev.find(o => o.payment_method);
+        const pick     = f => (orders.find(o => o[f]) || {})[f] || null;
+        const editedAt = orders.map(o => o.edited_at).filter(Boolean).sort().pop() || null;
+        const label    = (getLabel.get(first.table_id) || {}).label || first.table_id;
+
+        insLog.run(
+          now, adminName, first.table_id, label,
+          first.created_at, orders.length, subtotal, subtotal * (1 + rate / 100),
+          paid ? paid.amount_paid : null, payer ? payer.payment_method : null,
+          pick('order_type'), pick('customer_name'), pick('customer_phone'), pick('customer_gstin'),
+          editedAt ? 1 : 0, editedAt, JSON.stringify([...merged.values()])
+        );
+
+        for (const o of orders) { delItems.run(o.id); delOrder.run(o.id); removed.push(o.id); }
+      }
+      return removed;
+    })();
+
+    console.log(`[Orders] ${adminName} deleted ${deletedIds.length} closed order(s) from history`);
+    req.io.emit('tables_updated');
+    res.json({ success: true, deleted_ids: deletedIds });
+  } catch (err) {
+    console.error('[Orders] Delete records error:', err.message);
+    res.status(500).json({ error: `Failed to delete: ${err.message}` });
+  }
+});
+
+// GET /api/orders/log/deleted — the audit log shown in Reports → Deleted
+router.get('/log/deleted', (req, res) => {
+  const rows = db.prepare('SELECT * FROM deleted_records ORDER BY id DESC LIMIT 500').all();
+  rows.forEach(r => {
+    try { r.items = JSON.parse(r.items_json || '[]'); } catch { r.items = []; }
+    delete r.items_json;
+  });
+  res.json(rows);
 });
 
 module.exports = router;

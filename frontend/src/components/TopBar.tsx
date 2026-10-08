@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useAdminLock } from '../context/AdminLockContext';
 import ConfirmModal from './ConfirmModal';
+import ThemeToggle from './ThemeToggle';
 import type { ViewType, UserRole } from '../types';
 
 interface NavItem { key: ViewType; label: string; roles: UserRole[]; }
@@ -112,6 +113,8 @@ export default function TopBar({ view, setView }: Props) {
               <div className="text-[10px] text-zinc-500 capitalize">{user?.role}</div>
             </div>
           </div>
+
+          <ThemeToggle />
 
           <button
             onClick={() => setShowLogoutConfirm(true)}

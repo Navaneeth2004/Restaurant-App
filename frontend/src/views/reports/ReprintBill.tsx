@@ -57,28 +57,6 @@ export default function ReprintBill({ session, onClose }: Props) {
       className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex flex-col md:items-center md:justify-center md:p-4 overflow-hidden"
       onClick={onClose}
     >
-      <style>{`
-        @media print {
-          @page { size: 80mm auto; margin: 0; }
-          * { -webkit-print-color-adjust: economy !important; print-color-adjust: economy !important; }
-          body * { visibility: hidden !important; }
-          .bill-print-area, .bill-print-area * { visibility: visible !important; }
-          .bill-print-area {
-            position: fixed !important; top: 0 !important; left: 0 !important;
-            width: 100% !important; max-width: 100% !important;
-            border-radius: 0 !important; box-shadow: none !important;
-            max-height: none !important; overflow: visible !important;
-            background: #ffffff !important; padding: 4mm 4mm 6mm !important;
-          }
-          .bill-scroll { overflow: visible !important; max-height: none !important; }
-          .no-print { display: none !important; }
-          .bill-header { background: #ffffff !important; background-color: #ffffff !important; background-image: none !important; padding: 8px 0 10px !important; }
-          .bill-header * { color: #111111 !important; background: transparent !important; }
-          .bill-print-area div, .bill-print-area span, .bill-print-area p { color: #111111 !important; }
-          body { background: white !important; }
-        }
-      `}</style>
-
       <div
         className="bill-print-area flex flex-col bg-white w-full h-full md:h-auto md:max-w-sm md:rounded-2xl overflow-hidden shadow-2xl md:max-h-[92vh]"
         onClick={e => e.stopPropagation()}

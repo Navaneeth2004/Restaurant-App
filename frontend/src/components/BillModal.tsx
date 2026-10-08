@@ -1,19 +1,3 @@
-/**
- * BillModal.tsx
- *
- * FIX (#11): the waiter-tab print output looked different (some grey text
- * illegible/odd on the white print background) from the report-section
- * print (ReprintBill.tsx), because ReprintBill.tsx embeds its own local
- * <style> block with a BLANKET `color: #111111 !important` rule on every
- * text node inside .bill-print-area, while this file relied entirely on
- * index.css's global print block, which only targets specific muted-grey
- * inline color strings via attribute selectors — any grey shade in
- * BillItems.tsx not covered by those exact strings stayed grey-on-white.
- * Copied ReprintBill.tsx's same local <style> approach here so both print
- * paths are now visually identical and self-contained (don't depend on
- * index.css's attribute-selector matching at all).
- */
-
 import React from 'react';
 import { useSettings }          from '../context/SettingsContext';
 import { closeOrderWithPayment } from '../services/api';
@@ -174,37 +158,6 @@ export default function BillModal({
 
   return (
     <>
-      {/* FIX (#11): local print stylesheet, mirroring ReprintBill.tsx's
-          proven approach — blanket black text on everything inside
-          .bill-print-area, instead of relying on index.css's fragile
-          attribute-selector-matched grey overrides. */}
-      <style>{`
-        @media print {
-          @page { size: 80mm auto; margin: 0; }
-          * { -webkit-print-color-adjust: economy !important; print-color-adjust: economy !important; }
-          body * { visibility: hidden !important; }
-          .bill-print-area, .bill-print-area * { visibility: visible !important; }
-          .bill-print-area {
-            position: fixed !important; top: 0 !important; left: 0 !important;
-            width: 100% !important; max-width: 100% !important;
-            border-radius: 0 !important; box-shadow: none !important;
-            max-height: none !important; overflow: visible !important; height: auto !important;
-            background: #ffffff !important; padding: 4mm 4mm 6mm !important;
-          }
-          .bill-items-wrapper {
-            display: flex !important; flex-direction: column !important;
-            flex: 1 1 auto !important; min-height: 0 !important; overflow: visible !important;
-          }
-          .payment-tab-print-hide { display: none !important; }
-          .bill-header { background: #ffffff !important; background-color: #ffffff !important; background-image: none !important; padding: 8px 0 10px !important; }
-          .bill-header * { color: #111111 !important; background: transparent !important; }
-          .bill-print-area div, .bill-print-area span, .bill-print-area p,
-          .bill-print-area td, .bill-print-area th { color: #111111 !important; }
-          .no-print { display: none !important; }
-          body { background: white !important; }
-        }
-      `}</style>
-
       {showPaymentWarn && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
           onClick={() => setShowPaymentWarn(false)}>

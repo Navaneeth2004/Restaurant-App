@@ -639,7 +639,7 @@ export default function WaiterView() {
               <CatTabs categories={categories} activeCatId={activeCatId} setActiveCatId={setActiveCatId} />
             </div>
             <div className="flex-1 overflow-y-auto p-3">
-              <MenuGrid filtered={filtered} cart={cart} selectedTable={selectedTable} sym={sym} addToCart={addToCart} cols="grid-cols-2" />
+              <MenuGrid filtered={filtered} cart={cart} selectedTable={selectedTable} sym={sym} addToCart={addToCart} updateQty={updateQty} inlineControls cols="grid-cols-2" />
             </div>
           </div>
         )}
