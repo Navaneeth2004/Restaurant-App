@@ -41,6 +41,7 @@ router.post('/', (req, res) => {
       // ── Orders ───────────────────────────────────────────────────────
       db.prepare('DELETE FROM order_items').run();
       db.prepare('DELETE FROM orders').run();
+      try { db.prepare('DELETE FROM deleted_records').run(); } catch (_) {}
 
       // ── Staff sessions (force everyone to log in fresh) ───────────────
       try { db.prepare('DELETE FROM staff_sessions').run(); } catch (_) {}

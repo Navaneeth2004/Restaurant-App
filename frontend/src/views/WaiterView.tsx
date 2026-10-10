@@ -438,13 +438,18 @@ export default function WaiterView() {
       <div className="relative group">
         <button
           onClick={() => selectTable(table)}
-          className={`w-full rounded-xl border p-3 text-left transition-all duration-150 cursor-pointer select-none flex flex-col ${statusClass} ${selectedRing}`}
-          style={{ minHeight: 96 }}
+          className={`w-full rounded-2xl border p-3.5 text-left transition-all duration-150 cursor-pointer select-none flex flex-col ${statusClass} ${selectedRing}`}
+          style={{ minHeight: 108 }}
         >
-          <div className={`font-mono font-bold text-base leading-none ${parcel ? 'text-indigo-300' : 'text-white'}`}>{table.id}</div>
-          <div className="text-zinc-500 text-[10px] mt-1 truncate leading-snug">{table.label}</div>
-          <div className="mt-auto flex flex-col gap-1 items-start">
-            <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border ${badge.cls}`}>{badge.text}</span>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className={`font-mono font-bold text-xl leading-none ${parcel ? 'text-indigo-300' : 'text-white'}`}>{table.id}</div>
+              <div className="text-zinc-400 text-xs mt-1.5 truncate leading-snug">{table.label}</div>
+            </div>
+            <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full mt-1 ${dotColor}`} />
+          </div>
+          <div className="mt-auto pt-3 flex flex-wrap items-center justify-between gap-1.5">
+            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${badge.cls}`}>{badge.text}</span>
             {table.occupied_since && table.status !== 'empty' && (
               <TableTimer since={table.occupied_since} compact />
             )}
@@ -457,7 +462,7 @@ export default function WaiterView() {
 
   const TableList = ({ mobile = false }: { mobile?: boolean }) => (
     <div className="flex flex-col gap-3">
-      <div className={mobile ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-2 gap-2'}>
+      <div className={mobile ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-2 gap-2.5'}>
         {dineInTables.map(t => <TableButton key={t.id} table={t} mobile={mobile} />)}
       </div>
 
@@ -469,7 +474,7 @@ export default function WaiterView() {
             </p>
             <div className="h-px flex-1 bg-indigo-500/15" />
           </div>
-          <div className={mobile ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-2 gap-2'}>
+          <div className={mobile ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-2 gap-2.5'}>
             {parcelSlots.map(t => <TableButton key={t.id} table={t} mobile={mobile} />)}
           </div>
         </div>
@@ -517,11 +522,11 @@ export default function WaiterView() {
       )}
 
       <div className="hidden md:flex h-full w-full overflow-hidden">
-        <aside className="w-44 xl:w-52 flex-shrink-0 flex flex-col border-r border-surface-border bg-surface-card">
+        <aside className="w-48 lg:w-56 xl:w-72 flex-shrink-0 flex flex-col border-r border-surface-border bg-surface-card">
           <div className="px-3 py-2.5 border-b border-surface-border">
             <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Tables</p>
           </div>
-          <div className="flex-1 overflow-y-auto p-2">
+          <div className="flex-1 overflow-y-auto p-3">
             <TableList />
           </div>
         </aside>

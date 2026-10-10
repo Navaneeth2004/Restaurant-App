@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import DeviceGate from './components/DeviceGate';
+import { authedFetch } from './utils/authedFetch';
 import { ToastProvider }          from './context/ToastContext';
 import { SettingsProvider }        from './context/SettingsContext';
 import { AdminLockProvider, useAdminLock } from './context/AdminLockContext';
@@ -122,7 +124,7 @@ function Shell() {
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
 
-async function verifyPinFn(pin: string): Promise<boolean> {
+async function verifyPinFnLegacy(pin: string): Promise<boolean> {
   try {
     const tokenRes = await fetch(`${API_BASE}/api/auth/token`);
     const tokenData = await tokenRes.json();
@@ -131,6 +133,20 @@ async function verifyPinFn(pin: string): Promise<boolean> {
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${API_BASE}/api/staff/check-pin`, {
       method: 'POST', headers, body: JSON.stringify({ pin }),
+    });
+    const data = await res.json();
+    return data.valid === true;
+  } catch {
+    return false;
+  }
+}
+
+async function verifyPinFn(pin: string): Promise<boolean> {
+  try {
+    const res = await authedFetch(`${API_BASE}/api/staff/check-pin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin }),
     });
     const data = await res.json();
     return data.valid === true;
@@ -150,14 +166,16 @@ export default function App() {
   }
 
   return (
-    <AuthProvider>
-      <SettingsProvider>
-        <ToastProvider>
-          <AdminLockProvider verifyPin={verifyPinFn}>
-            <Shell />
-          </AdminLockProvider>
-        </ToastProvider>
-      </SettingsProvider>
-    </AuthProvider>
+    <DeviceGate>
+      <AuthProvider>
+        <SettingsProvider>
+          <ToastProvider>
+            <AdminLockProvider verifyPin={verifyPinFn}>
+              <Shell />
+            </AdminLockProvider>
+          </ToastProvider>
+        </SettingsProvider>
+      </AuthProvider>
+    </DeviceGate>
   );
 }

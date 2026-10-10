@@ -4,42 +4,7 @@ const express = require('express');
 const router  = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const db      = require('../db/database');
-
-(function migrate() {
-  try { db.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT NULL`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN payment_details TEXT DEFAULT NULL`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN change_amount REAL DEFAULT 0`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN customer_name TEXT DEFAULT NULL`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT DEFAULT NULL`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN session_id TEXT DEFAULT NULL`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN amount_paid REAL DEFAULT NULL`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'dine_in'`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN customer_gstin TEXT DEFAULT NULL`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN tax_percent_snapshot REAL DEFAULT NULL`); } catch (_) {}
-  try { db.exec(`ALTER TABLE orders ADD COLUMN edited_at TEXT DEFAULT NULL`); } catch (_) {}
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS deleted_records (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      deleted_at     TEXT NOT NULL,
-      deleted_by     TEXT,
-      table_id       TEXT,
-      table_label    TEXT,
-      visit_at       TEXT,
-      order_count    INTEGER DEFAULT 1,
-      subtotal       REAL DEFAULT 0,
-      bill_total     REAL DEFAULT 0,
-      amount_paid    REAL,
-      payment_method TEXT,
-      order_type     TEXT,
-      customer_name  TEXT,
-      customer_phone TEXT,
-      customer_gstin TEXT,
-      was_edited     INTEGER DEFAULT 0,
-      edited_at      TEXT,
-      items_json     TEXT
-    )`);
-  } catch (_) {}
-})();
+const ctx     = require('../core/context');
 
 const _pendingTables = new Set();
 const _closingOrders = new Set();
@@ -147,8 +112,9 @@ router.post('/', (req, res) => {
   const { table_id, items } = req.body;
   if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
 
-  if (_pendingTables.has(table_id)) return res.status(409).json({ error: 'Order already being processed. Please wait.' });
-  _pendingTables.add(table_id);
+  const lockKey = `${ctx.get().restaurantId}:${table_id}`;
+  if (_pendingTables.has(lockKey)) return res.status(409).json({ error: 'Order already being processed. Please wait.' });
+  _pendingTables.add(lockKey);
 
   try {
     let order, isNew;
@@ -216,7 +182,7 @@ router.post('/', (req, res) => {
     console.error('[Orders] Submit error:', err.message);
     res.status(500).json({ error: 'Failed to save order. Please try again.' });
   } finally {
-    _pendingTables.delete(table_id);
+    _pendingTables.delete(lockKey);
   }
 });
 
@@ -225,8 +191,9 @@ router.post('/direct-bill', (req, res) => {
   const { table_id, items } = req.body;
   if (!table_id || !items || !items.length) return res.status(400).json({ error: 'table_id and items required' });
 
-  if (_pendingTables.has(table_id)) return res.status(409).json({ error: 'Order already being processed. Please wait.' });
-  _pendingTables.add(table_id);
+  const lockKey = `${ctx.get().restaurantId}:${table_id}`;
+  if (_pendingTables.has(lockKey)) return res.status(409).json({ error: 'Order already being processed. Please wait.' });
+  _pendingTables.add(lockKey);
 
   try {
     const order = db.transaction(() => {
@@ -264,7 +231,7 @@ router.post('/direct-bill', (req, res) => {
     console.error('[Orders] Direct-bill error:', err.message);
     res.status(500).json({ error: 'Failed to create direct-bill order.' });
   } finally {
-    _pendingTables.delete(table_id);
+    _pendingTables.delete(lockKey);
   }
 });
 
@@ -415,7 +382,7 @@ router.patch('/:id/close', (req, res) => {
   const orderRow = db.prepare('SELECT table_id, session_id FROM orders WHERE id = ?').get(orderId);
   if (!orderRow) return res.status(404).json({ error: 'Order not found' });
 
-  const lockKey = `table:${orderRow.table_id}`;
+  const lockKey = `table:${ctx.get().restaurantId}:${orderRow.table_id}`;
 
   if (_closingOrders.has(lockKey)) {
     return res.status(409).json({ error: 'This table is already being closed. Please wait.' });

@@ -3,20 +3,10 @@
 const express  = require('express');
 const router   = express.Router();
 const { v4: uuidv4 } = require('uuid');
-const crypto   = require('crypto');
 const os       = require('os');
 const db       = require('../db/database');
-
-(function migrate() {
-  try {
-    db.exec(`ALTER TABLE tables ADD COLUMN kiosk_token TEXT DEFAULT NULL`);
-    console.log('[Kiosk] Migrated tables: added kiosk_token column');
-  } catch (_) { /* column already exists */ }
-})();
-
-function generateToken() {
-  return crypto.randomBytes(24).toString('base64url');
-}
+const ctx = require('../core/context');
+const generateToken = require('../core/kiosk-token');
 
 function ensureToken(tableId) {
   const row = db.prepare('SELECT kiosk_token FROM tables WHERE id = ?').get(tableId);
@@ -78,6 +68,7 @@ function recalcTotal(orderId) {
 }
 
 router.get('/lan-ip', (req, res) => {
+  if (process.env.DEPLOYMENT !== 'local') return res.json({ ip: null });
   const ip = getLanIp();
   res.json({ ip });
 });
@@ -188,10 +179,11 @@ router.post('/:token/order', (req, res) => {
     });
   }
 
-  if (_pendingKiosk.has(table_id)) {
+  const lockKey = `${ctx.get().restaurantId}:${table_id}`;
+  if (_pendingKiosk.has(lockKey)) {
     return res.status(409).json({ error: 'Order already being processed. Please wait.' });
   }
-  _pendingKiosk.add(table_id);
+  _pendingKiosk.add(lockKey);
 
   try {
     let order, isNew;
@@ -278,7 +270,7 @@ router.post('/:token/order', (req, res) => {
     console.error('[Kiosk] Order error:', err.message);
     res.status(500).json({ error: 'Failed to place order. Please try again.' });
   } finally {
-    _pendingKiosk.delete(table_id);
+    _pendingKiosk.delete(lockKey);
   }
 });
 

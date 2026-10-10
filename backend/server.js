@@ -1,147 +1,193 @@
+'use strict';
 require('dotenv').config();
 
-const express    = require('express');
-const http       = require('http');
+const express = require('express');
+const http = require('http');
 const { Server } = require('socket.io');
-const cors       = require('cors');
-const path       = require('path');
-const fs         = require('fs');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 
-const app    = express();
+const cfg = require('./core/config');
+const central = require('./core/central');          // creates DATA_DIR + accounts.db
+const tenants = require('./core/tenants');
+const ctx = require('./core/context');
+const db = require('./db/database');
+const { gate } = require('./middleware/auth');
+const attachIo = require('./middleware/attachIo');
+const {
+  DEVICE_COOKIE, STAFF_COOKIE, parseCookies, findDevice, activeRestaurant,
+} = require('./core/devices');
+const { resolveStaff } = require('./core/staff-auth');
+
+const app = express();
 const server = http.createServer(app);
-const io     = new Server(server, { cors: { origin: '*' } });
-const PORT   = process.env.PORT || 4000;
+const PORT = process.env.PORT || 4000;
 
-const auth = require('./middleware/auth');
-auth.init();
+app.disable('x-powered-by');
+if (cfg.TRUST_PROXY) app.set('trust proxy', cfg.TRUST_PROXY);
 
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
-app.use(auth.middleware);
-app.use(require('./middleware/attachIo')(io));
+const corsOn = cfg.CORS_ORIGINS.length > 0;
+const io = new Server(server, {
+  cors: corsOn ? { origin: cfg.CORS_ORIGINS, credentials: true } : undefined,
+});
 
+// ── Basic security headers ────────────────────────────────────────────────
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'SAMEORIGIN');
+  res.set('Referrer-Policy', 'same-origin');
+  if (cfg.COOKIE_SECURE) res.set('Strict-Transport-Security', 'max-age=15552000');
+  next();
+});
+app.use(cors(corsOn ? { origin: cfg.CORS_ORIGINS, credentials: true } : { origin: false }));
+
+// ── API: gate first (device + staff), then body parsing ───────────────────
+// Public/unauthenticated endpoints get a tiny body limit; logged-in ones 10 MB
+// (bug reports can include a screenshot).
+const smallJson = express.json({ limit: '20kb' });
+const bigJson   = express.json({ limit: '10mb' });
+const bigForm   = express.urlencoded({ limit: '10mb', extended: true });
+
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+app.use('/api', gate);
+app.use('/api', (req, res, next) => (req._smallBody ? smallJson : bigJson)(req, res, next));
+app.use('/api', (req, res, next) => (req._smallBody ? next() : bigForm(req, res, next)));
+app.use('/api', attachIo(io));
+
+// Uploaded images (BATCH 2: becomes per-restaurant)
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
-// ── LAN IP helper (also used at startup banner + by /api/network-info) ────
-function getLanIp() {
-  const { networkInterfaces } = require('os');
-  const candidates = [];
-  for (const iface of Object.values(networkInterfaces())) {
-    for (const net of iface) {
-      if (net.family !== 'IPv4' || net.internal) continue;
-      const ip = net.address;
-      if (ip.startsWith('192.168.') || ip.startsWith('10.') || /^172\.(1[6-9]|2\d|3[01])\./.test(ip))
-        candidates.push(ip);
-    }
-  }
-  return candidates.find(ip => ip.startsWith('192.168.')) || candidates.find(ip => ip.startsWith('10.')) || candidates[0] || null;
-}
-
-// FIX (kiosk QR / "site can't be reached" on phone):
-// The admin UI previously built the kiosk URL from window.location.origin,
-// which is http://localhost:4000 when viewed on the host PC. "localhost"
-// only ever means "this device" — a phone on the same WiFi can never reach
-// someone else's localhost, so the QR code (and the copied link) pointed
-// nowhere from any other device. This endpoint reports the LAN IP the
-// server is actually bound to (0.0.0.0), so the frontend can build a URL
-// that works from any device on the network, not just the host PC.
-app.get('/api/network-info', (req, res) => {
-  res.json({ lan_ip: getLanIp(), port: PORT });
-});
-
-io.on('connection', socket => {
-  console.log('[Socket] Connected:', socket.id);
-  socket.on('disconnect', () => console.log('[Socket] Disconnected:', socket.id));
-});
-
-function startMdns() {
+// ── Realtime: every socket is placed in its restaurant's room ─────────────
+io.use((socket, next) => {
   try {
-    const { Bonjour } = require('bonjour-service');
-    const bonjour = new Bonjour();
-    bonjour.publish({ name: 'Restaurant POS', type: 'http', port: PORT });
-    console.log('  \x1b[92m\x1b[1m[+]\x1b[0m \x1b[97mmDNS        \x1b[0m \x1b[96madvertising as restaurant.local\x1b[0m');
-    process.on('exit', () => bonjour.destroy());
-  } catch (_) {}
-}
-
-async function start() {
-  const db = require('./db/database');
-  await db.init();
-
-  // ── Load routes AFTER db.init() so route module migrations can run safely ──
-  app.use('/api/auth',                require('./middleware/auth').tokenRouter());
-  app.use('/api/settings',            require('./routes/settings'));
-  app.use('/api/categories',          require('./routes/categories'));
-  app.use('/api/menu',                require('./routes/menu'));
-  app.use('/api/tables',              require('./routes/tables'));
-  app.use('/api/orders',              require('./routes/orders'));
-  app.use('/api/staff',               require('./routes/staff'));
-  app.use('/api/reports',             require('./routes/reports'));
-  app.use('/api/export',              require('./routes/export'));
-  app.use('/api/backup',              require('./routes/backup'));
-  app.use('/api/reset',               require('./routes/reset'));
-  app.use('/api/parcel',              require('./routes/parcel'));
-  app.use('/api/bug-report',          require('./routes/bug-report'));
-  app.use('/api/kiosk',               require('./routes/kiosk'));
-
-  // ── Frontend SPA catch-all (after all API routes) ──
-  const buildDir = path.join(__dirname, '..', 'frontend', 'build');
-  if (fs.existsSync(buildDir)) {
-    app.use(express.static(buildDir));
-    app.get('*', (req, res) => {
-      if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads'))
-        res.sendFile(path.join(buildDir, 'index.html'));
-    });
-    console.log('[Server] Serving frontend from', buildDir);
-  } else {
-    console.log('[Server] No frontend build found.');
-  }
-
-  server.listen(PORT, '0.0.0.0', () => {
-    const lanIp = getLanIp();
-    const c = { reset:'\x1b[0m', bold:'\x1b[1m', dim:'\x1b[2m', bGreen:'\x1b[92m', bCyan:'\x1b[96m', bYellow:'\x1b[93m', white:'\x1b[97m', gray:'\x1b[90m' };
-    const G=c.bGreen+c.bold, Y=c.bYellow+c.bold, CY=c.bCyan, DIM=c.dim+c.gray, R=c.reset;
-    const visLen = s => s.replace(/\x1b\[[0-9;]*m/g,'').length;
-    const INNER=52;
-    const row = s => `  ${DIM}║${R} ${s}${' '.repeat(Math.max(0,INNER-visLen(s)))} ${DIM}║${R}`;
-    const blank=row(''), sep=`  ${DIM}╠${'═'.repeat(INNER+2)}╣${R}`;
-    const top=`  ${DIM}╔${'═'.repeat(INNER+2)}╗${R}`, bot=`  ${DIM}╚${'═'.repeat(INNER+2)}╝${R}`;
-    const htop=`  ${DIM}+${'─'.repeat(INNER+2)}+${R}`;
-    const ok=(l,v)=>`  ${G}[+]${R} ${c.white}${l.padEnd(12)}${R} ${CY}${v}${R}`;
-
-    console.log('');
-    console.log(htop);
-    console.log(row(`${Y}RESTAURANT POS${R} ${c.gray}-- Point of Sale${R}`));
-    console.log(htop);
-    console.log('');
-    console.log(ok('Database','loaded'));
-    console.log(ok('Frontend','ready'));
-    console.log(ok('Socket.IO','ready'));
-    console.log(ok('Kiosk QR','enabled'));
-    console.log('');
-    console.log(top); console.log(blank);
-    console.log(row(`${G}>> POS IS LIVE -- Ready for orders!${R}`));
-    console.log(blank); console.log(sep); console.log(blank);
-    console.log(row(`${DIM}This PC   :${R} ${CY}http://localhost:${PORT}${R}`));
-    if (lanIp) {
-      console.log(row(`${DIM}Network   :${R} ${CY}http://${lanIp}:${PORT}${R}`));
-      console.log(row(`${DIM}            ${R} ${c.gray}(use this URL on phones/tablets)${R}`));
-    } else {
-      console.log(row(`${Y}Network   : No LAN IP detected${R}`));
+    const cookies = parseCookies(socket.handshake.headers.cookie);
+    const device = findDevice(cookies[DEVICE_COOKIE]);
+    if (device) {
+      const r = activeRestaurant(device.restaurant_id);
+      if (!r || !r.active) return next(new Error('unauthorized'));
+      socket.data.deviceId = device.id;
+      socket.data.restaurantId = r.id;
+      const staff = ctx.run({ restaurantId: r.id, device }, () => resolveStaff(cookies[STAFF_COOKIE]));
+      if (staff) {
+        socket.data.staffId = staff.id;
+        socket.join(`t:${r.id}`);
+      }
+      return next();
     }
-    console.log(row(`${DIM}Easy URL  :${R} ${CY}http://restaurant.local:${PORT}${R}`));
-    console.log(blank); console.log(sep); console.log(blank);
-    console.log(row(`${Y}!! Keep this window open.${R}`));
-    console.log(row(`${c.gray}   Closing it shuts down the POS.${R}`));
-    console.log(blank); console.log(bot);
-    console.log('');
-    console.log(`  ${DIM}${'─'.repeat(22)} live log ${'─'.repeat(22)}${R}`);
-    console.log('');
-    startMdns();
-  });
+    // Customer phone that scanned a table QR: it may only hear about ITS table
+    const kt = socket.handshake.auth && socket.handshake.auth.kiosk;
+    if (kt) {
+      const rid = tenants.restaurantIdFromKioskToken(kt);
+      const restaurant = rid ? activeRestaurant(rid) : null;
+      if (!restaurant || !restaurant.active) return next(new Error('unauthorized'));
+      const row = ctx.run({ restaurantId: rid }, () =>
+        db.prepare('SELECT id FROM tables WHERE kiosk_token = ?').get(kt));
+      if (!row) return next(new Error('unauthorized'));
+      socket.data.restaurantId = rid;
+      socket.data.tableId = row.id;
+      socket.join(`t:${rid}:table:${row.id}`);
+      return next();
+    }
+    next(new Error('unauthorized'));
+  } catch (err) {
+    console.error('[Socket] Authentication error:', err.message);
+    next(new Error('unauthorized'));
+  }
+});
+
+io.promoteDevice = (deviceId, restaurantId, staffId) => {
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.deviceId === deviceId && socket.data.restaurantId === restaurantId) {
+      socket.data.staffId = staffId;
+      socket.join(`t:${restaurantId}`);
+    }
+  }
+};
+io.demoteDevice = (deviceId, restaurantId) => {
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.deviceId === deviceId && socket.data.restaurantId === restaurantId) {
+      socket.data.staffId = null;
+      socket.leave(`t:${restaurantId}`);
+    }
+  }
+};
+io.demoteStaff = (restaurantId, staffId) => {
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.restaurantId === restaurantId && socket.data.staffId === staffId) {
+      socket.data.staffId = null;
+      socket.leave(`t:${restaurantId}`);
+    }
+  }
+};
+io.revokeDevice = (deviceId) => {
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.deviceId === deviceId) socket.disconnect(true);
+  }
+};
+
+// ── Routes ────────────────────────────────────────────────────────────────
+app.use('/api/auth',       require('./routes/auth'));
+app.use('/api/settings',   require('./routes/settings'));
+app.use('/api/categories', require('./routes/categories'));
+app.use('/api/menu',       require('./routes/menu'));
+app.use('/api/tables',     require('./routes/tables'));
+app.use('/api/orders',     require('./routes/orders'));
+app.use('/api/staff',      require('./routes/staff'));
+app.use('/api/reports',    require('./routes/reports'));
+app.use('/api/export',     require('./routes/export'));
+app.use('/api/parcel',     require('./routes/parcel'));
+app.use('/api/bug-report', require('./routes/bug-report'));
+app.use('/api/kiosk',      require('./routes/kiosk'));
+
+// Backup and factory reset still use shared files; BATCH 2 makes them per-restaurant.
+// Until then they are switched off in cloud mode so one restaurant can never touch another's files.
+if (cfg.DEPLOYMENT === 'cloud') {
+  const off = (req, res) => res.status(501).json({ error: 'This feature is being upgraded for the cloud version.' });
+  app.use('/api/backup', off);
+  app.use('/api/reset', off);
+} else {
+  app.use('/api/backup', require('./routes/backup'));
+  app.use('/api/reset',  require('./routes/reset'));
 }
 
-start().catch(err => { console.error('[Server] Failed to start:', err); process.exit(1); });
+// ── Frontend (single page app) ────────────────────────────────────────────
+const buildDir = path.join(__dirname, '..', 'frontend', 'build');
+if (fs.existsSync(buildDir)) {
+  app.use(express.static(buildDir));
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
+      res.sendFile(path.join(buildDir, 'index.html'));
+    }
+  });
+  console.log('[Server] Serving frontend from', buildDir);
+} else {
+  console.log('[Server] No frontend build found.');
+}
+
+// Unknown API path / unexpected error: always JSON, never a stack trace
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+app.use((err, req, res, next) => {
+  console.error('[Server] Unhandled error:', err.message);
+  if (res.headersSent) return next(err);
+  res.status(err.status || 500).json({ error: err.status && err.status < 500 ? err.message : 'Something went wrong.' });
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  const owners = central.prepare('SELECT COUNT(*) AS c FROM owners').get().c;
+  const rests  = central.prepare('SELECT COUNT(*) AS c FROM restaurants').get().c;
+  console.log(`\n  Restaurant POS (${cfg.DEPLOYMENT}) listening on port ${PORT}`);
+  console.log(`  Data folder: ${cfg.DATA_DIR}`);
+  console.log(`  ${owners} owner(s), ${rests} restaurant(s)`);
+  console.log(`  Secure cookies: ${cfg.COOKIE_SECURE ? 'ON' : 'OFF (development only!)'}\n`);
+});
+
+function shutdown() {
+  console.log('[Server] Shutting down…');
+  server.close(() => { tenants.closeAll(); central.close(); process.exit(0); });
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

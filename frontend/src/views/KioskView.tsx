@@ -219,7 +219,7 @@ export default function KioskView({ token }: { token: string }) {
       }
     })();
 
-    const sock = io(API || window.location.origin, { transports: ['websocket', 'polling'] });
+    const sock = io(API || window.location.origin, { transports: ['websocket', 'polling'], auth: { kiosk: token } });
     socketRef.current = sock;
 
     const isForeignSession = (order: Order): boolean => {

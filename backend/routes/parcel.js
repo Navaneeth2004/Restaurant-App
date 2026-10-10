@@ -3,64 +3,18 @@
 /**
  * backend/routes/parcel.js
  *
- * FIX: Migration no longer runs as an IIFE at module load time.
- * It runs lazily on the first request, by which point the DB is
- * guaranteed to be ready. This fixes:
- *   TypeError: Cannot read properties of null (reading 'exec')
- *
- * How to call the migration from server.js (add after DB is confirmed ready):
- *   require('./routes/parcel').runMigration();
- * Or just leave it lazy — it auto-runs on the first parcel API call.
+ * Table schema and migrations are initialized for each restaurant database
+ * by core/schema.js before this router handles requests.
  */
 
 const express = require('express');
 const router  = express.Router();
-const crypto  = require('crypto');
+const generateToken = require('../core/kiosk-token');
 
 // db is required lazily inside functions so it's always initialized by then
 function getDb() {
   return require('../db/database');
 }
-
-// ── Migration — runs once, lazily ────────────────────────────────────────
-let _migrated = false;
-
-function runMigration() {
-  if (_migrated) return;
-  const db = getDb();
-  try {
-    const cols = db.prepare('PRAGMA table_info(tables)').all().map(c => c.name);
-    if (!cols.includes('is_parcel')) {
-      db.exec('ALTER TABLE tables ADD COLUMN is_parcel INTEGER DEFAULT 0');
-      console.log('[Parcel] Migration: added is_parcel column');
-    }
-    if (!cols.includes('is_archived')) {
-      db.exec('ALTER TABLE tables ADD COLUMN is_archived INTEGER DEFAULT 0');
-      console.log('[Parcel] Migration: added is_archived column');
-      // Mark any slots already created with P-style ids
-      db.exec("UPDATE tables SET is_parcel = 1 WHERE id GLOB 'P[0-9]*'");
-    }
-    if (!cols.includes('customer_name')) {
-      db.exec('ALTER TABLE tables ADD COLUMN customer_name TEXT DEFAULT NULL');
-      console.log('[Parcel] Migration: added customer_name column');
-    }
-    if (!cols.includes('customer_phone')) {
-      db.exec('ALTER TABLE tables ADD COLUMN customer_phone TEXT DEFAULT NULL');
-      console.log('[Parcel] Migration: added customer_phone column');
-    }
-    _migrated = true;
-  } catch (err) {
-    console.error('[Parcel] Migration error:', err.message);
-  }
-}
-
-// Middleware that ensures migration has run before any parcel route executes
-function ensureMigrated(req, res, next) {
-  runMigration();
-  next();
-}
-
-router.use(ensureMigrated);
 
 // ── Helper ────────────────────────────────────────────────────────────────
 function nextParcelId() {
@@ -98,7 +52,7 @@ router.post('/slot', (req, res) => {
       'INSERT INTO tables (id, label, seats, status, sort_order, is_parcel, is_archived, customer_name, customer_phone) VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)'
     ).run(id, label, 0, 'empty', maxOrder + 1, customer_name?.trim() || null, customer_phone?.trim() || null);
 
-    const token = crypto.randomBytes(24).toString('base64url');
+    const token = generateToken();
     db.prepare('UPDATE tables SET kiosk_token = ? WHERE id = ?').run(token, id);
 
     const table = db.prepare('SELECT * FROM tables WHERE id = ?').get(id);
@@ -150,4 +104,3 @@ router.delete('/slot/:id', (req, res) => {
 });
 
 module.exports = router;
-module.exports.runMigration = runMigration;

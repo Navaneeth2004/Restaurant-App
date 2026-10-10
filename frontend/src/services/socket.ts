@@ -1,18 +1,14 @@
 import { io, Socket } from 'socket.io-client';
 
-// In production (served from backend), connect to same origin.
-// In dev, use REACT_APP_API_URL.
+// Served from the backend: same origin. In dev, setupProxy.js forwards /socket.io to the backend.
 const BACKEND = process.env.REACT_APP_API_URL || window.location.origin;
 
 let socket: Socket | null = null;
 
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io(BACKEND, { transports: ['websocket', 'polling'] });
-    // FIX (#6.2): diagnostics.ts reads window.__pos_socket_connected for
-    // bug-report diagnostics, but nothing anywhere ever set it — every
-    // report showed the socket as disconnected regardless of actual
-    // state. Set it here so it reflects reality.
+    // withCredentials sends the device cookie, which tells the server which restaurant's events we may hear
+    socket = io(BACKEND, { transports: ['websocket', 'polling'], withCredentials: true });
     socket.on('connect', () => {
       (window as any).__pos_socket_connected = true;
       console.log('[Socket] Connected', socket?.id);

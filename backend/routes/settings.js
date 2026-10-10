@@ -21,6 +21,7 @@ const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 }, fileFilt
 router.get('/', (req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  delete settings.gdrive_credentials;
   res.json(settings);
 });
 
@@ -29,6 +30,7 @@ router.put('/', (req, res) => {
   const update = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
   const updateMany = db.transaction((data) => {
     for (const [key, value] of Object.entries(data)) {
+      if (key === 'gdrive_credentials') continue;
       update.run(key, String(value));
     }
   });

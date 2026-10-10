@@ -1,15 +1,18 @@
 {
   "name": "restaurant-pos-backend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "main": "server.js",
+  "engines": { "node": ">=18" },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "import-legacy": "node scripts/import-legacy.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.10",
     "archiver": "^6.0.2",
     "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
     "bonjour-service": "^1.2.1",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
@@ -19,7 +22,6 @@
     "nodemailer": "^9.0.0",
     "qrcode": "^1.5.4",
     "socket.io": "^4.7.4",
-    "sql.js": "^1.12.0",
     "uuid": "^9.0.0",
     "xlsx": "^0.18.5"
   }

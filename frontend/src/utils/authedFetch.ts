@@ -1,120 +1,44 @@
 /**
  * utils/authedFetch.ts
  *
- * Single shared source of truth for the API auth token. Every other file
- * that previously did its own token fetch/cache (services/api.ts,
- * AuthContext.tsx, LoginScreen.tsx, AdminLockContext.tsx, BugReportView.tsx,
- * AdminCategories.tsx, AdminFloor.tsx, ExportView.tsx) now imports getToken
- * from here instead.
+ * CLOUD VERSION: the browser no longer fetches or sends an API token. Access is
+ * carried by two httpOnly cookies the server sets itself:
+ *   - pos_device : this browser is linked to a restaurant (owner login or pairing code)
+ *   - pos_staff  : a staff member entered their PIN
+ * JavaScript can't read them (so injected scripts can't steal them), and the browser sends
+ * them automatically on same-origin requests.
  *
- * FIX (two real caching bugs):
- * 1. The old cache used `_token: string | null`, checked with
- *    `if (_token !== null) return _token`. When auth is DISABLED
- *    server-side, /api/auth/token legitimately returns { token: null },
- *    which that check treated as "not fetched yet" — so every single
- *    request re-fetched the token forever in that deployment mode.
- * 2. services/api.ts's version of this seeded the failure/disabled case
- *    with '' instead of null, avoiding bug #1, but introducing a worse
- *    one: if the very FIRST call to /api/auth/token failed for any
- *    transient network reason, the catch set the cache to '' and the
- *    `!== null` guard treated that as "already fetched" forever — every
- *    subsequent API call went out unauthenticated and got 401'd for the
- *    rest of the page's life, with no retry, requiring a full reload.
+ * getToken()/resetTokenCache() are kept (as no-ops) so existing imports keep compiling.
  *
- * Fix: use a proper tri-state cache.
- *   - `undefined` = never successfully resolved yet → always fetch.
- *   - `null`      = server explicitly confirmed auth is disabled
- *                    (response included `disabled: true`) → safe to
- *                    cache forever, this is a real, stable answer.
- *   - a string    = the real token → cache forever.
- * A network/parse failure is NEVER cached — it always retries on the
- * next call, so a transient blip can't permanently break auth for the
- * rest of the session.
- *
- * Usage:
- *   import { authedFetch, authedJson, getToken, resetTokenCache } from '../utils/authedFetch';
- *
- *   const data = await authedJson('/api/settings');
- *   const res  = await authedFetch('/api/export/menu');
+ * If the server says this device is no longer linked (revoked / suspended) we fire a
+ * "pos-device-lost" event and <DeviceGate> shows the connect screen again.
  */
 
-const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
+export async function getToken(): Promise<string | null> { return null; }
+export function resetTokenCache(): void {}
 
-let _token: string | null | undefined = undefined; // undefined = not yet resolved
-let _authDisabled = false;
-
-/**
- * Fetches the API token (cached in memory). Safe to call from anywhere —
- * concurrent callers before the first resolution will each trigger their
- * own fetch (acceptable; this endpoint is cheap and unauthenticated), but
- * once any call succeeds, all subsequent calls return instantly from cache.
- */
-export async function getToken(): Promise<string | null> {
-  if (_authDisabled) return null;
-  if (_token !== undefined) return _token;
-
-  try {
-    const res  = await fetch(`${API_BASE}/api/auth/token`);
-    const data = await res.json();
-
-    if (data?.disabled) {
-      _authDisabled = true;
-      _token = null;
-      return null;
+function notifyIfDeviceLost(res: Response): void {
+  if (res.status !== 401 && res.status !== 403) return;
+  res.clone().json().then((d: any) => {
+    if (d && (d.code === 'device_required' || d.code === 'restaurant_suspended')) {
+      window.dispatchEvent(new Event('pos-device-lost'));
     }
-
-    _token = data?.token ?? null;
-    return _token;
-  } catch {
-    // FIX: do NOT cache a failure — leave _token as undefined so the
-    // next call retries instead of permanently going unauthenticated.
-    return null;
-  }
+  }).catch(() => {});
 }
 
-/**
- * Clears the cached token/disabled-state so the next call re-fetches from
- * the server. Useful after a server restart where the token may have
- * rotated, or if auth gets re-enabled without a full page reload.
- */
-export function resetTokenCache(): void {
-  _token = undefined;
-  _authDisabled = false;
+export async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {
+  const res = await fetch(url, { credentials: 'include', ...opts });
+  notifyIfDeviceLost(res);
+  return res;
 }
 
-/**
- * fetch() wrapper that automatically injects the Authorization header.
- * Merges any headers you pass in with the auth header.
- */
-export async function authedFetch(
-  url: string,
-  opts: RequestInit = {}
-): Promise<Response> {
-  const token = await getToken();
-  const headers: Record<string, string> = {
-    ...(opts.headers as Record<string, string> ?? {}),
-  };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  return fetch(url, { ...opts, headers });
-}
-
-/**
- * Like authedFetch but:
- *   - Sets Content-Type: application/json automatically
- *   - Parses the response as JSON
- *   - Throws with the server error message if response is not ok
- */
-export async function authedJson<T = any>(
-  url: string,
-  opts: RequestInit = {}
-): Promise<T> {
-  const token = await getToken();
+export async function authedJson<T = any>(url: string, opts: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(opts.headers as Record<string, string> ?? {}),
+    ...((opts.headers as Record<string, string>) ?? {}),
   };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(url, { ...opts, headers });
+  const res = await fetch(url, { credentials: 'include', ...opts, headers });
+  notifyIfDeviceLost(res);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as any).error || `Error ${res.status}`);
