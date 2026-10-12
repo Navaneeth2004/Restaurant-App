@@ -1,7 +1,21 @@
 'use strict';
 
+const crypto = require('crypto');
+
 function normalizePhone(value) {
   return String(value || '').replace(/\D/g, '').slice(-15);
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function newRestaurantId() {
+  return crypto.randomBytes(5).toString('hex');
 }
 
 function pinProblem(value) {
@@ -13,4 +27,4 @@ function pinProblem(value) {
   return null;
 }
 
-module.exports = { normalizePhone, pinProblem };
+module.exports = { normalizePhone, pinProblem, sha256, nowIso, newRestaurantId };

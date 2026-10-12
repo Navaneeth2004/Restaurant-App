@@ -6,10 +6,8 @@ const archiver = require('archiver');
 const path     = require('path');
 const fs       = require('fs');
 const db       = require('../db/database');
-
-// ── Paths ─────────────────────────────────────────────────────────────────
-const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const files    = require('../core/files');
+const ctx      = require('../core/context');
 
 // ── Multer for zip uploads ────────────────────────────────────────────────
 const zipUpload = multer({
@@ -90,10 +88,10 @@ router.get('/menu', (req, res) => {
   const imageFiles = items
     .filter(i => i.image_path)
     .map(i => ({
-      disk: path.join(__dirname, '..', '..', i.image_path),
+      disk: files.resolveUpload(req.restaurantId, i.image_path),
       zip:  `images/${path.basename(i.image_path)}`,
     }))
-    .filter(f => fs.existsSync(f.disk));
+    .filter(f => f.disk && fs.existsSync(f.disk));
 
   const dateStr = new Date().toISOString().split('T')[0];
 
@@ -113,10 +111,11 @@ router.post(
   '/menu/import',
   (req, res, next) => {
     const ct = req.headers['content-type'] || '';
+    const done = (e) => (req._ctx ? ctx.run(req._ctx, () => next(e)) : next(e));
     if (ct.includes('multipart/form-data')) {
-      zipUpload.single('menuzip')(req, res, next);
+      zipUpload.single('menuzip')(req, res, done);
     } else {
-      express.json({ limit: '2mb' })(req, res, next);
+      express.json({ limit: '2mb' })(req, res, done);
     }
   },
   async (req, res) => {
@@ -132,12 +131,15 @@ router.post(
         const parsed = JSON.parse(jsonEntry.getData().toString('utf8'));
         categories = parsed.categories;
         items      = parsed.items;
+        const rid = req.restaurantId;
         zip.getEntries().forEach(entry => {
           if (entry.entryName.startsWith('images/') && !entry.isDirectory) {
             const filename = path.basename(entry.entryName);
-            const dest     = path.join(uploadsDir, filename);
-            if (!fs.existsSync(dest)) { fs.writeFileSync(dest, entry.getData()); imagesImported++; }
-            imageMap[filename] = `/uploads/${filename}`;
+            if (!files.isAllowedName(filename) || entry.header.size > 5 * 1024 * 1024) return;
+            const stored = files.newName('item', path.extname(filename));
+            fs.writeFileSync(path.join(files.uploadsDir(rid), stored), entry.getData());
+            imagesImported++;
+            imageMap[filename] = files.publicUrl(rid, stored);
           }
         });
       } else {

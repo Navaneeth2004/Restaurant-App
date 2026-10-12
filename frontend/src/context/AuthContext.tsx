@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { getToken as getSharedToken } from '../utils/authedFetch';
+import { joinStaffRoom, leaveStaffRoom } from '../services/socket';
 import type { AuthUser } from '../types';
 
 interface AuthCtx {
@@ -73,6 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const forceLogout = useCallback(() => {
     stopHeartbeat();
+    leaveStaffRoom();
     setUser(null);
     setSessionToken(null);
     setKickedOut(true);
@@ -99,12 +101,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setValidating(false);
     sessionStorage.setItem('pos_user', JSON.stringify(u));
     sessionStorage.setItem('pos_session_token', token);
+    joinStaffRoom(u.id, token);
     startHeartbeat(u.id, token);
   }, [startHeartbeat]);
 
   const logout = useCallback(async () => {
     const { user: u, sessionToken: t } = stateRef.current;
     stopHeartbeat();
+    leaveStaffRoom();
     if (u && t) {
       try { await authedPost('/api/staff/logout', { staffId: u.id, sessionToken: t }); }
       catch { /* best-effort */ }
@@ -150,11 +154,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSessionToken(null);
         setKickedOut(true);
       } else {
+        joinStaffRoom(parsedUser!.id, storedToken);
         startHeartbeat(parsedUser!.id, storedToken);
       }
       setValidating(false);
     }).catch(() => {
       if (!cancelled) {
+        joinStaffRoom(parsedUser!.id, storedToken);
         startHeartbeat(parsedUser!.id, storedToken);
         setValidating(false);
       }

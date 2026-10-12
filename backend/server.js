@@ -13,6 +13,7 @@ const central = require('./core/central');          // creates DATA_DIR + accoun
 const tenants = require('./core/tenants');
 const ctx = require('./core/context');
 const db = require('./db/database');
+const files = require('./core/files');
 const { gate } = require('./middleware/auth');
 const attachIo = require('./middleware/attachIo');
 const {
@@ -55,10 +56,13 @@ app.use('/api', (req, res, next) => (req._smallBody ? smallJson : bigJson)(req, 
 app.use('/api', (req, res, next) => (req._smallBody ? next() : bigForm(req, res, next)));
 app.use('/api', attachIo(io));
 
-// Uploaded images (BATCH 2: becomes per-restaurant)
-const uploadsDir = path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-app.use('/uploads', express.static(uploadsDir));
+// Restaurant uploads use opaque names under each restaurant's own directory.
+app.get('/uploads/:restaurantId/:name', (req, res) => {
+  if (!files.isRestaurantId(req.params.restaurantId)) return res.sendStatus(404);
+  const file = files.resolveUpload(req.params.restaurantId, req.params.name);
+  if (!file || !fs.existsSync(file)) return res.sendStatus(404);
+  res.sendFile(file);
+});
 
 // ── Realtime: every socket is placed in its restaurant's room ─────────────
 io.use((socket, next) => {
@@ -70,6 +74,9 @@ io.use((socket, next) => {
       if (!r || !r.active) return next(new Error('unauthorized'));
       socket.data.deviceId = device.id;
       socket.data.restaurantId = r.id;
+      socket.data.roleLock = device.role_lock;
+      socket.join(`d:${device.id}`);
+      socket.join(`t:${r.id}:dev`);
       const staff = ctx.run({ restaurantId: r.id, device }, () => resolveStaff(cookies[STAFF_COOKIE]));
       if (staff) {
         socket.data.staffId = staff.id;
@@ -127,6 +134,29 @@ io.revokeDevice = (deviceId) => {
     if (socket.data.deviceId === deviceId) socket.disconnect(true);
   }
 };
+io.on('connection', (socket) => {
+  socket.on('staff:join', ({ staffId, sessionToken } = {}, acknowledge) => {
+    const restaurantId = socket.data.restaurantId;
+    if (!restaurantId || !socket.data.deviceId) {
+      if (typeof acknowledge === 'function') acknowledge({ ok: false });
+      return;
+    }
+    const staff = ctx.run({ restaurantId }, () => resolveStaff(`${staffId}.${sessionToken}`));
+    if (!staff || (socket.data.roleLock && staff.role !== socket.data.roleLock && staff.role !== 'admin')) {
+      if (typeof acknowledge === 'function') acknowledge({ ok: false });
+      return;
+    }
+    socket.data.staffId = staff.id;
+    socket.join(`t:${restaurantId}`);
+    if (typeof acknowledge === 'function') acknowledge({ ok: true });
+  });
+  socket.on('staff:leave', () => {
+    const { restaurantId, staffId } = socket.data;
+    if (!restaurantId || !staffId) return;
+    socket.leave(`t:${restaurantId}`);
+    socket.data.staffId = null;
+  });
+});
 
 // ── Routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth',       require('./routes/auth'));
@@ -142,16 +172,8 @@ app.use('/api/parcel',     require('./routes/parcel'));
 app.use('/api/bug-report', require('./routes/bug-report'));
 app.use('/api/kiosk',      require('./routes/kiosk'));
 
-// Backup and factory reset still use shared files; BATCH 2 makes them per-restaurant.
-// Until then they are switched off in cloud mode so one restaurant can never touch another's files.
-if (cfg.DEPLOYMENT === 'cloud') {
-  const off = (req, res) => res.status(501).json({ error: 'This feature is being upgraded for the cloud version.' });
-  app.use('/api/backup', off);
-  app.use('/api/reset', off);
-} else {
-  app.use('/api/backup', require('./routes/backup'));
-  app.use('/api/reset',  require('./routes/reset'));
-}
+app.use('/api/backup', require('./routes/backup'));
+app.use('/api/reset',  require('./routes/reset'));
 
 // ── Frontend (single page app) ────────────────────────────────────────────
 const buildDir = path.join(__dirname, '..', 'frontend', 'build');

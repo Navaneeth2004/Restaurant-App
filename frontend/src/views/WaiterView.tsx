@@ -42,8 +42,8 @@ import ActionButtons from './waiter/ActionButtons';
 import ParcelModal   from './waiter/ParcelModal';
 import QRModal       from '../components/admin/QRModal';
 import BillModal     from '../components/BillModal';
-import TableTimer    from '../components/TableTimer';
 import ConfirmModal  from '../components/ConfirmModal';
+import TableButton  from './waiter/TableButton';
 
 import type { Table, MenuItem, Category, Order } from '../types';
 
@@ -348,122 +348,14 @@ export default function WaiterView() {
     ? selectedIsParcel ? selectedTable.label : `Order — ${selectedTable.label}`
     : 'Order';
 
-  const TableButton = ({ table, mobile = false }: { table: Table; mobile?: boolean }) => {
-    const isSelected = selectedTable?.id === table.id;
-    const parcel     = isParcel(table.id);
-
-    const statusClass = parcel
-      ? table.status === 'waiting_bill'
-        ? 'border-emerald-500/60 bg-emerald-500/8'
-        : table.status === 'occupied'
-          ? 'border-indigo-500/60 bg-indigo-500/8'
-          : 'border-indigo-500/30 bg-indigo-500/5'
-      : table.status === 'occupied'     ? 'border-brand-500/60 bg-brand-500/8'
-      : table.status === 'waiting_bill' ? 'border-emerald-500/60 bg-emerald-500/8'
-      : 'border-surface-border hover:border-zinc-600';
-
-    const selectedRing = isSelected ? 'ring-2 ring-brand-500 ring-offset-1 ring-offset-surface-card' : '';
-
-    const dotColor = parcel
-      ? table.status === 'waiting_bill' ? 'bg-emerald-400'
-        : table.status === 'occupied'  ? 'bg-indigo-400' : 'bg-indigo-800'
-      : table.status === 'occupied'     ? 'bg-brand-400'
-      : table.status === 'waiting_bill' ? 'bg-emerald-400' : 'bg-zinc-800';
-
-    const badge = parcel
-      ? table.status === 'waiting_bill'
-        ? { text: 'Bill',   cls: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/25' }
-        : { text: 'Parcel', cls: 'text-indigo-400 bg-indigo-500/15 border-indigo-500/25' }
-      : table.status === 'occupied'
-        ? { text: 'Active', cls: 'text-brand-400 bg-brand-500/15 border-brand-500/25' }
-        : table.status === 'waiting_bill'
-          ? { text: 'Bill',  cls: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/25' }
-          : { text: 'Empty', cls: 'text-zinc-700 bg-transparent border-zinc-700/40' };
-
-    const ParcelButtons = ({ size }: { size: 'sm'|'xs' }) => {
-      const sz  = size === 'sm' ? 'w-6 h-6 rounded-lg' : 'w-5 h-5 rounded';
-      const ico = size === 'sm' ? 'w-3.5 h-3.5'        : 'w-3 h-3';
-      return (
-        <div className={`absolute top-1.5 right-1.5 flex flex-row gap-1 opacity-0 group-hover:opacity-100 transition-opacity`}>
-          <button
-            onClick={e => { e.stopPropagation(); handleRemoveParcel(table); }}
-            title="Remove parcel slot"
-            className={`${sz} flex items-center justify-center text-zinc-600 bg-surface-card/80 hover:text-red-400 hover:bg-red-500/10 transition-colors`}
-          >
-            <svg className={ico} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-          <button
-            onClick={e => { e.stopPropagation(); setParcelQrSlot(table); }}
-            title="Show QR code"
-            className={`${sz} flex items-center justify-center text-zinc-600 bg-surface-card/80 hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors`}
-          >
-            <svg className={ico} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" />
-            </svg>
-          </button>
-        </div>
-      );
-    };
-
-    if (mobile) {
-      return (
-        <div className="relative group">
-          <button
-            onClick={() => selectTable(table)}
-            className={`w-full rounded-2xl border p-4 text-left transition-all active:scale-95 select-none flex flex-col ${statusClass} ${selectedRing}`}
-            style={{ minHeight: 108 }}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className={`font-mono font-bold text-2xl leading-none ${parcel ? 'text-indigo-300' : 'text-white'}`}>{table.id}</div>
-                <div className="text-zinc-400 text-xs mt-1.5 truncate leading-snug">{table.label}</div>
-              </div>
-              <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full mt-1 ${dotColor}`} />
-            </div>
-            <div className="mt-auto pt-3 flex items-center justify-between gap-2">
-              <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border ${badge.cls}`}>{badge.text}</span>
-              {table.occupied_since && table.status !== 'empty' && (
-                <TableTimer since={table.occupied_since} compact />
-              )}
-            </div>
-          </button>
-          {parcel && <ParcelButtons size="sm" />}
-        </div>
-      );
-    }
-
-    return (
-      <div className="relative group">
-        <button
-          onClick={() => selectTable(table)}
-          className={`w-full rounded-2xl border p-3.5 text-left transition-all duration-150 cursor-pointer select-none flex flex-col ${statusClass} ${selectedRing}`}
-          style={{ minHeight: 108 }}
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className={`font-mono font-bold text-xl leading-none ${parcel ? 'text-indigo-300' : 'text-white'}`}>{table.id}</div>
-              <div className="text-zinc-400 text-xs mt-1.5 truncate leading-snug">{table.label}</div>
-            </div>
-            <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full mt-1 ${dotColor}`} />
-          </div>
-          <div className="mt-auto pt-3 flex flex-wrap items-center justify-between gap-1.5">
-            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${badge.cls}`}>{badge.text}</span>
-            {table.occupied_since && table.status !== 'empty' && (
-              <TableTimer since={table.occupied_since} compact />
-            )}
-          </div>
-        </button>
-        {parcel && <ParcelButtons size="xs" />}
-      </div>
-    );
-  };
-
   const TableList = ({ mobile = false }: { mobile?: boolean }) => (
     <div className="flex flex-col gap-3">
       <div className={mobile ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-2 gap-2.5'}>
-        {dineInTables.map(t => <TableButton key={t.id} table={t} mobile={mobile} />)}
+        {dineInTables.map(t => (
+          <TableButton key={t.id} table={t} mobile={mobile}
+            selected={selectedTable?.id === t.id}
+            onSelect={selectTable} onRemoveParcel={handleRemoveParcel} onShowQr={setParcelQrSlot} />
+        ))}
       </div>
 
       {parcelSlots.length > 0 && (
@@ -475,7 +367,11 @@ export default function WaiterView() {
             <div className="h-px flex-1 bg-indigo-500/15" />
           </div>
           <div className={mobile ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-2 gap-2.5'}>
-            {parcelSlots.map(t => <TableButton key={t.id} table={t} mobile={mobile} />)}
+            {parcelSlots.map(t => (
+              <TableButton key={t.id} table={t} mobile={mobile}
+                selected={selectedTable?.id === t.id}
+                onSelect={selectTable} onRemoveParcel={handleRemoveParcel} onShowQr={setParcelQrSlot} />
+            ))}
           </div>
         </div>
       )}

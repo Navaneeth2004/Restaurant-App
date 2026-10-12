@@ -1,5 +1,34 @@
 'use strict';
 
+function limit({ windowMs, max, message }) {
+  const buckets = new Map();
+  let lastCleanup = 0;
+
+  return (req, res, next) => {
+    const now = Date.now();
+    if (now - lastCleanup >= windowMs) {
+      for (const [key, bucket] of buckets) {
+        if (bucket.startedAt + windowMs <= now) buckets.delete(key);
+      }
+      lastCleanup = now;
+    }
+
+    const key = req.ip || req.socket.remoteAddress || 'unknown';
+    let bucket = buckets.get(key);
+    if (!bucket || bucket.startedAt + windowMs <= now) {
+      bucket = { count: 0, startedAt: now };
+      buckets.set(key, bucket);
+    }
+    if (bucket.count >= max) {
+      const retryAfter = Math.max(1, Math.ceil((bucket.startedAt + windowMs - now) / 1000));
+      res.set('Retry-After', String(retryAfter));
+      return res.status(429).json({ error: message, retry_after: retryAfter });
+    }
+    bucket.count += 1;
+    next();
+  };
+}
+
 function failTracker({ max, windowMs, lockMs }) {
   const entries = new Map();
 
@@ -41,4 +70,4 @@ function failTracker({ max, windowMs, lockMs }) {
   };
 }
 
-module.exports = { failTracker };
+module.exports = { limit, failTracker };

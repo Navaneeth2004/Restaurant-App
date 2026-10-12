@@ -46,6 +46,7 @@ function ensureColumn(db, table, name, declaration) {
 }
 
 function initialize(db, options = {}) {
+  const seedDefaults = options.seedDefaults !== false;
   db.pragma('foreign_keys = ON');
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -184,15 +185,15 @@ function initialize(db, options = {}) {
       .run(String(options.restaurantName).slice(0, 60));
   }
 
-  if (!db.prepare('SELECT COUNT(*) AS c FROM categories').get().c) {
+  if (seedDefaults && !db.prepare('SELECT COUNT(*) AS c FROM categories').get().c) {
     const insert = db.prepare('INSERT INTO categories (name, sort_order) VALUES (?, ?)');
     DEFAULT_CATEGORIES.forEach((name, index) => insert.run(name, index));
   }
-  if (!db.prepare('SELECT COUNT(*) AS c FROM tables').get().c) {
+  if (seedDefaults && !db.prepare('SELECT COUNT(*) AS c FROM tables').get().c) {
     const insert = db.prepare('INSERT INTO tables (id, label, seats, sort_order) VALUES (?, ?, ?, ?)');
     for (let i = 1; i <= 8; i++) insert.run(`T${i}`, `Table ${i}`, i <= 4 ? 4 : 6, i);
   }
-  if (!db.prepare('SELECT COUNT(*) AS c FROM menu_items').get().c) {
+  if (seedDefaults && !db.prepare('SELECT COUNT(*) AS c FROM menu_items').get().c) {
     const categoryIds = Object.fromEntries(
       db.prepare('SELECT id, name FROM categories').all().map(row => [row.name, row.id])
     );
@@ -230,10 +231,21 @@ function initialize(db, options = {}) {
     }
   }
 
-  if (options.admin && !db.prepare('SELECT 1 FROM staff LIMIT 1').get()) {
+  if (options.adminPinHash && !db.prepare('SELECT 1 FROM staff LIMIT 1').get()) {
+    db.prepare('INSERT INTO staff (name, pin, role, active) VALUES (?, ?, ?, 1)')
+      .run(String(options.adminName).trim().slice(0, 40), options.adminPinHash, 'admin');
+  } else if (options.admin && !db.prepare('SELECT 1 FROM staff LIMIT 1').get()) {
     db.prepare('INSERT INTO staff (name, pin, role, active) VALUES (?, ?, ?, 1)')
       .run(String(options.admin.name).trim().slice(0, 40), bcrypt.hashSync(String(options.admin.pin), 10), 'admin');
   }
 }
 
-module.exports = { initialize };
+function migrate(db) {
+  return initialize(db, { seedDefaults: false });
+}
+
+function seedNewRestaurant(db, options) {
+  return initialize(db, { ...options, seedDefaults: true });
+}
+
+module.exports = { initialize, migrate, seedDefaults: seedNewRestaurant };

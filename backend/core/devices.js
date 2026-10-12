@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const central = require('./central');
 const cfg = require('./config');
+const { nowIso } = require('./util');
 
 const DEVICE_COOKIE = 'pos_device';
 const STAFF_COOKIE = 'pos_staff';
@@ -29,7 +30,7 @@ function createDevice(restaurantId, { name, roleLock = null, createdVia = 'owner
   central.prepare(`
     INSERT INTO devices (id, token_hash, restaurant_id, name, role_lock, created_via, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, digest(raw), restaurantId, String(name || 'Device').trim().slice(0, 40), roleLock, createdVia, new Date().toISOString());
+  `).run(id, digest(raw), restaurantId, String(name || 'Device').trim().slice(0, 40), roleLock, createdVia, nowIso());
   return { id, raw };
 }
 
@@ -39,12 +40,33 @@ function findDevice(raw) {
     SELECT d.id, d.restaurant_id, d.name, d.role_lock, d.created_via, d.created_at,
            d.last_seen_at, d.last_ip, r.name AS restaurant_name, r.active AS restaurant_active
     FROM devices d JOIN restaurants r ON r.id = d.restaurant_id
-    WHERE d.token_hash = ?
+    WHERE d.token_hash = ? AND d.revoked_at IS NULL
   `).get(digest(raw)) || null;
 }
 
 function activeRestaurant(id) {
-  return central.prepare('SELECT id, name, active FROM restaurants WHERE id = ?').get(id) || null;
+  return central.prepare(`
+    SELECT id, name, active FROM restaurants
+    WHERE id = ? AND active = 1 AND status = 'active'
+  `).get(id) || null;
+}
+
+function linkDevice(req, res, { restaurantId, name, roleLock = null, via = 'owner' }) {
+  const device = createDevice(restaurantId, { name, roleLock, createdVia: via });
+  setDeviceCookie(res, device.raw);
+  return device;
+}
+
+function touchDevice(device, req) {
+  central.prepare('UPDATE devices SET last_seen_at = ?, last_ip = ? WHERE id = ? AND revoked_at IS NULL')
+    .run(nowIso(), req.ip || null, device.id);
+}
+
+function revokeDevice(id, restaurantId) {
+  return central.prepare(`
+    UPDATE devices SET revoked_at = ?
+    WHERE id = ? AND restaurant_id = ? AND revoked_at IS NULL
+  `).run(nowIso(), id, restaurantId).changes > 0;
 }
 
 function setDeviceCookie(res, raw) {
@@ -71,5 +93,6 @@ function staffCookieValue(req) {
 
 module.exports = {
   DEVICE_COOKIE, STAFF_COOKIE, parseCookies, digest, createDevice, findDevice,
-  activeRestaurant, setDeviceCookie, clearDeviceCookie, cookieOptions, staffCookieValue,
+  linkDevice, touchDevice, revokeDevice, activeRestaurant, setDeviceCookie,
+  clearDeviceCookie, cookieOptions, staffCookieValue,
 };

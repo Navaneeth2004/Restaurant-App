@@ -1,78 +1,109 @@
 'use strict';
-
+/**
+ * Tenant manager: one SQLite file per restaurant.
+ *
+ *   DATA_DIR/accounts.db            central accounts
+ *   DATA_DIR/tenants/<id>.db        restaurant <id>'s data
+ *
+ * Handles are opened on demand, migrated, cached, and the least recently used
+ * ones are closed when more than MAX_OPEN_TENANTS are open.
+ */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const cfg = require('./config');
 const central = require('./central');
-const schema = require('./schema');
+const { migrate, seedDefaults } = require('./schema');
 
-const tenantDir = path.join(cfg.DATA_DIR, 'tenants');
-fs.mkdirSync(tenantDir, { recursive: true });
-const databases = new Map();
+const open = new Map(); // restaurantId -> { id, raw, stmts, lastUsed }
 
-function tenantPath(id) {
-  if (!/^[A-Za-z0-9_-]{1,80}$/.test(String(id))) throw new Error('Invalid restaurant id');
-  return path.join(tenantDir, `${id}.db`);
+function openRaw(file) {
+  const raw = new Database(file);
+  raw.pragma('journal_mode = WAL');
+  raw.pragma('synchronous = NORMAL');
+  raw.pragma('busy_timeout = 5000');
+  // The existing routes were written without foreign-key enforcement
+  raw.pragma('foreign_keys = OFF');
+  return raw;
+}
+
+function evictIfNeeded(keepId) {
+  while (open.size > cfg.MAX_OPEN_TENANTS) {
+    let oldest = null;
+    for (const h of open.values()) {
+      if (h.id === keepId) continue;
+      if (!oldest || h.lastUsed < oldest.lastUsed) oldest = h;
+    }
+    if (!oldest) return;
+    try { oldest.raw.close(); } catch (_) {}
+    open.delete(oldest.id);
+  }
+}
+
+/** Returns { id, raw, stmts } for a restaurant, or null if it does not exist. */
+function get(id) {
+  let h = open.get(id);
+  if (h) { h.lastUsed = Date.now(); return h; }
+
+  const row = central.prepare('SELECT id, db_file FROM restaurants WHERE id = ?').get(id);
+  if (!row) return null;
+
+  const raw = openRaw(path.join(cfg.TENANT_DIR, row.db_file));
+  migrate(raw);
+  h = { id, raw, stmts: new Map(), lastUsed: Date.now() };
+  open.set(id, h);
+  evictIfNeeded(id);
+  return h;
 }
 
 function databaseFor(id) {
-  if (!id) throw new Error('Restaurant id is required');
-  if (databases.has(id)) return databases.get(id);
-  const db = new Database(tenantPath(id));
+  const tenant = get(id);
+  if (!tenant) throw new Error('Restaurant database not found');
+  return tenant.raw;
+}
+
+/** Creates the database file for a new restaurant. Returns the file name. */
+function create({ id, restaurantName, adminName, adminPinHash }) {
+  const file = `${id}.db`;
+  const full = path.join(cfg.TENANT_DIR, file);
+  if (fs.existsSync(full)) throw new Error('Restaurant database already exists');
+  const raw = openRaw(full);
   try {
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    schema.initialize(db);
-    databases.set(id, db);
-    return db;
-  } catch (err) {
-    db.close();
-    throw err;
+    migrate(raw);
+    seedDefaults(raw, { restaurantName, adminName, adminPinHash });
+  } finally {
+    raw.close();
+  }
+  return file;
+}
+
+function remove(file) {
+  for (const suffix of ['', '-wal', '-shm']) {
+    try { fs.unlinkSync(path.join(cfg.TENANT_DIR, file + suffix)); } catch (_) {}
   }
 }
 
-function createRestaurantDatabase(id, options = {}) {
-  const db = databaseFor(id);
-  if (options.restaurantName) {
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('restaurant_name', ?)")
-      .run(String(options.restaurantName).slice(0, 60));
-  }
-  if (options.admin) {
-    schema.initialize(db, {
-      restaurantName: options.restaurantName,
-      admin: options.admin,
-    });
-  }
-  return db;
-}
-
-function restaurantIdFromKioskToken(token) {
-  if (!token) return null;
-  const restaurants = central.prepare('SELECT id FROM restaurants WHERE active = 1').all();
-  for (const { id } of restaurants) {
-    const row = databaseFor(id).prepare('SELECT id FROM tables WHERE kiosk_token = ?').get(token);
-    if (row) return id;
-  }
-  return null;
+/** Close one restaurant's handle (it is reopened automatically on next use). */
+function close(id) {
+  const h = open.get(id);
+  if (h) { try { h.raw.close(); } catch (_) {} open.delete(id); }
 }
 
 function closeAll() {
-  for (const db of databases.values()) db.close();
-  databases.clear();
+  for (const h of open.values()) { try { h.raw.close(); } catch (_) {} }
+  open.clear();
 }
 
-function removeRestaurantDatabase(id) {
-  const file = tenantPath(id);
-  const db = databases.get(id);
-  if (db) {
-    db.close();
-    databases.delete(id);
-  }
-  if (fs.existsSync(file)) fs.unlinkSync(file);
+/** Kiosk (customer QR) tokens start with the restaurant id so a request can be routed. */
+function newKioskToken(restaurantId) {
+  return restaurantId + crypto.randomBytes(24).toString('base64url');
+}
+function restaurantIdFromKioskToken(token) {
+  const t = String(token || '');
+  const uuid = t.match(/^([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})/i);
+  if (uuid && t.length >= uuid[1].length + 20) return uuid[1];
+  return /^[a-f0-9]{10}/.test(t) && t.length >= 20 ? t.slice(0, 10) : null;
 }
 
-module.exports = {
-  databaseFor, createRestaurantDatabase, restaurantIdFromKioskToken,
-  closeAll, removeRestaurantDatabase, tenantPath,
-};
+module.exports = { get, databaseFor, create, remove, close, closeAll, newKioskToken, restaurantIdFromKioskToken };

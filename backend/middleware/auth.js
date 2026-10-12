@@ -1,133 +1,127 @@
 'use strict';
-
+/**
+ * The access gate for everything under /api.
+ *
+ *   Barrier 1  DEVICE   the browser carries a "pos_device" cookie that was issued after the
+ *                       owner logged in (phone + password) or an admin paired it with a code.
+ *                       Without it nothing under /api works except the login/pairing endpoints.
+ *   Barrier 2  STAFF    a staff member entered their PIN ("pos_staff" cookie).
+ *                       Required for almost everything; a few pre-login endpoints only need the device.
+ *
+ * After the gate, the request runs inside a context (core/context.js) so the
+ * database layer automatically talks to the right restaurant.
+ */
 const ctx = require('../core/context');
-const central = require('../core/central');
+const db = require('../db/database');
 const tenants = require('../core/tenants');
-const cfg = require('../core/config');
 const {
-  DEVICE_COOKIE, STAFF_COOKIE, parseCookies, findDevice, activeRestaurant,
+  DEVICE_COOKIE, STAFF_COOKIE, parseCookies, findDevice, touchDevice, activeRestaurant,
 } = require('../core/devices');
-const { fromRequest } = require('../core/staff-auth');
 
-function fullPath(req) {
-  return String(req.originalUrl || req.url).split('?')[0];
-}
+// No device needed
+const PUBLIC = [
+  /^\/health$/,
+  /^\/auth\/config$/,
+  /^\/auth\/owner\/(register|login)$/,
+  /^\/auth\/device\/(pair|status)$/,
+];
 
-function isPublicPath(path) {
-  return path === '/api/health' ||
-    path === '/api/auth/device/status' ||
-    path === '/api/auth/owner/login' ||
-    path === '/api/auth/owner/register' ||
-    path === '/api/auth/device/pair' ||
-    path === '/api/auth/logout-device' ||
-    path === '/api/kiosk' ||
-    path.startsWith('/api/kiosk/');
-}
+// Device needed, but staff has not logged in yet
+const DEVICE_ONLY = [
+  { method: 'GET',  re: /^\/settings\/?$/ },                 // branding for the PIN screen
+  { method: 'POST', re: /^\/staff\/(verify|check-pin|logout)$/ },
+  { method: 'GET',  re: /^\/staff\/session\/validate$/ },
+];
 
-function needsAdmin(path, method) {
-  if (path === '/api/auth/devices' || path.startsWith('/api/auth/devices/') ||
-      path === '/api/auth/pairing-code') return true;
-  if (path === '/api/settings' || path.startsWith('/api/settings/')) return method !== 'GET';
-  if (path === '/api/categories' || path.startsWith('/api/categories/')) return method !== 'GET';
-  if (path.startsWith('/api/reports') || path.startsWith('/api/export') ||
-      path.startsWith('/api/backup') || path.startsWith('/api/reset')) return true;
-  if (path.startsWith('/api/staff')) {
-    return !(
-      (method === 'POST' && path === '/api/staff/verify') ||
-      (method === 'POST' && path === '/api/staff/check-pin') ||
-      (method === 'POST' && path === '/api/staff/logout') ||
-      (method === 'GET' && path === '/api/staff/session/validate')
-    );
+// Who may do what. First matching rule wins; no match = any logged-in staff.
+const RULES = [
+  { re: /^\/(backup|reset|export|reports)(\/|$)/,                      roles: ['admin'] },
+  { re: /^\/auth\/(pairing-code|devices|device\/unlink)/,               roles: ['admin'] },
+  { re: /^\/staff\/?$/,                 methods: ['GET', 'POST'],        roles: ['admin'] },
+  { re: /^\/staff\/\d+$/,               methods: ['PUT', 'DELETE'],      roles: ['admin'] },
+  { re: /^\/settings(\/|$)/,            methods: ['PUT', 'POST'],        roles: ['admin'] },
+  { re: /^\/(categories|menu|tables)(\/|$)/, methods: ['POST', 'PUT', 'PATCH', 'DELETE'], roles: ['admin'] },
+  { re: /^\/orders\/(delete-records|log\/deleted)$/,                    roles: ['admin'] },
+  { re: /^\/orders\/[^/]+\/payment$/,                                   roles: ['admin'] },
+  { re: /^\/bug-report\/?$/,            methods: ['GET'],                roles: ['admin'] },
+];
+
+// A kitchen screen only needs to see active orders and mark them delivered.
+const KITCHEN_ALLOW = [
+  { method: 'GET',   re: /^\/orders\/active$/ },
+  { method: 'PATCH', re: /^\/orders\/[^/]+\/deliver$/ },
+  { method: 'POST',  re: /^\/bug-report\/?$/ },
+  { method: 'GET',   re: /^\/settings\/?$/ },
+];
+
+function roleAllowed(req, role) {
+  if (role === 'kitchen' && !KITCHEN_ALLOW.some(r => r.method === req.method && r.re.test(req.path))) return false;
+  for (const r of RULES) {
+    if (!r.re.test(req.path)) continue;
+    if (r.methods && !r.methods.includes(req.method)) continue;
+    return r.roles.includes(role);
   }
-  if (path.startsWith('/api/menu')) return method !== 'GET';
-  if (path.startsWith('/api/tables')) return method !== 'GET';
-  if (path === '/api/kiosk/ensure-token') return true;
-  if (path === '/api/orders/delete-records' || path === '/api/orders/log/deleted') return true;
-  if (path.startsWith('/api/orders/') && method === 'PATCH' && path.endsWith('/payment')) return true;
-  return false;
+  return true;
 }
 
-function runInTenant(restaurantId, values, next) {
-  return ctx.run({ restaurantId, ...values }, next);
+function lookupStaff(cookieValue) {
+  if (!cookieValue) return null;
+  const dot = cookieValue.indexOf('.');
+  if (dot < 1) return null;
+  const staffId = Number(cookieValue.slice(0, dot));
+  const token = cookieValue.slice(dot + 1);
+  if (!staffId || !token) return null;
+  try {
+    return db.prepare(`
+      SELECT s.id, s.name, s.role
+      FROM staff_sessions ss JOIN staff s ON s.id = ss.staff_id
+      WHERE ss.staff_id = ? AND ss.token = ? AND s.active = 1
+    `).get(staffId, token) || null;
+  } catch (_) { return null; }
 }
 
 function gate(req, res, next) {
-  const path = fullPath(req);
-  const cookies = parseCookies(req.headers.cookie);
-  const device = findDevice(cookies[DEVICE_COOKIE]);
-  req._smallBody = isPublicPath(path);
+  const p = req.path;
+  req.cookies = parseCookies(req.headers.cookie);
 
-  if (path === '/api/health') return next();
-
-  if (path === '/api/auth/device/status') {
-    if (!device) return next();
-    const restaurant = activeRestaurant(device.restaurant_id);
-    req.device = device;
-    if (!restaurant || !restaurant.active) {
-      req.restaurantSuspended = true;
-      return next();
-    }
-    req.restaurant = restaurant;
-    return runInTenant(restaurant.id, { device }, next);
+  // Customer QR pages: no login, but the token itself says which restaurant
+  const kiosk = p.match(/^\/kiosk\/([^/]+)/);
+  if (kiosk && !['lan-ip', 'ensure-token'].includes(kiosk[1])) {
+    req._smallBody = true;
+    const rid = tenants.restaurantIdFromKioskToken(kiosk[1]);
+    if (!rid || !activeRestaurant(rid)) return res.status(404).json({ error: 'Invalid or expired QR code' });
+    req.restaurantId = rid;
+    req._ctx = { restaurantId: rid, kiosk: true };
+    return ctx.run(req._ctx, next);
   }
 
-  if (path === '/api/auth/owner/login' || path === '/api/auth/owner/register' ||
-      path === '/api/auth/device/pair' || path === '/api/auth/logout-device') {
-    return next();
-  }
+  if (PUBLIC.some(re => re.test(p))) { req._smallBody = true; return next(); }
 
-  if (path === '/api/kiosk/lan-ip') return next();
-  if (path === '/api/kiosk/ensure-token') {
-    return authenticatedRequest(req, res, next, device, path);
-  }
-  if (path === '/api/kiosk' || path.startsWith('/api/kiosk/')) {
-    const tokenMatch = /^\/api\/kiosk\/([^/]+)/.exec(path);
-    if (!tokenMatch) return next();
-    const restaurantId = tenants.restaurantIdFromKioskToken(tokenMatch[1]);
-    if (!restaurantId) return res.status(404).json({ error: 'Invalid or expired QR code' });
-    const restaurant = activeRestaurant(restaurantId);
-    if (!restaurant || !restaurant.active) return next();
-    req.kioskTableId = tenants.databaseFor(restaurantId)
-      .prepare('SELECT id FROM tables WHERE kiosk_token = ?').get(tokenMatch[1])?.id || null;
-    req.restaurant = restaurant;
-    return runInTenant(restaurantId, { kiosk: true, tableId: req.kioskTableId }, next);
-  }
-
-  return authenticatedRequest(req, res, next, device, path);
-}
-
-function authenticatedRequest(req, res, next, device, path) {
+  const device = findDevice(req.cookies[DEVICE_COOKIE]);
   if (!device) {
     return res.status(401).json({ error: 'This device is not linked to a restaurant.', code: 'device_required' });
   }
   const restaurant = activeRestaurant(device.restaurant_id);
-  if (!restaurant || !restaurant.active) {
+  if (!restaurant) {
     return res.status(403).json({ error: 'This restaurant account is not active.', code: 'restaurant_suspended' });
   }
+  touchDevice(device, req);
 
-  const now = new Date().toISOString();
-  central.prepare('UPDATE devices SET last_seen_at = ?, last_ip = ? WHERE id = ?')
-    .run(now, req.ip || null, device.id);
-  req.device = device;
-  req.restaurant = restaurant;
+  const store = { restaurantId: restaurant.id, restaurant, device, staff: null };
+  req.restaurantId = restaurant.id;   // plain copies for code that runs outside the async context (e.g. multer)
+  req._ctx = store;
+  ctx.run(store, () => {
+    store.staff = lookupStaff(req.cookies[STAFF_COOKIE]);
 
-  return runInTenant(restaurant.id, { device }, () => {
-    if (path === '/api/staff/verify') return next();
-    if (path === '/api/staff/session/validate') return next();
-    if (req.method === 'GET' && path === '/api/settings') return next();
-
-    const staff = fromRequest(req);
-    if (!staff) {
-      res.clearCookie(STAFF_COOKIE, { path: '/' });
-      return res.status(401).json({ error: 'Please enter your staff PIN.', code: 'staff_required' });
+    const deviceOnly = DEVICE_ONLY.some(r => r.method === req.method && r.re.test(p));
+    if (!store.staff && !deviceOnly) {
+      return res.status(401).json({ error: 'Please log in with your PIN.', code: 'staff_required' });
     }
-    req.staff = staff;
-
-    if (needsAdmin(path, req.method) && staff.role !== 'admin') {
-      return res.status(403).json({ error: 'Administrator access required.' });
+    if (store.staff && !roleAllowed(req, store.staff.role)) {
+      return res.status(403).json({ error: 'You do not have permission to do that.', code: 'forbidden' });
     }
-    return next();
+    next();
   });
 }
 
-module.exports = { gate, needsAdmin };
+module.exports = { gate, lookupStaff, STAFF_COOKIE, DEVICE_COOKIE };

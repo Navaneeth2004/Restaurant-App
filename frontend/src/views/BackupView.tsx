@@ -9,7 +9,7 @@
  * Content lifted from AdminBackup.tsx and its sub-sections.
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { useAdminLock } from '../context/AdminLockContext';
 import { PinModal } from '../components/admin/PinModal';
@@ -82,12 +82,12 @@ function FactoryResetModal({ onClose, onDone, onError }: ResetModalProps) {
             <div className="rounded-lg bg-red-500/8 border border-red-500/20 p-3 mb-4 space-y-1.5 text-xs text-red-400/80">
               <p className="font-semibold text-red-400">What gets deleted:</p>
               <p>• All orders and order history</p>
-              <p>• All food photos and the restaurant logo</p>
-              <p>• Table statuses reset to empty</p>
-              <p className="font-semibold text-emerald-400/80 pt-1">What is kept:</p>
+              <p>• Photos and logo</p>
               <p>• Menu items and categories</p>
+              <p>• Table states</p>
+              <p className="font-semibold text-emerald-400/80 pt-1">What is kept:</p>
               <p>• Staff and PINs</p>
-              <p>• Restaurant settings and brand color</p>
+              <p>• Restaurant name</p>
             </div>
             <p className="text-zinc-600 text-xs mb-4">Take a backup first if you need to keep any history.</p>
             <div className="flex gap-2">
@@ -390,12 +390,15 @@ function ManualSection() {
 
 export default function BackupView() {
   const [section, setSection] = useState<Section>('manual');
+  const [info, setInfo] = useState<{ local: boolean; drive: boolean }>({ local: true, drive: true });
+  useEffect(() => { authedJson(`${API}/api/backup/info`).then(setInfo).catch(() => {}); }, []);
 
-  const tabs: { key: Section; label: string }[] = [
+  const tabs = ([
     { key: 'manual', label: 'Download / Restore' },
     { key: 'local',  label: 'Local Auto-Backup' },
     { key: 'drive',  label: 'Google Drive' },
-  ];
+  ] as { key: Section; label: string }[]).filter(t =>
+    t.key === 'manual' || (t.key === 'local' && info.local) || (t.key === 'drive' && info.drive));
 
   return (
     <div className="flex flex-col h-full overflow-hidden">

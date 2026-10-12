@@ -1,252 +1,230 @@
 'use strict';
-
+/**
+ * /api/auth
+ *   Public:  config, owner/register, owner/login, device/pair, device/status
+ *   Admin :  pairing-code, devices (list / revoke), device/unlink
+ */
 const express = require('express');
 const crypto = require('crypto');
-const { v4: uuidv4 } = require('uuid');
-const router = express.Router();
-const { AUTH_METHODS } = require('../auth');
-const central = require('../core/central');
-const ctx = require('../core/context');
-const tenants = require('../core/tenants');
+const bcrypt = require('bcryptjs');
+
 const cfg = require('../core/config');
+const central = require('../core/central');
+const tenants = require('../core/tenants');
+const ctx = require('../core/context');
+const db = require('../db/database');
+const providers = require('../auth');
+const { limit, failTracker } = require('../middleware/rateLimit');
 const {
-  DEVICE_COOKIE, STAFF_COOKIE, parseCookies, digest, createDevice, findDevice,
-  setDeviceCookie, clearDeviceCookie, cookieOptions,
+  DEVICE_COOKIE, STAFF_COOKIE, parseCookies, findDevice, linkDevice, revokeDevice, activeRestaurant,
 } = require('../core/devices');
-const { normalizePhone, pinProblem } = require('../core/util');
-const { failTracker } = require('../middleware/rateLimit');
+const { sha256, nowIso, normalizePhone, pinProblem, newRestaurantId } = require('../core/util');
 
-const ownerFails = failTracker({ max: 8, windowMs: 10 * 60 * 1000, lockMs: 10 *  60 * 1000 });
-const pairFails = failTracker({ max: 8, windowMs: 10 * 60 * 1000, lockMs: 10 * 60 * 1000 });
+const router = express.Router();
 
-function lockMessage(wait) {
-  return `Too many attempts. Try again in ${Math.max(1, Math.ceil(wait / 60000))} minute(s).`;
-}
+const ipLimit    = limit({ windowMs: 15 * 60 * 1000, max: 40, message: 'Too many attempts. Please wait a few minutes.' });
+const registerLimit = limit({ windowMs: 60 * 60 * 1000, max: 5, message: 'Too many accounts created from this network. Try again later.' });
+const loginFails = failTracker({ max: 5, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 });
+const pairFails  = failTracker({ max: 8, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 });
 
-function deviceName(req, name) {
-  const supplied = String(name || '').trim();
-  if (supplied) return supplied.slice(0, 40);
-  const agent = String(req.get('user-agent') || '');
-  return (agent.includes('Mobile') ? 'Mobile device' : 'Computer').slice(0, 40);
-}
+const lockedMsg = (s) => `Too many wrong attempts. Try again in ${Math.max(1, Math.ceil(s / 60))} minute(s).`;
+const publicRestaurant = (r) => ({ id: r.id, name: r.name });
 
-function linkDevice(req, res, restaurantId, name, roleLock, createdVia) {
-  const created = createDevice(restaurantId, {
-    name: deviceName(req, name),
-    roleLock,
-    createdVia,
-  });
-  setDeviceCookie(res, created.raw);
-}
+// ── GET /config ───────────────────────────────────────────────────────────
+router.get('/config', (req, res) => {
+  res.json({ registration_open: cfg.ALLOW_REGISTRATION, methods: providers.methods });
+});
 
+// ── GET /device/status — what should this browser show first? ─────────────
 router.get('/device/status', (req, res) => {
-  if (req.restaurantSuspended) {
-    return res.json({ linked: false, suspended: true, registration_open: cfg.ALLOW_REGISTRATION });
-  }
-  if (!req.device || !req.restaurant) {
-    return res.json({ linked: false, registration_open: cfg.ALLOW_REGISTRATION });
-  }
-  const settings = Object.fromEntries(
-    require('../db/database').prepare("SELECT key, value FROM settings WHERE key IN ('restaurant_name','brand_color','logo_url')").all()
-      .map(row => [row.key, row.value])
-  );
-  res.json({
-    linked: true,
-    registration_open: cfg.ALLOW_REGISTRATION,
-    restaurant: {
-      name: settings.restaurant_name || req.restaurant.name,
-      brand_color: settings.brand_color,
-      logo_url: settings.logo_url,
-    },
+  res.set('Cache-Control', 'no-store');
+  const base = { registration_open: cfg.ALLOW_REGISTRATION };
+  const device = findDevice(parseCookies(req.headers.cookie)[DEVICE_COOKIE]);
+  if (!device) return res.json({ linked: false, ...base });
+
+  const r = activeRestaurant(device.restaurant_id);
+  if (!r) return res.json({ linked: false, suspended: true, ...base });
+
+  ctx.run({ restaurantId: r.id }, () => {
+    const rows = db.prepare("SELECT key, value FROM settings WHERE key IN ('restaurant_name','brand_color','logo_url')").all();
+    const s = Object.fromEntries(rows.map(x => [x.key, x.value]));
+    res.json({
+      linked: true,
+      restaurant: { name: s.restaurant_name || r.name, brand_color: s.brand_color, logo_url: s.logo_url },
+      device: { id: device.id, name: device.name, role_lock: device.role_lock },
+      ...base,
+    });
   });
 });
 
-router.post('/owner/register', async (req, res) => {
-  if (!cfg.ALLOW_REGISTRATION) return res.status(403).json({ error: 'New restaurant registration is closed.' });
-  const { restaurant_name, admin_name, phone, password, admin_pin } = req.body || {};
-  const normalizedPhone = normalizePhone(phone);
-  const restaurantName = String(restaurant_name || '').trim();
-  const adminName = String(admin_name || '').trim();
-  const pinError = pinProblem(admin_pin);
+// ── POST /owner/register ──────────────────────────────────────────────────
+router.post('/owner/register', ipLimit, registerLimit, async (req, res) => {
+  if (!cfg.ALLOW_REGISTRATION) return res.status(403).json({ error: 'New sign-ups are closed.' });
 
-  if (restaurantName.length < 2 || adminName.length < 2) {
-    return res.status(400).json({ error: 'Restaurant and owner names must be at least 2 characters.' });
-  }
-  if (normalizedPhone.length < 7) return res.status(400).json({ error: 'Enter a valid phone number.' });
-  if (typeof password !== 'string' || password.length < 8 || password.length > 200) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
-  }
-  if (pinError) return res.status(400).json({ error: pinError });
-  if (central.prepare('SELECT 1 FROM owners WHERE phone = ?').get(normalizedPhone)) {
-    return res.status(409).json({ error: 'An account with this phone number already exists.' });
+  const b = req.body || {};
+  const phone = normalizePhone(b.phone, cfg.DEFAULT_COUNTRY_CODE);
+  if (!phone) return res.status(400).json({ error: 'Enter a valid phone number.' });
+
+  const provider = providers.get('password');
+  const pwErr = provider.validateNew(b.password);
+  if (pwErr) return res.status(400).json({ error: pwErr });
+
+  const restaurantName = String(b.restaurant_name || '').trim().slice(0, 60);
+  const adminName = String(b.admin_name || '').trim().slice(0, 40);
+  if (!restaurantName) return res.status(400).json({ error: 'Enter the restaurant name.' });
+  if (!adminName) return res.status(400).json({ error: 'Enter your name.' });
+
+  const pinErr = pinProblem(b.admin_pin);
+  if (pinErr) return res.status(400).json({ error: pinErr });
+
+  if (central.prepare('SELECT 1 FROM owners WHERE phone = ?').get(phone)) {
+    return res.status(409).json({ error: 'An account with this phone number already exists. Please log in instead.' });
   }
 
-  const ownerId = uuidv4();
-  const restaurantId = uuidv4();
-  const now = new Date().toISOString();
-  const passwordHash = await AUTH_METHODS.password.hash(password);
+  const ownerId = crypto.randomUUID();
+  const restaurantId = newRestaurantId();
+  let dbFile = null;
   try {
+    const [passwordHash, adminPinHash] = await Promise.all([provider.hash(b.password), bcrypt.hash(String(b.admin_pin), 10)]);
+    dbFile = tenants.create({ id: restaurantId, restaurantName, adminName, adminPinHash });
+
     central.transaction(() => {
-      central.prepare('INSERT INTO owners (id, phone, password_hash, created_at) VALUES (?, ?, ?, ?)')
-        .run(ownerId, normalizedPhone, passwordHash, now);
-      central.prepare('INSERT INTO restaurants (id, owner_id, name, active, created_at) VALUES (?, ?, ?, 1, ?)')
-        .run(restaurantId, ownerId, restaurantName.slice(0, 60), now);
+      central.prepare('INSERT INTO owners (id, phone, password_hash, created_at, updated_at) VALUES (?,?,?,?,?)')
+        .run(ownerId, phone, passwordHash, nowIso(), nowIso());
+      central.prepare('INSERT INTO restaurants (id, owner_id, name, db_file, trial_ends_at, created_at) VALUES (?,?,?,?,?,?)')
+        .run(restaurantId, ownerId, restaurantName, dbFile, new Date(Date.now() + 30 * 86400000).toISOString(), nowIso());
     })();
-    tenants.createRestaurantDatabase(restaurantId, {
-      restaurantName,
-      admin: { name: adminName, pin: admin_pin },
-    });
-    linkDevice(req, res, restaurantId, null, null, 'owner');
-    return res.status(201).json({ success: true, restaurant_id: restaurantId });
+
+    linkDevice(req, res, { restaurantId, name: b.device_name, via: 'register' });
+    res.status(201).json({ linked: true, restaurant: { id: restaurantId, name: restaurantName } });
   } catch (err) {
-    console.error('[Auth] Registration error:', err.message);
-    try { tenants.removeRestaurantDatabase(restaurantId); }
-    catch (cleanupError) { console.error('[Auth] Tenant cleanup error:', cleanupError.message); }
-    try {
-      central.prepare('DELETE FROM restaurants WHERE id = ?').run(restaurantId);
-      central.prepare('DELETE FROM owners WHERE id = ?').run(ownerId);
-    } catch (cleanupError) {
-      console.error('[Auth] Registration cleanup error:', cleanupError.message);
-    }
-    return res.status(500).json({ error: 'Could not create the restaurant account.' });
+    if (dbFile) tenants.remove(dbFile);
+    console.error('[Auth] register failed:', err.message);
+    res.status(500).json({ error: 'Could not create the account. Please try again.' });
   }
 });
 
-router.post('/owner/login', async (req, res) => {
-  const { phone, password, restaurant_id, method = 'password' } = req.body || {};
-  const provider = AUTH_METHODS[method];
-  if (!provider) return res.status(400).json({ error: 'Unsupported owner login method.' });
-  const normalizedPhone = normalizePhone(phone);
-  if (!normalizedPhone || typeof password !== 'string') {
-    return res.status(400).json({ error: 'Phone number and password are required.' });
-  }
-  const key = `owner:${req.ip || 'unknown'}:${normalizedPhone}`;
-  const wait = ownerFails.check(key);
-  if (wait) return res.status(429).json({ error: lockMessage(wait), code: 'locked', retry_after: wait });
+// ── POST /owner/login — links THIS device to a restaurant ─────────────────
+router.post('/owner/login', ipLimit, async (req, res) => {
+  const b = req.body || {};
+  const method = b.method || 'password';
+  const provider = providers.get(method);
+  if (!provider) return res.status(400).json({ error: 'This login method is not available.' });
 
-  const owner = central.prepare('SELECT id, password_hash FROM owners WHERE phone = ?').get(normalizedPhone);
-  if (!owner || !(await provider.verify(password, owner.password_hash))) {
-    ownerFails.fail(key);
-    return res.status(401).json({ error: 'Phone number or password is incorrect.' });
+  const phone = normalizePhone(b.phone, cfg.DEFAULT_COUNTRY_CODE);
+  const failKey = `${req.ip}|${phone || 'x'}`;
+  const wait = loginFails.check(failKey);
+  if (wait) return res.status(429).json({ error: lockedMsg(wait), code: 'locked', retry_after: wait });
+
+  const owner = phone
+    ? central.prepare('SELECT * FROM owners WHERE phone = ? AND disabled = 0').get(phone)
+    : null;
+  const ok = await provider.verify(owner, b);
+  if (!ok) {
+    loginFails.fail(failKey);
+    return res.status(401).json({ error: 'Incorrect phone number or password.' });
   }
-  ownerFails.reset(key);
+  loginFails.reset(failKey);
+
   const restaurants = central.prepare(
-    'SELECT id, name FROM restaurants WHERE owner_id = ? AND active = 1 ORDER BY created_at'
+    "SELECT id, name FROM restaurants WHERE owner_id = ? AND status = 'active' ORDER BY created_at"
   ).all(owner.id);
-  if (!restaurants.length) return res.status(403).json({ error: 'No active restaurant is linked to this account.' });
-  if (!restaurant_id && restaurants.length > 1) {
-    return res.json({ needs_restaurant: true, restaurants });
-  }
-  const restaurant = restaurant_id
-    ? restaurants.find(row => row.id === restaurant_id)
-    : restaurants[0];
-  if (!restaurant) return res.status(403).json({ error: 'This restaurant is not linked to your account.' });
+  if (!restaurants.length) return res.status(403).json({ error: 'There is no active restaurant on this account.' });
 
-  linkDevice(req, res, restaurant.id, null, null, 'owner');
-  res.json({ success: true, restaurant_id: restaurant.id });
+  let r;
+  if (b.restaurant_id) {
+    r = restaurants.find(x => x.id === b.restaurant_id);
+    if (!r) return res.status(404).json({ error: 'Restaurant not found on this account.' });
+  } else if (restaurants.length === 1) {
+    r = restaurants[0];
+  } else {
+    return res.json({ needs_restaurant: true, restaurants: restaurants.map(publicRestaurant) });
+  }
+
+  linkDevice(req, res, { restaurantId: r.id, name: b.device_name, via: 'owner_login' });
+  res.json({ linked: true, restaurant: publicRestaurant(r) });
 });
 
-router.post('/device/pair', (req, res) => {
-  const { code, device_name } = req.body || {};
-  if (!/^\d{6}$/.test(String(code || ''))) return res.status(400).json({ error: 'Enter the 6-digit pairing code.' });
-  const key = `pair:${req.ip || 'unknown'}`;
-  const wait = pairFails.check(key);
-  if (wait) return res.status(429).json({ error: lockMessage(wait), code: 'locked', retry_after: wait });
+// ── POST /device/pair — staff phone enters the code an admin generated ────
+router.post('/device/pair', ipLimit, (req, res) => {
+  const b = req.body || {};
+  const code = String(b.code || '').replace(/\D/g, '');
+  const failKey = `pair|${req.ip}`;
+  const wait = pairFails.check(failKey);
+  if (wait) return res.status(429).json({ error: lockedMsg(wait), code: 'locked', retry_after: wait });
+  if (code.length !== 6) return res.status(400).json({ error: 'Enter the 6-digit code.' });
 
-  const now = new Date().toISOString();
-  try {
-    const linked = central.transaction(() => {
-      const pairing = central.prepare(`
-        SELECT p.code_hash, p.restaurant_id, p.role_lock FROM pairing_codes p
-        JOIN restaurants r ON r.id = p.restaurant_id AND r.active = 1
-        WHERE p.code_hash = ? AND p.used_at IS NULL AND p.expires_at > ?
-      `).get(digest(code), now);
-      if (!pairing) return false;
-      const updated = central.prepare(
-        'UPDATE pairing_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?'
-      ).run(now, pairing.code_hash, now);
-      if (updated.changes !== 1) return false;
-      const created = createDevice(pairing.restaurant_id, {
-        name: deviceName(req, device_name),
-        roleLock: pairing.role_lock,
-        createdVia: 'pairing',
-      });
-      setDeviceCookie(res, created.raw);
-      return true;
-    })();
-    if (!linked) {
-      pairFails.fail(key);
-      return res.status(400).json({ error: 'That code is invalid, expired, or already used.' });
-    }
-    pairFails.reset(key);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('[Auth] Pairing error:', err.message);
-    res.status(500).json({ error: 'Could not connect this device.' });
+  const row = central.transaction(() => {
+    const r = central.prepare('SELECT * FROM pairing_codes WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?')
+      .get(sha256(code), nowIso());
+    if (!r) return null;
+    central.prepare('UPDATE pairing_codes SET used_at = ? WHERE code_hash = ?').run(nowIso(), r.code_hash);
+    return r;
+  })();
+
+  const restaurant = row && activeRestaurant(row.restaurant_id);
+  if (!restaurant) {
+    pairFails.fail(failKey);
+    return res.status(400).json({ error: 'That code is invalid or has expired. Ask your manager for a new one.' });
   }
+  pairFails.reset(failKey);
+
+  linkDevice(req, res, { restaurantId: restaurant.id, name: b.device_name, roleLock: row.role_lock, via: 'pairing' });
+  res.json({ linked: true, restaurant: publicRestaurant(restaurant) });
 });
 
+// ══ Everything below needs a linked device AND an admin PIN session ═══════
+
+// ── POST /pairing-code ────────────────────────────────────────────────────
 router.post('/pairing-code', (req, res) => {
-  const roleLock = req.body?.role_lock || null;
-  if (roleLock !== null && !['waiter', 'kitchen'].includes(roleLock)) {
-    return res.status(400).json({ error: 'Invalid role lock.' });
-  }
-  const { restaurantId, staff } = ctx.get();
-  const createdAt = new Date();
-  const expiresAt = new Date(createdAt.getTime() + 10 * 60 * 1000);
+  const { restaurantId } = ctx.get();
+  const roleLock = ['waiter', 'kitchen'].includes((req.body || {}).role_lock) ? req.body.role_lock : null;
+
+  central.prepare('DELETE FROM pairing_codes WHERE expires_at < ? OR used_at IS NOT NULL').run(nowIso());
+  const active = central.prepare('SELECT COUNT(*) AS c FROM pairing_codes WHERE restaurant_id = ?').get(restaurantId).c;
+  if (active >= 10) return res.status(429).json({ error: 'Too many unused codes. Wait for them to expire.' });
+
+  const expiresAt = new Date(Date.now() + cfg.PAIRING_CODE_MINUTES * 60000).toISOString();
   let code;
-  for (let tries = 0; tries < 5; tries += 1) {
+  for (let i = 0; i < 10; i++) {
     code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
     try {
-      central.prepare(`
-        INSERT INTO pairing_codes (code_hash, restaurant_id, created_by, role_lock, expires_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(digest(code), restaurantId, staff?.name || null, roleLock, expiresAt.toISOString(), createdAt.toISOString());
+      central.prepare('INSERT INTO pairing_codes (code_hash, restaurant_id, role_lock, created_at, expires_at) VALUES (?,?,?,?,?)')
+        .run(sha256(code), restaurantId, roleLock, nowIso(), expiresAt);
       break;
-    } catch (err) {
-      if (tries === 4) throw err;
-      code = null;
-    }
+    } catch (_) { code = null; }
   }
-  if (!code) return res.status(500).json({ error: 'Could not generate a pairing code.' });
-  const base = cfg.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
-  res.status(201).json({
-    code,
-    expires_at: expiresAt.toISOString(),
-    pair_url: `${base}/pair?code=${code}`,
-    role_lock: roleLock,
-  });
+  if (!code) return res.status(500).json({ error: 'Could not create a code. Try again.' });
+
+  const origin = cfg.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+  res.json({ code, expires_at: expiresAt, role_lock: roleLock, pair_url: `${origin}/pair?code=${code}` });
 });
 
+// ── GET /devices ──────────────────────────────────────────────────────────
 router.get('/devices', (req, res) => {
-  const restaurantId = ctx.get().restaurantId;
-  const currentId = req.device?.id;
+  const { restaurantId, device } = ctx.get();
   const rows = central.prepare(`
-    SELECT id, name, role_lock, created_via, created_at, last_seen_at, last_ip
-    FROM devices WHERE restaurant_id = ? ORDER BY created_at DESC
+    SELECT id, name, role_lock, created_via, created_at, last_seen_at, last_ip, user_agent
+    FROM devices WHERE restaurant_id = ? AND revoked_at IS NULL ORDER BY created_at
   `).all(restaurantId);
-  res.json(rows.map(row => ({ ...row, is_current: row.id === currentId })));
+  res.json(rows.map(d => ({ ...d, is_current: d.id === device.id })));
 });
 
+// ── DELETE /devices/:id ───────────────────────────────────────────────────
 router.delete('/devices/:id', (req, res) => {
-  const restaurantId = ctx.get().restaurantId;
-  const row = central.prepare('SELECT id FROM devices WHERE id = ? AND restaurant_id = ?')
-    .get(req.params.id, restaurantId);
-  if (!row) return res.status(404).json({ error: 'Device not found.' });
-  central.prepare('DELETE FROM devices WHERE id = ?').run(row.id);
-  req.io.revokeDevice(row.id);
-  if (row.id === req.device.id) {
-    res.clearCookie(DEVICE_COOKIE, { ...cookieOptions(0), expires: new Date(0) });
-    res.clearCookie(STAFF_COOKIE, { ...cookieOptions(0), expires: new Date(0) });
-  }
+  const { restaurantId } = ctx.get();
+  if (!revokeDevice(req.params.id, restaurantId)) return res.status(404).json({ error: 'Device not found.' });
+  req.io.disconnectDevice(req.params.id);          // cut its live connection immediately
   res.json({ success: true });
 });
 
-router.post('/logout-device', (req, res) => {
-  const device = findDevice(parseCookies(req.headers.cookie)[DEVICE_COOKIE]);
-  if (device) central.prepare('DELETE FROM devices WHERE id = ?').run(device.id);
-  clearDeviceCookie(res);
-  res.clearCookie(STAFF_COOKIE, { ...cookieOptions(0), expires: new Date(0) });
+// ── POST /device/unlink — unlink THIS browser ─────────────────────────────
+router.post('/device/unlink', (req, res) => {
+  const { restaurantId, device } = ctx.get();
+  revokeDevice(device.id, restaurantId);
+  req.io.disconnectDevice(device.id);
+  res.clearCookie(DEVICE_COOKIE, { path: '/' });
+  res.clearCookie(STAFF_COOKIE, { path: '/' });
   res.json({ success: true });
 });
 

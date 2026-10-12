@@ -6,8 +6,8 @@ const { v4: uuidv4 } = require('uuid');
 const db      = require('../db/database');
 const ctx     = require('../core/context');
 
-const _pendingTables = new Set();
-const _closingOrders = new Set();
+const _pendingTables = require('../core/tenant-set')();
+const _closingOrders = require('../core/tenant-set')();
 
 function getOrderWithItems(orderId) {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);

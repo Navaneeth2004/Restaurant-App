@@ -10,4 +10,10 @@ module.exports = {
   get() {
     return storage.getStore() || {};
   },
+  wrap(middleware) {
+    return (req, res, next) => {
+      const context = req._ctx || storage.getStore();
+      return context ? storage.run(context, () => middleware(req, res, next)) : middleware(req, res, next);
+    };
+  },
 };

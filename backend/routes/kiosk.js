@@ -4,8 +4,8 @@ const express  = require('express');
 const router   = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const os       = require('os');
-const db       = require('../db/database');
-const ctx = require('../core/context');
+const db      = require('../db/database');
+const ctx     = require('../core/context');
 const generateToken = require('../core/kiosk-token');
 
 function ensureToken(tableId) {
@@ -153,7 +153,7 @@ router.get('/:token/orders', (req, res) => {
   res.json(orders);
 });
 
-const _pendingKiosk = new Set();
+const _pendingKiosk = require('../core/tenant-set')();
 
 // ── POST /api/kiosk/:token/order ──────────────────────────────────────────
 // FIX (concurrency data-loss bug — same as orders.js's POST /, mirrored

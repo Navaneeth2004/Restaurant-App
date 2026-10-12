@@ -28,3 +28,14 @@ export function disconnectSocket(): void {
     (window as any).__pos_socket_connected = false;
   }
 }
+
+export function joinStaffRoom(staffId: number, sessionToken: string): void {
+  const staffSocket = getSocket();
+  staffSocket.emit('staff:join', { staffId, sessionToken }, (result: { ok: boolean }) => {
+    if (!result?.ok) console.error('[Socket] Could not join staff room');
+  });
+}
+
+export function leaveStaffRoom(): void {
+  socket?.emit('staff:leave');
+}

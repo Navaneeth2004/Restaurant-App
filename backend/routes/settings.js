@@ -1,58 +1,53 @@
+'use strict';
 const express = require('express');
-const router  = express.Router();
-const multer  = require('multer');
-const path    = require('path');
-const fs      = require('fs');
-const db      = require('../db/database');
+const router = express.Router();
+const db = require('../db/database');
+const files = require('../core/files');
 
-const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const upload = files.makeUploader('logo', 2);
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename:    (req, file, cb) => cb(null, `logo_${Date.now()}${path.extname(file.originalname)}`),
-});
-const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
-  if (!file.mimetype.startsWith('image/')) return cb(new Error('Images only'));
-  cb(null, true);
-}});
+// Never sent to the browser, never writable through this route
+const SECRET_KEYS = new Set(['gdrive_credentials', 'gdrive_tokens']);
 
-// GET all settings
+// GET all (non-secret) settings
 router.get('/', (req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
-  const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
-  delete settings.gdrive_credentials;
+  const settings = Object.fromEntries(rows.filter(r => !SECRET_KEYS.has(r.key)).map(r => [r.key, r.value]));
   res.json(settings);
 });
 
-// PUT update settings (JSON body)
+// PUT update settings (admin only — enforced by middleware/auth.js)
 router.put('/', (req, res) => {
   const update = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-  const updateMany = db.transaction((data) => {
+  const body = req.body || {};
+  db.transaction((data) => {
     for (const [key, value] of Object.entries(data)) {
-      if (key === 'gdrive_credentials') continue;
-      update.run(key, String(value));
+      if (SECRET_KEYS.has(key)) continue;
+      update.run(String(key).slice(0, 60), String(value).slice(0, 5000));
     }
-  });
-  updateMany(req.body);
-  // Emit to all clients so theme updates instantly
-  req.io.emit('settings_updated', req.body);
+  })(body);
+
+  const safe = Object.fromEntries(Object.entries(body).filter(([k]) => !SECRET_KEYS.has(k)));
+  req.io.emit('settings_updated', safe);
   res.json({ success: true });
 });
 
-// POST upload logo image
+// POST upload logo
 router.post('/logo', upload.single('logo'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const logoUrl = `/uploads/${req.file.filename}`;
-  // Delete old logo if exists
+  const logoUrl = files.publicUrl(req.restaurantId, req.file.filename);
+
   const old = db.prepare("SELECT value FROM settings WHERE key = 'logo_url'").get();
-  if (old?.value && old.value.startsWith('/uploads/logo_')) {
-    const oldPath = path.join(__dirname, '../..', old.value);
-    if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-  }
+  if (old && old.value) files.removeUpload(req.restaurantId, old.value);
+
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('logo_url', logoUrl);
   req.io.emit('settings_updated', { logo_url: logoUrl });
   res.json({ logo_url: logoUrl });
+});
+
+router.use((err, req, res, next) => {
+  if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Image is too large (max 2 MB).' : err.message });
+  next();
 });
 
 module.exports = router;
