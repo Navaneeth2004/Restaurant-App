@@ -17,9 +17,8 @@ const files = require('./core/files');
 const { gate } = require('./middleware/auth');
 const attachIo = require('./middleware/attachIo');
 const {
-  DEVICE_COOKIE, STAFF_COOKIE, parseCookies, findDevice, activeRestaurant,
+  DEVICE_COOKIE, parseCookies, findDevice, activeRestaurant,
 } = require('./core/devices');
-const { resolveStaff } = require('./core/staff-auth');
 
 const app = express();
 const server = http.createServer(app);
@@ -32,6 +31,7 @@ const corsOn = cfg.CORS_ORIGINS.length > 0;
 const io = new Server(server, {
   cors: corsOn ? { origin: cfg.CORS_ORIGINS, credentials: true } : undefined,
 });
+app.set('io', io);          // used by the root console (live connection counts, kicking suspended restaurants)
 
 // ── Basic security headers ────────────────────────────────────────────────
 app.use((req, res, next) => {
@@ -56,12 +56,17 @@ app.use('/api', (req, res, next) => (req._smallBody ? smallJson : bigJson)(req, 
 app.use('/api', (req, res, next) => (req._smallBody ? next() : bigForm(req, res, next)));
 app.use('/api', attachIo(io));
 
-// Restaurant uploads use opaque names under each restaurant's own directory.
-app.get('/uploads/:restaurantId/:name', (req, res) => {
-  if (!files.isRestaurantId(req.params.restaurantId)) return res.sendStatus(404);
-  const file = files.resolveUpload(req.params.restaurantId, req.params.name);
-  if (!file || !fs.existsSync(file)) return res.sendStatus(404);
-  res.sendFile(file);
+// Uploaded images: /uploads/<restaurantId>/<file>  (public so customer QR pages can show photos;
+// file names are random). The CSP + nosniff headers stop an uploaded file from ever running as a page.
+app.use('/uploads/:rid', (req, res, next) => {
+  if (!/^[a-f0-9]{10}$/.test(req.params.rid)) return res.status(404).end();
+  res.set('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Cross-Origin-Resource-Policy', 'same-origin');
+  express.static(files.uploadsDir(req.params.rid), { index: false, dotfiles: 'deny', maxAge: '7d', fallthrough: false })(req, res, (err) => {
+    if (err) return res.status(404).end();
+    next();
+  });
 });
 
 // ── Realtime: every socket is placed in its restaurant's room ─────────────
@@ -71,95 +76,51 @@ io.use((socket, next) => {
     const device = findDevice(cookies[DEVICE_COOKIE]);
     if (device) {
       const r = activeRestaurant(device.restaurant_id);
-      if (!r || !r.active) return next(new Error('unauthorized'));
-      socket.data.deviceId = device.id;
-      socket.data.restaurantId = r.id;
-      socket.data.roleLock = device.role_lock;
-      socket.join(`d:${device.id}`);
-      socket.join(`t:${r.id}:dev`);
-      const staff = ctx.run({ restaurantId: r.id, device }, () => resolveStaff(cookies[STAFF_COOKIE]));
-      if (staff) {
-        socket.data.staffId = staff.id;
-        socket.join(`t:${r.id}`);
-      }
+      if (!r) return next(new Error('unauthorized'));
+      socket.data.rid = r.id;
+      socket.join(`d:${device.id}`);        // so a removed device can be disconnected at once
+      socket.join(`t:${r.id}:dev`);         // branding updates only (login screen)
       return next();
     }
     // Customer phone that scanned a table QR: it may only hear about ITS table
     const kt = socket.handshake.auth && socket.handshake.auth.kiosk;
     if (kt) {
       const rid = tenants.restaurantIdFromKioskToken(kt);
-      const restaurant = rid ? activeRestaurant(rid) : null;
-      if (!restaurant || !restaurant.active) return next(new Error('unauthorized'));
+      if (!rid || !activeRestaurant(rid)) return next(new Error('unauthorized'));
       const row = ctx.run({ restaurantId: rid }, () =>
         db.prepare('SELECT id FROM tables WHERE kiosk_token = ?').get(kt));
       if (!row) return next(new Error('unauthorized'));
-      socket.data.restaurantId = rid;
-      socket.data.tableId = row.id;
       socket.join(`t:${rid}:table:${row.id}`);
       return next();
     }
     next(new Error('unauthorized'));
-  } catch (err) {
-    console.error('[Socket] Authentication error:', err.message);
+  } catch (_) {
     next(new Error('unauthorized'));
   }
 });
 
-io.promoteDevice = (deviceId, restaurantId, staffId) => {
-  for (const socket of io.sockets.sockets.values()) {
-    if (socket.data.deviceId === deviceId && socket.data.restaurantId === restaurantId) {
-      socket.data.staffId = staffId;
-      socket.join(`t:${restaurantId}`);
-    }
-  }
-};
-io.demoteDevice = (deviceId, restaurantId) => {
-  for (const socket of io.sockets.sockets.values()) {
-    if (socket.data.deviceId === deviceId && socket.data.restaurantId === restaurantId) {
-      socket.data.staffId = null;
-      socket.leave(`t:${restaurantId}`);
-    }
-  }
-};
-io.demoteStaff = (restaurantId, staffId) => {
-  for (const socket of io.sockets.sockets.values()) {
-    if (socket.data.restaurantId === restaurantId && socket.data.staffId === staffId) {
-      socket.data.staffId = null;
-      socket.leave(`t:${restaurantId}`);
-    }
-  }
-};
-io.revokeDevice = (deviceId) => {
-  for (const socket of io.sockets.sockets.values()) {
-    if (socket.data.deviceId === deviceId) socket.disconnect(true);
-  }
-};
 io.on('connection', (socket) => {
-  socket.on('staff:join', ({ staffId, sessionToken } = {}, acknowledge) => {
-    const restaurantId = socket.data.restaurantId;
-    if (!restaurantId || !socket.data.deviceId) {
-      if (typeof acknowledge === 'function') acknowledge({ ok: false });
-      return;
-    }
-    const staff = ctx.run({ restaurantId }, () => resolveStaff(`${staffId}.${sessionToken}`));
-    if (!staff || (socket.data.roleLock && staff.role !== socket.data.roleLock && staff.role !== 'admin')) {
-      if (typeof acknowledge === 'function') acknowledge({ ok: false });
-      return;
-    }
-    socket.data.staffId = staff.id;
-    socket.join(`t:${restaurantId}`);
-    if (typeof acknowledge === 'function') acknowledge({ ok: true });
+  const rid = socket.data.rid;
+  if (!rid) return;
+
+  // After the PIN is entered the browser asks to join the staff room (all live order events).
+  socket.on('join_staff', (payload, ack) => {
+    try {
+      const staffId = Number(payload && payload.staffId);
+      const token = String((payload && payload.sessionToken) || '');
+      const ok = staffId && token && ctx.run({ restaurantId: rid }, () =>
+        db.prepare(`SELECT 1 FROM staff_sessions ss JOIN staff s ON s.id = ss.staff_id
+                    WHERE ss.staff_id = ? AND ss.token = ? AND s.active = 1`).get(staffId, token));
+      if (ok) socket.join(`t:${rid}`);
+      if (typeof ack === 'function') ack({ ok: !!ok });
+    } catch (_) { if (typeof ack === 'function') ack({ ok: false }); }
   });
-  socket.on('staff:leave', () => {
-    const { restaurantId, staffId } = socket.data;
-    if (!restaurantId || !staffId) return;
-    socket.leave(`t:${restaurantId}`);
-    socket.data.staffId = null;
-  });
+  socket.on('leave_staff', () => socket.leave(`t:${rid}`));
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth',       require('./routes/auth'));
+app.use('/api/root',       require('./routes/root'));
 app.use('/api/settings',   require('./routes/settings'));
 app.use('/api/categories', require('./routes/categories'));
 app.use('/api/menu',       require('./routes/menu'));
@@ -167,7 +128,8 @@ app.use('/api/tables',     require('./routes/tables'));
 app.use('/api/orders',     require('./routes/orders'));
 app.use('/api/staff',      require('./routes/staff'));
 app.use('/api/reports',    require('./routes/reports'));
-app.use('/api/export',     require('./routes/export'));
+app.use('/api/export',     require('./routes/menu-transfer'));   // menu export/import (per restaurant)
+app.use('/api/export',     require('./routes/export'));          // GST exports
 app.use('/api/parcel',     require('./routes/parcel'));
 app.use('/api/bug-report', require('./routes/bug-report'));
 app.use('/api/kiosk',      require('./routes/kiosk'));

@@ -15,6 +15,7 @@ import ExportView    from './views/ExportView';
 import BackupView    from './views/BackupView';
 import BugReportView from './views/BugReportView';
 import KioskView     from './views/KioskView';
+import RootApp       from './views/root/RootApp';
 import type { ViewType, UserRole } from './types';
 import './index.css';
 
@@ -156,6 +157,10 @@ async function verifyPinFn(pin: string): Promise<boolean> {
 }
 
 export default function App() {
+  if (window.location.pathname === '/root' || window.location.pathname.startsWith('/root/')) {
+    return <RootApp />;
+  }
+
   // Check if this is a kiosk URL — if so, bypass the entire auth system
   const kioskToken = getKioskToken();
 

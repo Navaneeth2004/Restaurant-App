@@ -15,8 +15,9 @@ const ctx = require('../core/context');
 const db = require('../db/database');
 const tenants = require('../core/tenants');
 const {
-  DEVICE_COOKIE, STAFF_COOKIE, parseCookies, findDevice, touchDevice, activeRestaurant,
+  DEVICE_COOKIE, STAFF_COOKIE, parseCookies, findDevice, touchDevice, activeRestaurant, accessInfo,
 } = require('../core/devices');
+const rootCore = require('../core/root');
 
 // No device needed
 const PUBLIC = [
@@ -31,12 +32,13 @@ const DEVICE_ONLY = [
   { method: 'GET',  re: /^\/settings\/?$/ },                 // branding for the PIN screen
   { method: 'POST', re: /^\/staff\/(verify|check-pin|logout)$/ },
   { method: 'GET',  re: /^\/staff\/session\/validate$/ },
+  { method: 'POST', re: /^\/auth\/device\/unlink$/ },         // PIN screen: "Switch restaurant" (needs an admin PIN)
 ];
 
 // Who may do what. First matching rule wins; no match = any logged-in staff.
 const RULES = [
   { re: /^\/(backup|reset|export|reports)(\/|$)/,                      roles: ['admin'] },
-  { re: /^\/auth\/(pairing-code|devices|device\/unlink)/,               roles: ['admin'] },
+  { re: /^\/auth\/(pairing-code|devices)/,                              roles: ['admin'] },
   { re: /^\/staff\/?$/,                 methods: ['GET', 'POST'],        roles: ['admin'] },
   { re: /^\/staff\/\d+$/,               methods: ['PUT', 'DELETE'],      roles: ['admin'] },
   { re: /^\/settings(\/|$)/,            methods: ['PUT', 'POST'],        roles: ['admin'] },
@@ -84,6 +86,16 @@ function gate(req, res, next) {
   const p = req.path;
   req.cookies = parseCookies(req.headers.cookie);
 
+  // Root console: its own cookie, no device / PIN involved
+  if (p.startsWith('/root/')) {
+    req._smallBody = true;
+    if (p === '/root/login') return next();
+    const sess = rootCore.findSession(req);
+    if (!sess) return res.status(401).json({ error: 'Please log in.', code: 'root_required' });
+    req.root = sess;
+    return next();
+  }
+
   // Customer QR pages: no login, but the token itself says which restaurant
   const kiosk = p.match(/^\/kiosk\/([^/]+)/);
   if (kiosk && !['lan-ip', 'ensure-token'].includes(kiosk[1])) {
@@ -101,10 +113,15 @@ function gate(req, res, next) {
   if (!device) {
     return res.status(401).json({ error: 'This device is not linked to a restaurant.', code: 'device_required' });
   }
-  const restaurant = activeRestaurant(device.restaurant_id);
-  if (!restaurant) {
-    return res.status(403).json({ error: 'This restaurant account is not active.', code: 'restaurant_suspended' });
+  const info = accessInfo(device.restaurant_id);
+  if (!info || !info.state.allowed) {
+    const reason = info && info.state.reason;
+    const msg = reason === 'trial_expired' ? 'The free trial has ended. Please contact support.'
+      : reason && reason !== 'suspended' ? `This account is suspended: ${reason}`
+      : 'This restaurant account is not active. Please contact support.';
+    return res.status(403).json({ error: msg, code: 'restaurant_suspended', reason: reason || 'suspended' });
   }
+  const restaurant = info.row;
   touchDevice(device, req);
 
   const store = { restaurantId: restaurant.id, restaurant, device, staff: null };

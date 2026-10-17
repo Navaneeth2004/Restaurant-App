@@ -4,6 +4,7 @@ import { useSettings } from '../context/SettingsContext';
 import { useToast } from '../context/ToastContext';
 import { getToken as getSharedToken } from '../utils/authedFetch';
 import PinPad from './PinPad';
+import SwitchRestaurant from './SwitchRestaurant';
 import ThemeToggle from './ThemeToggle';
 
 const API_BASE = process.env.REACT_APP_API_URL || window.location.origin;
@@ -133,6 +134,7 @@ export default function LoginScreen() {
         <p className="text-center text-zinc-700 text-xs mt-5">
           Contact your manager if you've forgotten your PIN
         </p>
+        <SwitchRestaurant />
       </div>
     </div>
   );

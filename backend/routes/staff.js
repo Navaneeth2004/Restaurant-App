@@ -15,14 +15,13 @@ const bcrypt = require('bcryptjs');
 const db = require('../db/database');
 const ctx = require('../core/context');
 const cfg = require('../core/config');
-const { failTracker } = require('../middleware/rateLimit');
+const entitlements = require('../core/entitlements');
+const { pinFails, verifyPin, lockMsg } = require('../core/pin-guard');
 const { STAFF_COOKIE, cookieOptions } = require('../core/devices');
 const { pinProblem } = require('../core/util');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
-
-const pinFails = failTracker({ max: 5, windowMs: 10 * 60 * 1000, lockMs: 5 * 60 * 1000 });
 
 // ── helpers ───────────────────────────────────────────────────────────────
 function getSession(staffId) {
@@ -36,10 +35,6 @@ function deleteSession(staffId) {
   db.prepare('DELETE FROM staff_sessions WHERE staff_id = ?').run(staffId);
 }
 const hashPin = (pin) => bcrypt.hash(String(pin), SALT_ROUNDS);
-async function verifyPin(raw, stored) {
-  if (!stored || !(stored.startsWith('$2a$') || stored.startsWith('$2b$'))) return false;
-  return bcrypt.compare(String(raw), stored);
-}
 async function isPinTaken(rawPin, excludeId = null) {
   const all = db.prepare('SELECT id, pin FROM staff WHERE active = 1').all();
   for (const s of all) {
@@ -48,7 +43,6 @@ async function isPinTaken(rawPin, excludeId = null) {
   }
   return false;
 }
-const lockMsg = (sec) => `Too many wrong PINs. Try again in ${Math.max(1, Math.ceil(sec / 60))} minute(s).`;
 
 // ── GET / — list staff (admin only; PINs are never returned) ──────────────
 router.get('/', (req, res) => {
@@ -60,6 +54,9 @@ router.post('/', async (req, res) => {
   const { name, pin, role } = req.body || {};
   if (!name || !pin || !role) return res.status(400).json({ error: 'name, pin, role required' });
   if (!['admin', 'waiter', 'kitchen'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+  const staffCount = db.prepare('SELECT COUNT(*) AS c FROM staff WHERE active = 1').get().c;
+  const lim = entitlements.check(ctx.get().restaurant, 'max_staff', staffCount);
+  if (!lim.ok) return res.status(403).json({ error: `Your plan allows up to ${lim.limit} staff accounts.`, code: 'plan_limit' });
   const weak = pinProblem(pin);
   if (weak) return res.status(400).json({ error: weak });
   if (await isPinTaken(pin)) {
@@ -94,10 +91,7 @@ router.put('/:id', async (req, res) => {
   `).run(name || null, hashedPin, role || null, active !== undefined ? (active ? 1 : 0) : null, req.params.id);
 
   // A changed PIN or a deactivated account ends their current session
-  if (hashedPin || active === false || active === 0) {
-    deleteSession(Number(req.params.id));
-    req.io.demoteStaff(ctx.get().restaurantId, Number(req.params.id));
-  }
+  if (hashedPin || active === false || active === 0) deleteSession(Number(req.params.id));
   res.json({ success: true });
 });
 
@@ -109,7 +103,6 @@ router.delete('/:id', (req, res) => {
     const adminCount = db.prepare("SELECT COUNT(*) AS c FROM staff WHERE role = 'admin' AND active = 1").get().c;
     if (adminCount <= 1) return res.status(400).json({ error: 'Cannot delete the last admin account. Add another admin first.' });
   }
-  req.io.demoteStaff(ctx.get().restaurantId, member.id);
   deleteSession(member.id);
   db.prepare('DELETE FROM staff WHERE id = ?').run(req.params.id);
   res.json({ success: true });
@@ -145,12 +138,10 @@ router.post('/verify', async (req, res) => {
       }
     }
 
-    req.io.demoteStaff(ctx.get().restaurantId, s.id);
     pinFails.reset(key);
     const sessionToken = crypto.randomBytes(24).toString('hex');
     setSession(s.id, sessionToken);
     res.cookie(STAFF_COOKIE, `${s.id}.${sessionToken}`, cookieOptions(cfg.STAFF_COOKIE_DAYS));
-    req.io.promoteDevice(device.id, ctx.get().restaurantId, s.id);
     return res.json({ id: s.id, name: s.name, role: s.role, sessionToken });
   }
 
@@ -164,10 +155,7 @@ router.post('/logout', (req, res) => {
   if (!staffId) return res.status(400).json({ error: 'staffId required' });
   const id = Number(staffId);
   const stored = getSession(id);
-  if (stored && stored.token === sessionToken) {
-    deleteSession(id);
-    req.io.demoteDevice(ctx.get().device.id, ctx.get().restaurantId);
-  }
+  if (stored && stored.token === sessionToken) deleteSession(id);
   res.clearCookie(STAFF_COOKIE, { path: '/' });
   res.json({ success: true });
 });

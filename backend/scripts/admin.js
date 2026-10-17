@@ -2,6 +2,8 @@
 /**
  * Support tool for YOU (the person running the service). Run on the server:
  *
+ *   node scripts/admin.js create-root <phone> <password>     create the ROOT login for /root (the only way to make one)
+ *   node scripts/admin.js list-roots | remove-root <phone>
  *   node scripts/admin.js list
  *   node scripts/admin.js suspend  <restaurantId>      block every device of that restaurant
  *   node scripts/admin.js activate <restaurantId>
@@ -28,6 +30,30 @@ const must = (cond, msg) => { if (!cond) { console.error(msg); process.exit(1); 
 
 (async () => {
   switch (cmd) {
+    case 'create-root': {
+      must(a && b, 'usage: create-root <phone> <password>');
+      must(String(b).length >= 10, 'A root password should be at least 10 characters');
+      const phone = phoneOf(a);
+      const existing = central.prepare('SELECT * FROM owners WHERE phone = ?').get(phone);
+      must(!existing || existing.role === 'root', 'That phone number is already a restaurant owner account. Use a different number for root.');
+      const hash = await bcrypt.hash(String(b), 12);
+      if (existing) central.prepare('UPDATE owners SET password_hash = ?, disabled = 0, updated_at = ? WHERE id = ?').run(hash, nowIso(), existing.id);
+      else central.prepare("INSERT INTO owners (id, phone, password_hash, role, created_at, updated_at) VALUES (?,?,?,'root',?,?)")
+        .run(require('crypto').randomUUID(), phone, hash, nowIso(), nowIso());
+      console.log(`Root account ready for ${phone}. Open https://<your-site>/root to log in.`);
+      break;
+    }
+    case 'list-roots': {
+      console.table(central.prepare("SELECT phone, disabled, created_at FROM owners WHERE role = 'root'").all());
+      break;
+    }
+    case 'remove-root': {
+      must(a, 'usage: remove-root <phone>');
+      const n = central.prepare("DELETE FROM owners WHERE phone = ? AND role = 'root'").run(phoneOf(a)).changes;
+      must(n, 'No root account with that phone');
+      console.log('Removed.');
+      break;
+    }
     case 'list': {
       const rows = central.prepare(`
         SELECT r.id, r.name, r.status, r.plan, r.created_at, o.phone,
@@ -103,7 +129,7 @@ const must = (cond, msg) => { if (!cond) { console.error(msg); process.exit(1); 
       break;
     }
     default:
-      console.log('Commands: list | backup-all [folder] | suspend <id> | activate <id> | set-password <phone> <pw> | disable-owner <phone> | enable-owner <phone> | revoke-devices <id> | migrate | delete-restaurant <id> --yes');
+      console.log('Commands: create-root <phone> <pw> | list-roots | remove-root <phone> | list | backup-all [folder] | suspend <id> | activate <id> | set-password <phone> <pw> | disable-owner <phone> | enable-owner <phone> | revoke-devices <id> | migrate | delete-restaurant <id> --yes');
   }
   tenants.closeAll();
 })().catch(e => { console.error(e); process.exit(1); });

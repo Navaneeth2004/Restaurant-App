@@ -17,6 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const Database = require('better-sqlite3');
+const bcrypt = require('bcryptjs');
 
 const ctx = require('../core/context');
 const tenants = require('../core/tenants');
@@ -98,6 +99,19 @@ router.post('/restore', ctx.wrap(upload.single('backup')), (req, res) => {
     const h = tenants.get(rid);
     h.raw.prepare("UPDATE tables SET kiosk_token = NULL WHERE kiosk_token IS NOT NULL AND kiosk_token NOT LIKE ?").run(`${rid}%`);
     h.raw.prepare('DELETE FROM staff_sessions').run();
+
+    // Backups from the old single-restaurant app: plain-text PINs -> hashes
+    for (const st of h.raw.prepare('SELECT id, pin FROM staff').all()) {
+      if (!/^\$2[ab]\$/.test(st.pin)) h.raw.prepare('UPDATE staff SET pin = ? WHERE id = ?').run(bcrypt.hashSync(String(st.pin), 10), st.id);
+    }
+    // Photo links must point at THIS restaurant's folder (old backups, or a backup taken from another restaurant)
+    const relink = (v) => (v ? files.publicUrl(rid, path.basename(String(v))) : v);
+    for (const it of h.raw.prepare("SELECT id, image_path FROM menu_items WHERE image_path IS NOT NULL AND image_path != ''").all()) {
+      const fixed = relink(it.image_path);
+      if (fixed !== it.image_path) h.raw.prepare('UPDATE menu_items SET image_path = ? WHERE id = ?').run(fixed, it.id);
+    }
+    const logo = h.raw.prepare("SELECT value FROM settings WHERE key = 'logo_url'").get();
+    if (logo && logo.value) h.raw.prepare("UPDATE settings SET value = ? WHERE key = 'logo_url'").run(relink(logo.value));
 
     // photos
     const dir = files.uploadsDir(rid);

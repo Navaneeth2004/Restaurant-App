@@ -15,6 +15,8 @@ const ctx = require('../core/context');
 const db = require('../db/database');
 const providers = require('../auth');
 const { limit, failTracker } = require('../middleware/rateLimit');
+const entitlements = require('../core/entitlements');
+const { pinFails, isAdminPin, lockMsg: pinLockMsg } = require('../core/pin-guard');
 const {
   DEVICE_COOKIE, STAFF_COOKIE, parseCookies, findDevice, linkDevice, revokeDevice, activeRestaurant,
 } = require('../core/devices');
@@ -30,9 +32,17 @@ const pairFails  = failTracker({ max: 8, windowMs: 15 * 60 * 1000, lockMs: 15 * 
 const lockedMsg = (s) => `Too many wrong attempts. Try again in ${Math.max(1, Math.ceil(s / 60))} minute(s).`;
 const publicRestaurant = (r) => ({ id: r.id, name: r.name });
 
+/** true when the restaurant's plan does not allow another linked device */
+function deviceLimitReached(restaurantId) {
+  const r = central.prepare('SELECT plan, limits_json FROM restaurants WHERE id = ?').get(restaurantId);
+  const n = central.prepare('SELECT COUNT(*) AS c FROM devices WHERE restaurant_id = ? AND revoked_at IS NULL').get(restaurantId).c;
+  return !!r && !entitlements.check(r, 'max_devices', n).ok;
+}
+const LIMIT_MSG = 'This restaurant has reached the number of devices its plan allows. Remove an old device first (Admin → Devices) or contact support.';
+
 // ── GET /config ───────────────────────────────────────────────────────────
 router.get('/config', (req, res) => {
-  res.json({ registration_open: cfg.ALLOW_REGISTRATION, methods: providers.methods });
+  res.json({ registration_open: cfg.ALLOW_REGISTRATION, methods: cfg.AUTH_METHODS });
 });
 
 // ── GET /device/status — what should this browser show first? ─────────────
@@ -117,7 +127,7 @@ router.post('/owner/login', ipLimit, async (req, res) => {
   if (wait) return res.status(429).json({ error: lockedMsg(wait), code: 'locked', retry_after: wait });
 
   const owner = phone
-    ? central.prepare('SELECT * FROM owners WHERE phone = ? AND disabled = 0').get(phone)
+    ? central.prepare("SELECT * FROM owners WHERE phone = ? AND disabled = 0 AND role = 'owner'").get(phone)
     : null;
   const ok = await provider.verify(owner, b);
   if (!ok) {
@@ -141,6 +151,7 @@ router.post('/owner/login', ipLimit, async (req, res) => {
     return res.json({ needs_restaurant: true, restaurants: restaurants.map(publicRestaurant) });
   }
 
+  if (deviceLimitReached(r.id)) return res.status(403).json({ error: LIMIT_MSG, code: 'plan_limit' });
   linkDevice(req, res, { restaurantId: r.id, name: b.device_name, via: 'owner_login' });
   res.json({ linked: true, restaurant: publicRestaurant(r) });
 });
@@ -153,6 +164,9 @@ router.post('/device/pair', ipLimit, (req, res) => {
   const wait = pairFails.check(failKey);
   if (wait) return res.status(429).json({ error: lockedMsg(wait), code: 'locked', retry_after: wait });
   if (code.length !== 6) return res.status(400).json({ error: 'Enter the 6-digit code.' });
+
+  const peek = central.prepare('SELECT restaurant_id FROM pairing_codes WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?').get(sha256(code), nowIso());
+  if (peek && deviceLimitReached(peek.restaurant_id)) return res.status(403).json({ error: LIMIT_MSG, code: 'plan_limit' });
 
   const row = central.transaction(() => {
     const r = central.prepare('SELECT * FROM pairing_codes WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?')
@@ -218,9 +232,17 @@ router.delete('/devices/:id', (req, res) => {
   res.json({ success: true });
 });
 
-// ── POST /device/unlink — unlink THIS browser ─────────────────────────────
-router.post('/device/unlink', (req, res) => {
+// ── POST /device/unlink — "Switch restaurant" from the PIN screen (needs an ADMIN PIN) ───
+router.post('/device/unlink', async (req, res) => {
   const { restaurantId, device } = ctx.get();
+  const key = `chk:${device.id}`;
+  const wait = pinFails.check(key);
+  if (wait) return res.status(429).json({ error: pinLockMsg(wait), code: 'locked', retry_after: wait });
+  if (!(await isAdminPin((req.body || {}).pin))) {
+    pinFails.fail(key);
+    return res.status(401).json({ error: 'Incorrect admin PIN.' });
+  }
+  pinFails.reset(key);
   revokeDevice(device.id, restaurantId);
   req.io.disconnectDevice(device.id);
   res.clearCookie(DEVICE_COOKIE, { path: '/' });
