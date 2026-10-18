@@ -1,0 +1,43 @@
+'use strict';
+/** Suite: root console */
+module.exports = async (t) => {
+  const { A, anon, base, check, Client, S } = t;
+  const { token } = S;
+  let r;
+
+  console.log('\n[root console]');
+  const owners = require('../../src/repositories/central/owners.repo');
+  const providers = require('../../src/services/auth/providers');
+  const { uuid } = require('../../src/lib/crypto');
+  owners.insert({ id: uuid(), phone: '919999900000', passwordHash: await providers.get('password').hash('rootpassword1'), role: 'root', now: new Date().toISOString() });
+  const R = new Client(base);
+  r = await R.get('/api/root/overview');
+  check('root needs login', r.status === 401);
+  r = await R.post('/api/root/login', { phone: '9999900000', password: 'rootpassword1' });
+  check('root login', r.status === 200, r);
+  r = await R.get('/api/root/overview');
+  check('overview', r.status === 200 && r.data.restaurants.total === 1 && r.data.connected_sockets !== null, r.data);
+  r = await R.get('/api/root/restaurants');
+  const rid = r.data[0].id;
+  r = await R.get(`/api/root/restaurants/${rid}`);
+  check('restaurant detail', r.status === 200 && r.data.counts.orders_total >= 1 && r.data.database.schema_version === 3, r.data.database);
+  r = await R.post('/api/root/restaurants', { restaurant_name: 'Second', owner_phone: '9123456780' });
+  check('root creates a restaurant', r.status === 201 && r.data.temp_owner_password && r.data.admin_pin, r);
+  r = await R.patch(`/api/root/restaurants/${rid}`, { plan: 'standard', limits: { max_staff: 2 } });
+  check('root edits plan/limits', r.status === 200 && r.data.plan === 'standard', r.data);
+  r = await A.post('/api/staff', { name: 'Third', pin: '2468', role: 'waiter' });
+  check('staff plan limit enforced', r.status === 403 && r.data.code === 'plan_limit', r);
+  r = await R.post(`/api/root/restaurants/${rid}/suspend`, { reason: 'test' });
+  check('suspend', r.status === 200);
+  r = await A.get('/api/tables');
+  check('suspended restaurant is blocked', r.status === 403 && r.data.code === 'restaurant_suspended');
+  r = await anon.get(`/api/kiosk/${token}`);
+  check('suspended restaurant QR blocked', r.status === 404);
+  await R.post(`/api/root/restaurants/${rid}/activate`);
+  r = await R.get('/api/root/audit');
+  check('audit trail', r.data.length >= 4);
+  r = await R.get('/api/root/tickets');
+  check('ticket visible to root', r.data.length === 1);
+  r = await R.del(`/api/root/restaurants/${rid}`, { confirm_name: 'Test Diner', password: 'bad' });
+  check('delete needs root password', r.status === 403);
+};

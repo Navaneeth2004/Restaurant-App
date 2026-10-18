@@ -1,0 +1,41 @@
+'use strict';
+/** Suite: tables, categories, menu */
+module.exports = async (t) => {
+  const { A, anon, check, fs, path, DATA } = t;
+  let r;
+
+  console.log('\n[tables, categories, menu]');
+  r = await A.del('/api/tables/T3');
+  check('delete table with history -> archived (not an error)', r.status === 200, r);
+  r = await A.get('/api/tables');
+  check('archived table hidden', !r.data.some(t => t.id === 'T3'));
+  r = await A.post('/api/tables', { label: 'Patio' });
+  check('new table gets an unused id', r.status === 201 && r.data.id !== 'T3', r.data);
+  r = await A.post('/api/categories', { name: 'Starters' });
+  check('duplicate category -> 409 (was a 500)', r.status === 409, r);
+  r = await A.post('/api/categories', { name: 'Specials' });
+  check('new category', r.status === 201);
+  const fd = new FormData();
+  fd.append('name', 'Soup'); fd.append('price', '4.5'); fd.append('category_id', String(r.data.id));
+  fd.append('image', new Blob([Buffer.from('89504e470d0a1a0a', 'hex')], { type: 'image/png' }), 'soup.png');
+  r = await A.call('POST', '/api/menu', fd);
+  check('menu item with photo', r.status === 201 && /^\/uploads\/[a-f0-9]{10}\/item_/.test(r.data.image_path), r);
+  const photo = r.data.image_path;
+  r = await anon.get(photo);
+  check('photo is publicly served', r.status === 200);
+  r = await anon.get('/uploads/aaaaaaaaaa/x.png');
+  check('unknown restaurant uploads -> 404, no folder created', r.status === 404 && !fs.existsSync(path.join(DATA, 'files', 'aaaaaaaaaa')));
+  r = await A.put('/api/settings', { tax_percent: '999' });
+  check('bad tax percent refused', r.status === 400);
+  r = await A.put('/api/settings', { tax_percent: '12', address: '1 Road', 'bad key!': 'x' });
+  check('settings update', r.status === 200);
+  r = await A.get('/api/settings');
+  check('settings read back', r.data.tax_percent === '12' && !('bad key!' in r.data));
+  r = await A.get('/api/export/menu');
+  check('menu export zip', r.status === 200 && Buffer.isBuffer(r.data) && r.data.length > 100);
+  const menuZip = r.data;
+  const imp = new FormData();
+  imp.append('menuzip', new Blob([menuZip], { type: 'application/zip' }), 'menu.zip');
+  r = await A.call('POST', '/api/export/menu/import', imp);
+  check('menu import adds nothing twice', r.status === 200 && r.data.items_added === 0, r.data);
+};
