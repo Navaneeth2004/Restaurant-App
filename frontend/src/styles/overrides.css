@@ -1,0 +1,42 @@
+/* Plain-CSS helpers and light-mode fixes (no Tailwind directives, so safe to import anywhere). */
+.bg-brand-500\/8 { background-color: rgb(249 115 22 / 0.08); }
+.bg-brand-500\/15 { background-color: rgb(249 115 22 / 0.15); }
+.bg-brand-500\/20 { background-color: rgb(249 115 22 / 0.20); }
+.bg-emerald-500\/8 { background-color: rgb(16 185 129 / 0.08); }
+.bg-emerald-500\/15 { background-color: rgb(16 185 129 / 0.15); }
+.bg-red-500\/8 { background-color: rgb(239 68 68 / 0.08); }
+.bg-red-500\/15 { background-color: rgb(239 68 68 / 0.15); }
+.border-brand-500\/30 { border-color: rgb(249 115 22 / 0.30); }
+.border-brand-500\/60 { border-color: rgb(249 115 22 / 0.60); }
+.border-emerald-500\/30 { border-color: rgb(16 185 129 / 0.30); }
+.border-emerald-500\/60 { border-color: rgb(16 185 129 / 0.60); }
+.border-red-500\/15 { border-color: rgb(239 68 68 / 0.15); }
+.border-red-500\/20 { border-color: rgb(239 68 68 / 0.20); }
+.text-brand-400 { color: #fb923c; }
+.text-brand-500 { color: #f97316; }
+.ring-brand-500 { --tw-ring-color: #f97316; }
+.ring-offset-surface-card { --tw-ring-offset-color: rgb(var(--surface-card)); }
+
+@keyframes slideUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+.animate-slide-up { animation: slideUp 0.2s ease-out; }
+.animate-fade-in { animation: fadeIn 0.15s ease-out; }
+.animate-shake { animation: shake 0.3s ease-in-out; }
+
+html[data-theme="light"] .text-white,
+html[data-theme="light"] .hover\:text-white:hover { color: rgb(var(--ink)) !important; }
+html[data-theme="light"] .text-white:is(.bg-brand-500, .bg-brand-600, .bg-red-500, .bg-red-600, .bg-amber-500, .bg-emerald-500, .bg-red-500\/80):not(:disabled),
+html[data-theme="light"] :is(.bg-brand-500, .bg-brand-600, .bg-red-500, .bg-red-600, .bg-amber-500, .bg-emerald-500) .text-white { color: #ffffff !important; }
+html[data-theme="light"] .text-brand-400,
+html[data-theme="light"] .text-brand-500 {
+  color: #c2410c !important;
+  color: color-mix(in srgb, var(--brand, #f97316) 72%, #000) !important;
+}
+html[data-theme="light"] .ring-white { --tw-ring-color: #18181b !important; }
+html[data-theme="light"] .bg-surface-raised p[style*="rgb(255, 255, 255)"] { color: rgb(var(--ink)) !important; }
+
+/* Backdrop blur samples outside the page at the edges and leaves a pale strip: off in both themes. */
+.backdrop-blur-sm { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+.fixed.inset-0 { top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; margin: 0 !important; }
+html, body, #root { margin: 0 !important; padding: 0 !important; }

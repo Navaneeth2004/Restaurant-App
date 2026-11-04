@@ -1,199 +1,125 @@
 # Restaurant POS
 
-A full-stack Point of Sale system with real-time kitchen display, order management, and admin panel.
+A point-of-sale system for restaurants: waiters take orders on a phone, the kitchen sees them live,
+customers can order from a table QR code, and the owner gets bills, reports and GST exports.
+One server can run many restaurants; each restaurant's data is kept completely separate.
 
----
+## What it does
+
+**Waiter** — pick a table or a parcel slot, add items with notes, send to the kitchen (several devices can add to
+the same table safely), cancel items or rounds, generate the bill, take payment (cash, UPI, card, cheque, split).
+
+**Kitchen** — live order cards with timers that turn red when overdue, a sound for new orders, additions and
+cancellations, and "Mark Delivered".
+
+**Customer (QR)** — scan the table's QR, browse the menu, order, watch each round go from "In kitchen" to "Ready",
+and request the bill. No login.
+
+**Admin** — floor view, restaurant details and GST settings, tables, menu with photos, categories, staff and PINs,
+linked devices, an optional admin-PIN lock for sensitive areas.
+
+**Reports and exports** — today's analytics, visit history (edit payment, reprint, delete with an audit trail),
+GSTR-1 / GSTR-3B / GSTR-9, and a Revenue export (Excel-friendly CSV and JSON).
+
+**Backup** — download or restore a restaurant as a zip.  **Support** — staff send tickets with diagnostics.
+
+**Root console** (`/root`) — for the person running the service: create, suspend, edit and delete restaurants,
+set plans and limits, reset owner passwords, read support tickets, see the audit log.
+
+## How people sign in
+
+1. **The device is linked once.** The owner logs in with phone + password, or staff type a 6-digit code an admin
+   made under Admin → Devices. Codes last 10 minutes and work once.
+2. **Each person enters their own PIN.** PINs are 4–6 digits, stored hashed, and a wrong-PIN lockout applies.
+
+A new restaurant chooses its first admin PIN at sign-up. There are no default PINs.
 
 ## Requirements
 
 - Node.js 18 or newer
-- A modern browser (Chrome recommended for kitchen display)
-- For production, a persistent server disk and HTTPS
+- A modern browser (Chrome recommended for the kitchen screen)
+- For a real deployment: a server with persistent disk and HTTPS (see [DEPLOY.md](DEPLOY.md))
 
-The backend uses `better-sqlite3`. Windows installations may need a supported
-prebuilt binary or the Visual Studio C++ build tools if npm cannot download one.
+The database is SQLite through `better-sqlite3`, which ships ready-made binaries for common systems. If npm cannot
+download one for your machine, install the C++ build tools (Visual Studio Build Tools on Windows,
+`build-essential` on Linux) and run `npm install` again.
 
----
-
-## Quick Start
-
-### Step 1 — Install dependencies
-
-Open a terminal, navigate to this folder, and run:
+## Try it on your computer
 
 ```bash
-# Install backend dependencies
-cd backend
-npm install
+# 1. Install
+cd backend  && npm install
+cd ../frontend && npm install
 
-# Install frontend dependencies
-cd ../frontend
-npm install
-```
+# 2. Configure the backend
+cd ../backend
+cp .env.example .env
+#    for local testing over plain HTTP, set in .env:
+#      NODE_ENV=development
+#      COOKIE_SECURE=false
+#      DATA_DIR=./data
 
-Both installs are pure JavaScript — no compilation step, no Visual Studio / build tools required on any OS.
-
----
-
-### Step 2 — Configure and start the backend
-
-Copy `backend/.env.example` to `backend/.env` if you do not already have one.
-For local HTTP testing, use `NODE_ENV=development`, `DEPLOYMENT=cloud`,
-`COOKIE_SECURE=false`, and a persistent `DATA_DIR` such as `./data`.
-
-```bash
-cd backend
+# 3. Start the backend (port 4000)
 npm start
+
+# 4. In a second terminal, start the frontend (port 3000)
+cd ../frontend && npm start
 ```
 
-### Step 3 — Start the frontend
+Open http://localhost:3000, choose **New restaurant? Create an account**, and sign in with the PIN you chose.
+Keep `REACT_APP_API_URL` empty: the dev server forwards `/api` and live updates to the backend, so cookies stay on
+one origin. To test from a phone, open the frontend's network address (for example `http://192.168.1.20:3000`).
 
-Open a **second terminal window**:
+## Checks
 
 ```bash
-cd frontend
-npm start
+cd backend  && npm test                       # end-to-end API tests on a throw-away data folder
+cd frontend && npm run typecheck && npm run lint && npm test && npm run build
 ```
 
-The app opens at **http://localhost:3000**. First create an owner account and
-restaurant, then staff can enter a PIN. To link another device, create a
-one-time code in **Admin → Devices** and enter it on that device.
-
----
-
-## Accessing from other devices (phones, kitchen screen)
-
-Keep `REACT_APP_API_URL` empty in `frontend/.env`; `src/setupProxy.js` proxies
-API and Socket.IO traffic to the backend during development so device cookies
-remain same-origin. Open the frontend's LAN address from other devices.
-
----
-
-## Cloud deployment
-
-The browser must first link to a restaurant using an owner phone/password or a
-short-lived pairing code. Staff then sign in with a PIN. Both barriers use
-httpOnly cookies; PIN failures are rate-limited. Each restaurant has a separate
-SQLite file under `DATA_DIR/tenants/`, while `DATA_DIR/accounts.db` stores
-owners, restaurants, linked devices, and pairing codes.
-
-For production, set `NODE_ENV=production`, `COOKIE_SECURE=true`,
-`TRUST_PROXY=1`, and `PUBLIC_URL=https://your-domain`. Serve HTTPS through a
-reverse proxy and set `DATA_DIR` to persistent storage. Back up the entire
-`DATA_DIR` directory. Batch 1 keeps uploads shared and disables backup/reset
-routes in cloud mode; see the batch notes before enabling more servers.
-
----
-
-New restaurants choose their first admin PIN during registration. When
-importing a legacy database, existing staff PINs are retained and upgraded to
-bcrypt hashes; change weak PINs in **Admin → Staff**.
-
----
-
-## Features
-
-### Waiter View
-- Select a table → add items by category → set per-item notes (e.g. "no onions")
-- Send to kitchen — kitchen gets a sound alert instantly via WebSocket
-- Generate bill with itemised receipt and tax
-- Mark table as paid and clear it
-
-### Kitchen Display
-- All active orders shown as cards
-- Live timer on each order — turns red after the configured overdue threshold
-- Sound chime on every new order (Web Audio, no files needed)
-- "Mark as Delivered" closes the order from kitchen
-
-### Admin Panel
-- **Restaurant**: name, address, bill footer, currency, tax %, brand color, GST settings
-- **Tables**: add/delete/edit tables with seat count, drag to reorder, QR codes for customer self-ordering
-- **Menu Items**: add/edit/delete with image upload, description, price, category, availability toggle
-- **Categories**: add/rename/delete menu categories
-- **Staff**: add/remove staff with PIN and role
-- Admin can access all views (Waiter, Kitchen, Reports, Export, Backup, Admin)
-
-### Reports
-- Today's revenue, order count, active orders, occupied tables
-- 30-day revenue bar chart
-- Top selling items today
-- Full order history with date filter and search
-
-### Export
-- GSTR-1, GSTR-3B, and GSTR-9 GST filing exports/previews
-
-### Backup
-- Local deployment: manual download/restore, scheduled auto-backup, and Google Drive backup
-- Cloud deployment: backup and factory reset are disabled in Batch 1; uploads are still shared
-
----
-
-## Project Structure
+## Folders
 
 ```
 restaurant-pos/
 ├── backend/
-│   ├── core/                   # Central accounts, tenant DBs, schema, auth context
-│   ├── db/database.js          # Tenant-aware database proxy
-│   ├── middleware/             # Device/staff auth, rate limits, Socket.IO scoping
-│   ├── routes/
-│   │   ├── settings.js
-│   │   ├── categories.js
-│   │   ├── menu.js             # Includes image upload (multer)
-│   │   ├── tables.js
-│   │   ├── orders.js
-│   │   ├── staff.js
-│   │   ├── reports.js
-│   │   ├── export.js           # GST filing exports
-│   │   ├── backup.js           # Local + Google Drive backup
-│   │   ├── reset.js            # Factory reset
-│   │   ├── parcel.js           # Parcel/takeaway slots
-│   │   ├── kiosk.js            # Customer self-order QR flow
-│   │   └── bug-report.js
-│   ├── server.js               # Express + Socket.IO entry point
-│   └── package.json
-│
+│   ├── server.js            boot only
+│   ├── src/                 routes → services → repositories → SQLite (see backend/ARCHITECTURE.md)
+│   ├── scripts/             admin.js (support commands), import-legacy.js
+│   ├── tests/               end-to-end tests
+│   ├── .env.example         every setting, explained
+│   └── data/                created at run time: accounts.db, tenants/, files/, tickets/   (not in git)
 ├── frontend/
-│   ├── .env                    # API URL config — edit this for your IP
-│   └── src/
-│       ├── components/         # Shared UI (LoginScreen, TopBar, BillModal)
-│       ├── context/            # Auth, Toast, Settings, AdminLock providers
-│       ├── hooks/               # useSocket, useTick, useSortable
-│       ├── services/            # api.ts, socket.ts
-│       ├── utils/                # sound, diagnostics, sessions, authedFetch, etc.
-│       └── views/               # WaiterView, KitchenView, AdminView, ReportsView, ExportView, BackupView, KioskView
-│           └── admin/           # Admin sub-tabs
-│
-├── uploads/                    # Shared food item images + logo (Batch 1)
-├── backend/data/
-│   ├── accounts.db             # Owners, restaurants, devices, pairing codes
-│   └── tenants/                # One restaurant SQLite file per tenant
+│   ├── src/                 React app (see frontend/ARCHITECTURE.md)
+│   └── build/               created by `npm run build`; the backend serves it           (not in git)
+├── DEPLOY.md
+├── LICENSE.txt
 └── README.md
 ```
 
----
+Where data lives: `DATA_DIR/accounts.db` (owners, restaurants, devices), `DATA_DIR/tenants/<id>.db` (one database per
+restaurant), `DATA_DIR/files/<id>/uploads/` (menu photos and logo), `DATA_DIR/tickets/` (ticket screenshots).
+**Back up the whole `DATA_DIR`.**
 
-## Tech Stack
+## Tech
 
 | Layer | Technology |
-|-------|-----------|
-| Frontend | React 18 |
-| Real-time | Socket.IO (WebSocket) |
-| Backend | Node.js + Express |
-| Database | SQLite via better-sqlite3 (one file per restaurant) |
-| File uploads | Multer |
-| HTTP client | Axios |
-
----
+|---|---|
+| Frontend | React 18, TypeScript, Tailwind CSS |
+| Live updates | Socket.IO |
+| Backend | Node.js, Express |
+| Database | SQLite (`better-sqlite3`), one file per restaurant |
+| Uploads | Multer (JPG, PNG, WEBP, GIF only) |
 
 ## Troubleshooting
 
-**`Cannot find module 'socket.io'`** — The `npm install` failed silently. Delete `node_modules` folder and run `npm install` again.
+- **`Cannot find module …`** — delete `node_modules` and run `npm install` again in that folder.
+- **Blank page or login loops on `http://`** — set `COOKIE_SECURE=false` in `backend/.env` (local testing only).
+- **Phone cannot connect in development** — use the frontend's network address, and allow port 3000 through the
+  computer's firewall.
+- **Photos missing after moving data** — copy `DATA_DIR/files` together with the databases.
+- **Port already in use** — set `PORT=4001` in `backend/.env` (and `POS_BACKEND_URL=http://localhost:4001` for the
+  frontend dev server).
 
-**`allowedHosts` error in frontend** — Make sure the `.env` file exists in the `frontend/` folder.
+## License
 
-**Kitchen screen not getting orders** — Edit `frontend/.env` and set `REACT_APP_API_URL` to your computer's local IP (not localhost). Then restart the frontend.
-
-**Images not showing on other devices** — Same as above — set the IP in `.env`.
-
-**Port already in use** — `set PORT=4001 && npm start` (Windows) or `PORT=4001 npm start` (Mac/Linux)
+Proprietary. See [LICENSE.txt](LICENSE.txt).

@@ -1,10 +1,18 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-import { applyTheme, getStoredTheme } from './utils/theme';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import 'styles/theme.css';
+import 'styles/overrides.css';
+import 'styles/index.css';
+import 'styles/bill.css';
+import 'styles/print.css';
+import 'styles/floor.css';
+import App from 'app/App';
+import { startErrorCapture } from 'lib/support/error-capture';
+import { applyTheme, getStoredTheme } from 'state/theme/theme';
 
-// Apply the saved light/dark choice before the first paint (no flash).
-applyTheme(getStoredTheme());
+applyTheme(getStoredTheme()); // before first paint: no flash
+startErrorCapture(); // so a ticket can include what failed BEFORE the form was opened
 
-const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
-root.render(<React.StrictMode><App /></React.StrictMode>);
+const container = document.getElementById('root');
+if (!container) throw new Error('Missing #root element');
+createRoot(container).render(<StrictMode><App /></StrictMode>);

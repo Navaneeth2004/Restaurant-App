@@ -1,0 +1,25 @@
+import { request } from '../http';
+import type { NewOrderItem, Order, PaymentEditInput, PaymentInput, DeletedRecord } from 'types/restaurant/orders';
+
+const oid = (id: string) => encodeURIComponent(id);
+
+export const listActiveOrders = (signal?: AbortSignal) => request<Order[]>('/orders/active', { signal });
+export const listTableOrders = (tableId: string, signal?: AbortSignal) =>
+  request<Order[]>(`/orders/table/${encodeURIComponent(tableId)}/all`, { signal });
+
+/** ADDITIVE: send only this device's new items; the server merges. */
+export const submitOrder = (tableId: string, items: ReadonlyArray<NewOrderItem>) =>
+  request<Order>('/orders', { method: 'POST', json: { table_id: tableId, items } });
+export const directBill = (tableId: string, items: ReadonlyArray<NewOrderItem>) =>
+  request<Order>('/orders/direct-bill', { method: 'POST', json: { table_id: tableId, items } });
+
+export const deliverOrder = (id: string) => request<Order>(`/orders/${oid(id)}/deliver`, { method: 'PATCH' });
+export const cancelOrderItem = (orderId: string, itemId: number) =>
+  request<void>(`/orders/${oid(orderId)}/cancel-item`, { method: 'PATCH', json: { item_id: itemId } });
+export const cancelOrder = (orderId: string) => request<void>(`/orders/${oid(orderId)}/cancel`, { method: 'PATCH' });
+export const closeOrder = (id: string, p: PaymentInput) => request<void>(`/orders/${oid(id)}/close`, { method: 'PATCH', json: p });
+export const updatePayment = (id: string, p: PaymentEditInput) => request<void>(`/orders/${oid(id)}/payment`, { method: 'PATCH', json: p });
+
+export const deleteRecords = (orderIds: string[], pin: string) =>
+  request<{ deleted_ids?: string[] }>('/orders/delete-records', { method: 'POST', json: { order_ids: orderIds, pin } });
+export const listDeletedRecords = (signal?: AbortSignal) => request<DeletedRecord[]>('/orders/log/deleted', { signal });

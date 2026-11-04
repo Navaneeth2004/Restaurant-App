@@ -1,187 +1,258 @@
-# Deploying the POS to the Restaurant
+# Deploying Restaurant POS
 
-## Overview
+The supported setup is **one small server on the internet, behind HTTPS**, serving every restaurant.
+Phones, tablets and PCs just open a web address. Nothing is installed at the restaurant.
 
-The app has two parts: a **backend** (Node.js server) and a **frontend** (React web app).
-The frontend needs to be *built* into static files before deployment. Once built, you only
-need Node.js on the restaurant computer — no npm, no compiling, no internet required to run.
+The backend serves the built frontend itself, so there is one program to run (Node.js) and one port (4000).
 
-The database is **sql.js** (SQLite compiled to WASM), so there is no native module to build —
-this works out of the box on any OS/Node combination without Visual Studio, Xcode command line
-tools, or `windows-build-tools`.
+> **Never expose port 4000 directly.** Put a reverse proxy with HTTPS in front (Step 4). The sign-in cookies are
+> marked Secure and will not work over plain HTTP in production.
 
 ---
 
-## Step 1 — Build on YOUR computer (one time)
+## 1. What you need
 
-On your dev machine, run one of these:
+- A Linux server (1 vCPU / 1 GB RAM is enough to start) with a public IP
+- A domain name pointing at it, for example `pos.example.com`
+- Node.js 18 or newer
+- Git, and a build toolchain only if `npm install` cannot fetch a ready-made SQLite binary
+  (`sudo apt install build-essential python3`)
 
-**Windows:**
-```
-double-click: start\BUILD_FOR_RESTAURANT.bat
-```
+## 2. Get the code and build
 
-**Mac/Linux:**
 ```bash
-bash start/BUILD_FOR_RESTAURANT.sh
+sudo mkdir -p /opt/restaurant-pos && sudo chown $USER /opt/restaurant-pos
+git clone <your-repo-url> /opt/restaurant-pos
+cd /opt/restaurant-pos
+
+cd backend  && npm install --omit=dev
+cd ../frontend && npm install && npm run build      # creates frontend/build
 ```
 
-This installs all dependencies and compiles the frontend into `frontend/build/`.
-It takes about 2 minutes. After this, the folder is self-contained.
+(Use `npm ci` instead of `npm install` once a `package-lock.json` is committed.)
+
+## 3. Configure the backend
+
+```bash
+cd /opt/restaurant-pos/backend
+cp .env.example .env
+nano .env
+```
+
+The settings that matter:
+
+| Setting | Value | Why |
+|---|---|---|
+| `NODE_ENV` | `production` | |
+| `PORT` | `4000` | the proxy forwards to this |
+| `DATA_DIR` | `/var/lib/restaurant-pos` | **all** data lives here; outside the code folder so updates never touch it |
+| `COOKIE_SECURE` | `true` | cookies only over HTTPS |
+| `TRUST_PROXY` | `1` | one proxy in front, so real client IPs are seen (rate limits depend on it) |
+| `PUBLIC_URL` | `https://pos.example.com` | used in staff pairing links |
+| `ALLOW_REGISTRATION` | `true` or `false` | `true` lets anyone create a restaurant account. Set `false` once you only onboard customers yourself from the root console |
+| `ENFORCE_TRIAL` | `false` | set `true` when billing exists; trial restaurants are then blocked after their trial ends |
+| `CORS_ORIGINS` | empty | only needed if the frontend is served from a different address |
+
+Create the data folder:
+
+```bash
+sudo mkdir -p /var/lib/restaurant-pos && sudo chown $USER /var/lib/restaurant-pos
+```
+
+## 4. Run it
+
+### As a service (systemd)
+
+Create `/etc/systemd/system/restaurant-pos.service`:
+
+```ini
+[Unit]
+Description=Restaurant POS
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/restaurant-pos/backend
+ExecStart=/usr/bin/node server.js
+Restart=always
+User=pos
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo useradd -r -s /usr/sbin/nologin pos
+sudo chown -R pos /var/lib/restaurant-pos
+sudo systemctl daemon-reload
+sudo systemctl enable --now restaurant-pos
+sudo journalctl -u restaurant-pos -f          # watch the log
+```
+
+The log should say how many owners and restaurants exist and that secure cookies are ON.
+
+### HTTPS with Caddy (simplest)
+
+`/etc/caddy/Caddyfile`:
+
+```
+pos.example.com {
+    reverse_proxy localhost:4000
+}
+```
+
+Caddy gets and renews the certificate by itself and handles live-update connections automatically.
+
+### HTTPS with nginx (alternative)
+
+```nginx
+server {
+    server_name pos.example.com;
+    client_max_body_size 70m;                 # backup restore allows up to 60 MB
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;       # live updates need WebSocket
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Then `sudo certbot --nginx -d pos.example.com`.
+
+Open only ports 80 and 443 in the firewall.
+
+## 5. Create your root login
+
+The root console (`https://pos.example.com/root`) is for you, the operator. Root accounts can only be made on the
+server, never through the website:
+
+```bash
+cd /opt/restaurant-pos/backend
+node scripts/admin.js create-root 9876543210 "a-long-password-of-10+-characters"
+```
+
+Use a phone number that is not also a restaurant owner. Log in at `/root`, then **Restaurants → New restaurant**
+to onboard a customer. The screen shows the owner password and admin PIN **once**; hand them over.
+
+Owners can also sign themselves up from the home page if `ALLOW_REGISTRATION=true`.
+
+## 6. Connect the restaurant's devices
+
+1. On the first device, open `https://pos.example.com`, choose **I'm the owner — log in**, enter phone + password.
+2. Enter the admin PIN to open the app.
+3. For each further phone or tablet: **Admin → Devices → Create pairing code**, then on that device choose
+   **I'm staff — connect with a code** and type the 6-digit code (or scan the QR). A code lasts 10 minutes, works
+   once, and can lock the device to waiter-only or kitchen-only.
+4. Remove a lost device at once under Admin → Devices.
+5. Print table QR codes under **Admin → Tables** (QR icon). Customers need no app and no login.
+
+Tip: "Add to Home screen" in the phone browser gives one-tap access.
+
+## 7. Backups (do this before the first real customer)
+
+SQLite databases are live files, so **do not copy them while the app runs**. Use the built-in snapshot, which is
+safe at any time:
+
+```bash
+cd /opt/restaurant-pos/backend
+node scripts/admin.js backup-all /var/backups/pos     # accounts.db + every restaurant, keeps the newest 14
+```
+
+Photos and ticket screenshots are plain files, so copy those too:
+
+```bash
+rsync -a /var/lib/restaurant-pos/files   /var/backups/pos-files/
+rsync -a /var/lib/restaurant-pos/tickets /var/backups/pos-files/
+```
+
+Run both every night with cron (`crontab -e`):
+
+```
+0 3 * * * cd /opt/restaurant-pos/backend && node scripts/admin.js backup-all /var/backups/pos
+30 3 * * * rsync -a /var/lib/restaurant-pos/files /var/lib/restaurant-pos/tickets /var/backups/pos-files/
+```
+
+Then copy `/var/backups/pos*` off the server (another machine or cloud storage). A backup on the same disk
+does not survive that disk failing.
+
+Each restaurant admin can also download or restore their own restaurant as a zip from the app's **Backup** tab.
+A restore replaces that restaurant's data and signs everyone out.
+
+**Restoring a whole server:** stop the service, copy `accounts.db` to `DATA_DIR/`, the `tenants/*.db` files to
+`DATA_DIR/tenants/`, and the `files/` and `tickets/` folders back; delete any `*-wal` and `*-shm` files next to the
+databases; start the service.
+
+## 8. Updating
+
+```bash
+cd /opt/restaurant-pos
+git pull
+cd backend  && npm install --omit=dev
+cd ../frontend && npm install && npm run build
+cd ../backend && node scripts/admin.js backup-all /var/backups/pos     # a safety copy first
+sudo systemctl restart restaurant-pos
+```
+
+Database changes are applied automatically the first time each restaurant opens after an update
+(`node scripts/admin.js migrate` does them all at once). Your data folder is never touched by `git pull`.
+After an update, ask staff to refresh the page so they pick up the new version.
+
+## 9. Everyday support commands
+
+Run on the server from `backend/`: `node scripts/admin.js` lists them all.
+
+| Command | Use |
+|---|---|
+| `list` | all restaurants, status, plan, devices |
+| `suspend <id>` / `activate <id>` | block or restore every device of a restaurant |
+| `revoke-devices <id>` | after a security scare: everyone must link their device again |
+| `set-password <phone> <new>` | an owner forgot their password |
+| `disable-owner` / `enable-owner <phone>` | block or restore an owner login |
+| `delete-restaurant <id> --yes` | permanent: database and photos |
+| `list-roots` / `remove-root <phone>` | manage root logins |
+| `import-legacy --db … --phone … --password …` | move an old single-restaurant install in |
+| `backup-all [folder]` | snapshots, see step 7 |
+| `migrate` | apply database updates now |
+
+Most of these are also buttons in the root console.
+
+If an **admin** forgets their PIN: another admin changes it under Admin → Staff. If there is no other admin, the owner
+can ask you to create one for them, or you can restore from a backup.
+
+## 10. Security checklist
+
+- HTTPS only; `COOKIE_SECURE=true`; port 4000 not reachable from outside.
+- Strong root password; root accounts exist only if you made them with `create-root`.
+- Decide on `ALLOW_REGISTRATION`.
+- Keep Node.js and the operating system updated.
+- Test a restore from backup at least once, on a spare machine.
+- Customer QR codes are links with long random tokens. Anyone holding a table's QR can order for that table, so print
+  them on the table, not on the street.
 
 ---
 
-## Step 2 — Copy the folder to the restaurant computer
+## Appendix: one PC inside a single restaurant (no internet server)
 
-Copy the entire `restaurant-pos` folder to the restaurant PC.
-You can use a USB drive, Google Drive, or any file transfer method.
+This still works for a restaurant that wants everything on one computer and its own Wi-Fi, but it is **not** the
+supported path, and the backup tab then offers manual download/restore only. I have not re-tested it on the
+current version, so try it before relying on it.
 
-**What you need on the restaurant computer:**
-- The `restaurant-pos` folder (with `frontend/build/` inside it)
-- Node.js installed (see below)
+In `backend/.env`:
 
-**What you do NOT need:**
-- npm install (already done)
-- Any build step
-- Internet connection (after first setup)
+```
+NODE_ENV=production
+DEPLOYMENT=local
+COOKIE_SECURE=false          # plain HTTP on the local network
+DATA_DIR=./data
+```
 
----
+Build the frontend as in step 2, start with `node server.js` (or the Windows scripts in `start/`), and open
+`http://<the PC's address>:4000` on phones on the same Wi-Fi. In this mode the table QR codes use the PC's local
+address. Give the PC a fixed address in your router so bookmarks keep working, allow port 4000 in the Windows
+firewall, and **never forward that port to the internet**: without HTTPS the sign-in cookies travel unprotected.
 
-## Step 3 — Install Node.js on the restaurant computer (one time)
-
-1. Go to **https://nodejs.org** on the restaurant computer
-2. Download the **LTS** version (e.g. v20 or v22)
-3. Run the installer — just click Next, Next, Next
-4. Restart the computer
-
----
-
-## Step 4 — Run the POS
-
-Double-click: **`start\START_POS.bat`**
-
-A terminal window opens showing the server is running. The browser opens automatically.
-The window must stay open while using the POS. To shut down, close the window.
-
----
-
-## Step 5 — Fix the IP address so phones always connect ⚠️
-
-By default your PC gets a different IP address from the router every time it restarts,
-which means the URL you bookmark on phones stops working. **Do this once to make it permanent.**
-
-### Option A — Set static IP on the PC (recommended, no router login needed)
-
-1. Open **Start** → search **"View network connections"** → press Enter
-2. Right-click your **Wi-Fi** (or Ethernet) adapter → **Properties**
-3. Double-click **Internet Protocol Version 4 (TCP/IPv4)**
-4. Select **"Use the following IP address"** and enter:
-   - IP address: *(use the IP shown in the POS server window, e.g. `192.168.1.43`)*
-   - Subnet mask: `255.255.255.0`
-   - Default gateway: `192.168.1.1`
-   - Preferred DNS: `8.8.8.8`
-   - Alternate DNS: `8.8.4.4`
-5. Click **OK** → **OK**
-
-> **Note:** If you ever take this PC to a different network (e.g. home vs restaurant),
-> you may need to temporarily switch back to "Obtain an IP address automatically".
-
-### Option B — DHCP reservation on the router (cleanest, needs router login)
-
-1. Open **http://192.168.1.1** in your browser
-   *(if that doesn't work, run `ipconfig` in CMD and look for "Default Gateway")*
-2. Log in — credentials are on the sticker on the back/bottom of your router
-3. Find **DHCP Reservation** / **Static Lease** / **Address Reservation**
-4. Find your PC in the list and assign it a fixed IP (e.g. `192.168.1.43`)
-5. Save and restart the router
-
----
-
-## Security — keep this on the local network only
-
-This app currently has **no protection against a hostile network** — the API auth token is
-served to any device that asks, and CORS is wide open. That's an acceptable tradeoff for a
-POS that only ever runs on a restaurant's own private WiFi, but it means:
-
-- **Never forward port 4000 (or 3000) on your router to the internet.**
-- **Do not set up a DDNS hostname or public domain pointing at this server.**
-- Keep the POS computer and all staff/kiosk devices on the restaurant's own WiFi — not a
-  network you don't control.
-- If you ever want staff or customers to reach this from outside the restaurant (remote
-  admin access, off-site ordering, etc.), that requires additional hardening first —
-  real per-request authentication, a restricted CORS policy, and HTTPS. Don't expose the
-  raw server publicly until that work is done.
-
----
-
-## Accessing from phones and tablets
-
-All devices must be on the **same Wi-Fi network** as the POS computer.
-
-The terminal window shows a "Network:" URL like `http://192.168.1.43:4000`.
-Open that URL on any phone or tablet browser — no app install needed.
-
-**Bookmark it / add to home screen for one-tap access:**
-- **Android (Chrome):** tap the 3-dot menu → "Add to Home screen"
-- **iPhone (Safari):** tap the Share button → "Add to Home Screen"
-
-> `restaurant.local:4000` works on the POS PC itself but **not** on Android phones —
-> use the IP address URL on all phones and tablets.
-
----
-
-## Making it start automatically
-
-To have the POS start when the computer turns on:
-
-1. Right-click `start\START_POS.bat` → Create shortcut
-2. Press `Win + R`, type `shell:startup`, press Enter
-3. Move the shortcut into that folder
-
----
-
-## Troubleshooting
-
-**"Node.js is not installed" error**
-→ Install Node.js from nodejs.org (LTS version)
-
-**Port 4000 already in use**
-→ Restart the computer, then run START_POS.bat again
-
-**Browser doesn't open automatically**
-→ Manually open Chrome and go to http://localhost:4000
-
-**Phone can't connect**
-→ Make sure phone is on the same Wi-Fi as the POS computer
-→ The IP shown in the terminal is the correct URL — use that, not restaurant.local
-→ If still blocked, run `start\ADD_FIREWALL_RULE.bat` (right-click → Run as administrator)
-
-**IP address changed and phone bookmark stopped working**
-→ Follow Step 5 above to make the IP permanent
-
-**Data lost after restart**
-→ Data is in `backend/data/restaurant.db` — this file persists across restarts
-→ Back it up periodically by copying it to a USB drive, or use the built-in
-  Local Auto-Backup / Google Drive Backup features under the Backup tab
-
----
-
-## Updating the app
-
-When you release a new version:
-
-1. On your dev machine: make changes, run `BUILD_FOR_RESTAURANT.bat`
-2. Copy the updated folder to the restaurant computer (replace the old one)
-3. Keep the `backend/data/` folder from the old installation — it has the restaurant's data
-
----
-
-## Default Login PINs
-
-| Role    | PIN  |
-|---------|------|
-| Admin   | 0000 |
-| Waiter  | 1111 |
-| Kitchen | 2222 |
-
-Change these in **Admin → Staff** after first login.
+Back up by copying the whole `backend/data` folder while the server is stopped, or use the Backup tab's download.

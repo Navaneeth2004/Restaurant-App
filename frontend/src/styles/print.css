@@ -1,0 +1,52 @@
+/* Thermal receipts are 1-bit: pure black, bold, fixed-width text, no grey and no hairlines.
+   58mm roll by default. For an 80mm roll change the size in @page bill below. */
+@page bill { size: 58mm auto; margin: 0; }
+
+@media print {
+  :root { --bill-font: Consolas, 'Lucida Console', Menlo, 'Courier New', monospace; --bill-fs: 12px; }
+  html, body { background: #fff !important; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  body * { visibility: hidden !important; }
+  .bill-print-area, .bill-print-area *, .qr-print-area, .qr-print-area * { visibility: visible !important; }
+  .no-print, .payment-tab-print-hide { display: none !important; }
+
+  /* QR sheet: default page size, centred card */
+  .qr-print-area { position: fixed !important; top: 0; left: 0; width: 100%; padding: 24px; color: #000 !important; align-items: center; }
+  .qr-print-area * { color: #000 !important; }
+
+  .bill-print-area {
+    page: bill; position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; max-width: 100% !important;
+    height: auto !important; max-height: none !important; overflow: visible !important; border-radius: 0 !important; box-shadow: none !important;
+    padding: 1mm 1mm 8mm !important; border: none !important;
+  }
+  .bill-body, .bill-items-area { overflow: visible !important; max-height: none !important; height: auto !important; flex: none !important; }
+  .bill-items-wrapper { display: flex !important; flex-direction: column !important; flex: 1 1 auto !important; min-height: 0 !important; overflow: visible !important; }
+
+  html[data-theme] body .bill-print-area, html[data-theme] body .bill-print-area * {
+    color: #000 !important; background: transparent !important; background-image: none !important; border-color: #000 !important;
+    box-shadow: none !important; text-shadow: none !important; font-family: var(--bill-font) !important; font-weight: 700 !important;
+    font-style: normal !important; font-size: var(--bill-fs) !important; line-height: 1.3 !important; letter-spacing: 0 !important;
+  }
+  html[data-theme] body .bill-print-area { background: #fff !important; }
+
+  html[data-theme] body .bill-print-area .bill-header { display: block !important; text-align: center !important; padding: 1mm 0 2mm !important; border-bottom: 1px dashed #000 !important; }
+  html[data-theme] body .bill-print-area .bill-name { font-size: calc(var(--bill-fs) + 5px) !important; }
+  html[data-theme] body .bill-print-area .bill-logo { display: block !important; margin: 0 auto 2mm !important; width: 64px !important; height: 64px !important; border-radius: 0 !important; object-fit: contain !important; filter: grayscale(1) contrast(2) !important; }
+  html[data-theme] body .bill-print-area .bill-header-pill { display: block !important; margin-top: 2mm !important; padding: 1px 0 !important; border: none !important; border-radius: 0 !important; text-align: center !important; }
+  html[data-theme] body .bill-print-area .bill-header-pill svg { display: none !important; }
+
+  html[data-theme] body .bill-print-area .bill-items-area { padding: 0 1mm !important; }
+  html[data-theme] body .bill-print-area table, html[data-theme] body .bill-print-area thead, html[data-theme] body .bill-print-area tbody { display: block !important; width: 100% !important; }
+  html[data-theme] body .bill-print-area tr { display: grid !important; grid-template-columns: 1fr 1fr 1fr; column-gap: 2px; border: none !important; break-inside: avoid; }
+  html[data-theme] body .bill-print-area th, html[data-theme] body .bill-print-area td { display: block !important; width: auto !important; padding: 1px 0 !important; border: none !important; }
+  html[data-theme] body .bill-print-area th:first-child, html[data-theme] body .bill-print-area td:first-child { grid-column: 1 / -1 !important; text-align: left !important; }
+  html[data-theme] body .bill-print-area th:nth-child(2), html[data-theme] body .bill-print-area td:nth-child(2) { text-align: left !important; }
+  html[data-theme] body .bill-print-area th:nth-child(3), html[data-theme] body .bill-print-area td:nth-child(3) { text-align: center !important; }
+  html[data-theme] body .bill-print-area th:nth-child(4), html[data-theme] body .bill-print-area td:nth-child(4) { text-align: right !important; }
+  html[data-theme] body .bill-print-area thead tr { border-top: 1px dashed #000 !important; border-bottom: 1px dashed #000 !important; padding: 2px 0 !important; margin-top: 2mm !important; }
+  html[data-theme] body .bill-print-area tbody tr { padding: 3px 0 !important; }
+
+  html[data-theme] body .bill-print-area .bill-totals { border-top: 1px dashed #000 !important; margin-top: 2px !important; padding-top: 3px !important; }
+  html[data-theme] body .bill-print-area .bill-grand { border: 2px solid #000 !important; border-radius: 0 !important; padding: 3px 4px !important; margin-top: 4px !important; font-size: calc(var(--bill-fs) + 4px) !important; }
+  html[data-theme] body .bill-print-area .bill-footer-text { text-align: center !important; border-top: 1px dashed #000 !important; }
+}

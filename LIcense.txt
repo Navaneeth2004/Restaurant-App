@@ -1,30 +1,49 @@
 PROPRIETARY SOFTWARE LICENSE
 ============================
 
-Copyright (c) 2025 Navaneeth. All Rights Reserved.
+Copyright (c) 2025-2026 Navaneeth. All Rights Reserved.
 
-This software ("Restaurant APP POS") is proprietary and confidential.
+This software ("Restaurant POS", including its source code, documentation and
+any hosted service built from it) is proprietary and confidential.
 
 GRANT OF LICENSE
-You are granted a non-exclusive, non-transferable license to install
-and use this software solely on the premises of the restaurant for
-which it was provided.
+You are granted a limited, non-exclusive, non-transferable, revocable license
+to use the software, either as a hosted service operated by the author or as an
+installation provided to you by the author, solely to run the restaurant(s)
+named in your agreement with the author.
 
 RESTRICTIONS
 You may NOT, without prior written permission:
-  - Copy, redistribute, sell, sublicense, or share this software
-    with any third party.
+  - Copy, redistribute, sell, rent, sublicense, host for others, or share this
+    software with any third party.
   - Modify, decompile, reverse-engineer, or create derivative works.
   - Remove or alter any copyright, trademark, or proprietary notices.
-  - Use this software for any commercial purpose other than operating
-    the restaurant for which it was licensed.
+  - Use this software for any commercial purpose other than operating the
+    restaurant(s) for which it was licensed.
+  - Attempt to access data belonging to another restaurant or account.
+
+YOUR DATA
+Menus, orders, customer details and other business records you enter remain
+yours. The author may access them only as needed to run, support and secure the
+service, or as required by law.
+
+THIRD-PARTY COMPONENTS
+The software includes open-source components (for example React, Express,
+Socket.IO and SQLite bindings). Each remains under its own license, which is
+not changed by this one.
 
 NO WARRANTY
-This software is provided "as is" without warranty of any kind.
-The author accepts no liability for any damages arising from its use.
+This software is provided "as is" without warranty of any kind. The author
+accepts no liability for any damages arising from its use, including loss of
+data, lost sales, or errors in tax figures. Tax and GST exports are aids for
+your accountant, not tax advice; you remain responsible for your filings.
+
+TERMINATION
+This license ends automatically if you breach it, or when your agreement with
+the author ends. You must then stop using the software and delete any copies.
 
 VIOLATIONS
-Unauthorised redistribution or commercial use will be pursued to the
-fullest extent permitted by applicable law.
+Unauthorised redistribution or commercial use will be pursued to the fullest
+extent permitted by applicable law.
 
 Contact: https://github.com/Navaneeth2004

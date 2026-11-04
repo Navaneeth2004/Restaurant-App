@@ -1,0 +1,8 @@
+/* Admin floor screen: colours come from the --fl-* tokens in theme.css (light and dark). */
+.fl-card { background: var(--fl-card); border: 1px solid var(--fl-border); border-radius: 14px; padding: 14px 16px; }
+.fl-label { color: var(--fl-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin: 0; }
+.fl-value { font-family: ui-monospace, monospace; font-weight: 700; line-height: 1.1; margin: 0; }
+.fl-sub { color: var(--fl-muted); font-size: 11px; margin: 0; }
+.fl-text { color: var(--fl-text); }
+.fl-text2 { color: var(--fl-text2); }
+.fl-muted { color: var(--fl-muted); }

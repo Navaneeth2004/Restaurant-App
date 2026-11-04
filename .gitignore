@@ -1,8 +1,35 @@
+# ── Dependencies and build output ────────────────────────────────────────
 node_modules/
-data/
-uploads/*
-!uploads/.gitkeep
 frontend/build/
+coverage/
+
+# ── Secrets and local settings (never commit these) ──────────────────────
 .env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+# frontend/.env.production IS committed on purpose: it only says "use the same origin".
+
+# ── Runtime data: every restaurant's database, photos, tickets, accounts ─
+backend/data/
+data/
 *.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# ── Backups and old layouts ──────────────────────────────────────────────
+pos-backups/
 backups/
+uploads/          # old shared photo folder; photos now live in DATA_DIR/files/<restaurantId>/uploads
+*.zip
+
+# ── Logs, editor and OS files ────────────────────────────────────────────
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
