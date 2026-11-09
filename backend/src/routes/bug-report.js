@@ -1,7 +1,8 @@
 'use strict';
-/** /api/bug-report — support tickets go to the root console. */
+/** /api/bug-report — support tickets go to the root console (which is also where they are read). */
 const express = require('express');
 const access = require('../middleware/access');
+const feature = require('../middleware/feature');
 const ctx = require('../db/context');
 const { handle, clientMeta } = require('../lib/http');
 const { limit } = require('../middleware/rate-limit');
@@ -15,10 +16,8 @@ const sendLimit = limit({
 });
 
 // any logged-in staff member (the kitchen too)
-router.post('/', access.any, sendLimit, handle((req, res) => {
+router.post('/', access.any, feature.of('support'), sendLimit, handle((req, res) => {
   res.status(201).json(tickets.create(req.body || {}, ctx.get(), clientMeta(req)));
 }));
-
-router.get('/', access.admin, (req, res) => res.json(tickets.listForRestaurant(ctx.get().restaurantId)));
 
 module.exports = router;

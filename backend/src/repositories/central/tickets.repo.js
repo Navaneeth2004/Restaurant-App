@@ -10,10 +10,6 @@ const insert = (t) => central.prepare(`
     t.submittedBy, t.submittedRole, t.deviceId, t.deviceName, t.ip, t.userAgent,
     t.diagnosticsJson, t.screenshotFile, t.now, t.now).lastInsertRowid;
 
-const forRestaurant = (restaurantId) => central.prepare(`
-  SELECT id, title, description, severity, category, status, steps_json, created_at
-  FROM tickets WHERE restaurant_id = ? ORDER BY id DESC LIMIT 100`).all(restaurantId);
-
 /** Root console list. `where`/`vals` are built by services/support/tickets.js from a fixed whitelist. */
 const list = (where, vals, limit, offset) => central.prepare(`
   SELECT id, restaurant_id, restaurant_name, title, severity, category, status, submitted_by, submitted_role,
@@ -37,5 +33,5 @@ const totalsFor = (restaurantId) =>
   central.prepare("SELECT COUNT(*) AS total, SUM(status IN ('open','in_progress')) AS open FROM tickets WHERE restaurant_id = ?").get(restaurantId);
 
 module.exports = {
-  insert, forRestaurant, list, byId, screenshotOf, update, countOpen, countCritical, recent, openFor, totalsFor,
+  insert, list, byId, screenshotOf, update, countOpen, countCritical, recent, openFor, totalsFor,
 };

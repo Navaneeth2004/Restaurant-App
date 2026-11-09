@@ -20,7 +20,7 @@ export default function DeletedTab() {
       </div>
       <ErrorNotice error={d.error} onRetry={d.reload} fallback="Could not load the deleted-records log" />
       {d.rows === null ? (d.loading && <PageSpinner />) : d.rows.length === 0 ? (
-        <EmptyState title="Nothing has been deleted" hint="Deleted visits will appear here." />
+        <EmptyState icon="trash" title="Nothing has been deleted" hint="Deleted visits will appear here." />
       ) : (
         <>
           <div className="mb-3 flex items-center gap-2 flex-wrap">

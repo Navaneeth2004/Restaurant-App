@@ -24,6 +24,7 @@ export function useRestaurantDetail(id: string, config: RootConfig, onChanged: (
   return {
     data, error, reload, form, setForm, problem, busy, secret, clearSecret: () => setSecret(null),
     save: () => (form && !problem ? act(() => patchRestaurant(id, toPatch(form)), 'Saved.', 'Could not save') : Promise.resolve(false)),
+    saveFeatures: (features: Record<string, boolean>) => act(() => patchRestaurant(id, { features }), 'Feature settings saved.', 'Could not save the feature settings'),
     suspend: (reason: string) => act(() => suspendRestaurant(id, reason), 'Suspended.', 'Could not suspend'),
     activate: () => act(() => activateRestaurant(id), 'Activated.', 'Could not activate'),
     revokeAll: () => run(async () => { const r = await revokeRestaurantDevices(id); after(); return r.revoked; }, { success: 'Devices revoked.', failure: 'Could not revoke devices' }),

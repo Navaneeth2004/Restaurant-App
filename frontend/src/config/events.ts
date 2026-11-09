@@ -11,6 +11,7 @@ export const EVENTS = {
   menuUpdated: 'menu_updated',
   categoriesUpdated: 'categories_updated',
   settingsUpdated: 'settings_updated',
+  featuresUpdated: 'features_updated',
   billRequested: 'bill_requested',
 } as const;
 
@@ -24,4 +25,5 @@ export const WINDOW_EVENTS = {
   staffRequired: 'pos-staff-required',
   rootAuthLost: 'root-auth-lost',
   forbidden: 'pos-forbidden',
+  featureDisabled: 'pos-feature-disabled',
 } as const;

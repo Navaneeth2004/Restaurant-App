@@ -1,13 +1,13 @@
 import { buildUrl, request } from '../http';
 import type {
-  AuditRow, CreatedRestaurant, NewRestaurantInput, RestaurantDetail, RestaurantPatch, RestaurantSummary, RootConfig, RootOverview,
-  TicketDetail, TicketFilter, TicketRow,
+  AuditRow, CreatedRestaurant, FeatureAdmin, NewRestaurantInput, RestaurantDetail, RestaurantPatch, RestaurantSummary, RootConfig, RootOverview,
+  Subscription, SubscriptionInput, TicketDetail, TicketFilter, TicketRow,
 } from 'types/office/root';
 import type { TicketStatus } from 'types/office/support';
 
 /** Root console (platform operator). Its own cookie; a 401 here fires `root-auth-lost` (see api/http.ts). */
 const get = <T>(path: string, query?: Record<string, string>, signal?: AbortSignal) => request<T>(`/root${path}`, { scope: 'root', query, signal });
-const send = <T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', json?: unknown) => request<T>(`/root${path}`, { scope: 'root', method, json });
+const send = <T>(path: string, method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', json?: unknown) => request<T>(`/root${path}`, { scope: 'root', method, json });
 
 export const rootLogin = (phone: string, password: string) => send<{ phone: string }>('/login', 'POST', { phone, password });
 export const rootLogout = () => send<{ success: boolean }>('/logout', 'POST');
@@ -26,6 +26,14 @@ export const revokeRestaurantDevices = (id: string) => send<{ success: boolean; 
 /** Empty password = the server generates one and returns it (shown once). */
 export const resetOwnerPassword = (id: string, password?: string) => send<{ success: boolean; temp_password: string | null }>(`/restaurants/${id}/owner-password`, 'POST', password ? { password } : {});
 export const deleteRestaurant = (id: string, confirmName: string, password: string) => send<{ success: boolean }>(`/restaurants/${id}`, 'DELETE', { confirm_name: confirmName, password });
+
+/** Subscriptions and feature switches: what each kind of customer may use. */
+export const getFeatureAdmin = (signal?: AbortSignal) => get<FeatureAdmin>('/features', undefined, signal);
+export const setFeatureSwitch = (feature: string, off: boolean, message: string) => send<{ success: boolean }>(`/features/${encodeURIComponent(feature)}`, 'PUT', { off, message });
+export const listSubscriptions = (signal?: AbortSignal) => get<Subscription[]>('/subscriptions', undefined, signal);
+export const createSubscription = (body: SubscriptionInput) => send<Subscription>('/subscriptions', 'POST', body);
+export const updateSubscription = (slug: string, body: SubscriptionInput) => send<Subscription>(`/subscriptions/${encodeURIComponent(slug)}`, 'PUT', body);
+export const deleteSubscription = (slug: string) => send<{ success: boolean }>(`/subscriptions/${encodeURIComponent(slug)}`, 'DELETE');
 
 export const listTickets = (f: TicketFilter, signal?: AbortSignal) =>
   get<TicketRow[]>('/tickets', { ...(f.status !== 'all' ? { status: f.status } : {}), ...(f.severity ? { severity: f.severity } : {}), ...(f.q ? { q: f.q } : {}), ...(f.restaurant ? { restaurant: f.restaurant } : {}) }, signal);

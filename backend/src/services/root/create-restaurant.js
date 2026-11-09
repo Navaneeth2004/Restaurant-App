@@ -2,13 +2,13 @@
 /** The root console creates a restaurant (and its owner account, when new) on a customer's behalf. */
 const bcrypt = require('bcryptjs');
 const cfg = require('../../config/env');
-const { PLANS } = require('../../config/plans');
 const { fail } = require('../../lib/http');
 const { clip } = require('../../lib/input');
 const { phoneVariants } = require('../../lib/phone');
 const { pinProblem } = require('../../lib/pin-rules');
 const { randomToken, randomDigits, uuid } = require('../../lib/crypto');
 const owners = require('../../repositories/central/owners.repo');
+const features = require('../../repositories/central/features.repo');
 const providers = require('../auth/providers');
 const { createRestaurant } = require('../restaurants/create');
 
@@ -25,7 +25,7 @@ async function createForOwner(body = {}) {
   const phones = phoneVariants(body.owner_phone, cfg.DEFAULT_COUNTRY_CODE);
   if (!phones.length) fail(400, 'Enter a valid owner phone number.');
   const plan = body.plan || 'trial';
-  if (!PLANS[plan]) fail(400, 'Unknown plan.');
+  if (!features.subscriptionBySlug(plan)) fail(400, 'Unknown plan.');
 
   let adminPin = String(body.admin_pin || '');
   const generatedPin = !adminPin;

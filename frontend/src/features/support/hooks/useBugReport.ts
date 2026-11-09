@@ -33,5 +33,5 @@ export function useBugReport() {
   });
   const reset = (): void => { setTitle(''); setDescription(''); setSteps([]); setSeverity('medium'); setCategory(''); setScreenshot(null); setError(''); setSentId(undefined); };
 
-  return { title, setTitle, description, setDescription, steps, setSteps, severity, setSeverity, category, setCategory, screenshot, setScreenshot, error, setError, sentId, diagnostics, busy, ready, submit, reset, role: user?.role };
+  return { title, setTitle, description, setDescription, steps, setSteps, severity, setSeverity, category, setCategory, screenshot, setScreenshot, error, setError, sentId, diagnostics, busy, ready, submit, reset };
 }

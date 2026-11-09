@@ -5,6 +5,7 @@
  */
 const express = require('express');
 const access = require('../middleware/access');
+const feature = require('../middleware/feature');
 const { handle, fail } = require('../lib/http');
 const { createBackupArchive } = require('../services/backup/snapshot');
 const { restoreFromZip } = require('../services/backup/restore');
@@ -13,9 +14,9 @@ const { makeMemoryUploader, isZip } = require('../services/files/uploader');
 const router = express.Router();
 const upload = makeMemoryUploader(60, isZip, 'ZIP files only');
 
-router.get('/info', access.admin, (req, res) => res.json({ mode: 'cloud', manual: true, local: false, drive: false }));
+router.get('/info', access.admin, feature.of('backup.download', 'backup.restore'), (req, res) => res.json({ mode: 'cloud', manual: true, local: false, drive: false }));
 
-router.get('/download', access.admin, handle(async (req, res) => {
+router.get('/download', access.admin, feature.of('backup.download'), handle(async (req, res) => {
   const { filename, archive } = await createBackupArchive(req.restaurantId);
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -23,7 +24,7 @@ router.get('/download', access.admin, handle(async (req, res) => {
   archive.pipe(res);
 }));
 
-router.post('/restore', access.admin, upload.single('backup'), handle((req, res) => {
+router.post('/restore', access.admin, feature.of('backup.restore'), upload.single('backup'), handle((req, res) => {
   if (!req.file) fail(400, 'No file uploaded');
   const { imagesRestored } = restoreFromZip(req.restaurantId, req.file.buffer);
   ['tables_updated', 'menu_updated', 'categories_updated'].forEach(e => req.io.emit(e));

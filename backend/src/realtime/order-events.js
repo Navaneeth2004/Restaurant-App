@@ -5,6 +5,9 @@
  */
 const tablesChanged = (io) => io.emit('tables_updated');
 
+/** Root changed which features are on: devices re-read /api/auth/features (no payload). */
+const featuresUpdated = (io) => io.emit('features_updated');
+
 function orderSubmitted(io, { order, isNew, additions }) {
   if (isNew) {
     io.emit('new_order', { order });
@@ -56,5 +59,5 @@ function billClosed(io, orderId, tableId) {
 const billRequested = (io, table) => io.emit('bill_requested', { tableId: table.id, tableLabel: table.label });
 
 module.exports = {
-  tablesChanged, orderSubmitted, orderDelivered, orderClosed, itemCancelled, roundCancelled, billClosed, billRequested,
+  tablesChanged, featuresUpdated, orderSubmitted, orderDelivered, orderClosed, itemCancelled, roundCancelled, billClosed, billRequested,
 };

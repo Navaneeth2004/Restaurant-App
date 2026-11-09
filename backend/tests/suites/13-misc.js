@@ -10,7 +10,7 @@ module.exports = async (t) => {
   r = await A.post('/api/bug-report', { title: 'It broke', description: 'Details' });
   check('bug report', r.status === 201 && r.data.ticket_id > 0, r);
   r = await A.get('/api/bug-report');
-  check('past reports', r.data.length === 1);
+  check('tickets are read in the root console only (no staff list route)', r.status === 404);
   r = await A.post('/api/auth/device/unlink', { pin: 'bad' });
   check('unlink needs admin PIN', r.status === 401);
 };

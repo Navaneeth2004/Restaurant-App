@@ -2,6 +2,7 @@
 /** Admin-only: permanent deletion of closed visits (admin PIN required) and its audit log. */
 const express = require('express');
 const access = require('../../middleware/access');
+const feature = require('../../middleware/feature');
 const ctx = require('../../db/context');
 const { handle, fail } = require('../../lib/http');
 const pinGuard = require('../../services/staff/pin-guard');
@@ -10,7 +11,7 @@ const events = require('../../realtime/order-events');
 
 const router = express.Router();
 
-router.post('/delete-records', access.admin, handle(async (req, res) => {
+router.post('/delete-records', access.admin, feature.of('orders.delete_records'), handle(async (req, res) => {
   const { order_ids, pin } = req.body || {};
   const admin = pin ? await pinGuard.adminByPin(`chk:${ctx.get().device.id}`, pin) : null;
   if (!admin) fail(403, 'Incorrect admin PIN');
@@ -20,6 +21,6 @@ router.post('/delete-records', access.admin, handle(async (req, res) => {
   res.json({ success: true, deleted_ids: deleted });
 }));
 
-router.get('/log/deleted', access.admin, (req, res) => res.json(listDeleted(500)));
+router.get('/log/deleted', access.admin, feature.of('reports.deleted'), (req, res) => res.json(listDeleted(500)));
 
 module.exports = router;

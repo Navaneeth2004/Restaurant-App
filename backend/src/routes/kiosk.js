@@ -1,11 +1,13 @@
 'use strict';
 /**
  * /api/kiosk — customer QR pages (no login; the token identifies the table) plus two staff helpers
- * (/lan-ip, /ensure-token) used to build the QR code.
+ * (/lan-ip, /ensure-token) used to build the QR code. Root can switch QR ordering off ("kiosk"): the customer
+ * pages are checked in middleware/gate/kiosk-gate.js, the staff helpers below.
  */
 const express = require('express');
 const cfg = require('../config/env');
 const access = require('../middleware/access');
+const feature = require('../middleware/feature');
 const { handle, fail } = require('../lib/http');
 const { limit } = require('../middleware/rate-limit');
 const kioskAccess = require('../services/kiosk/access');
@@ -19,8 +21,8 @@ const billLimit = limit({ windowMs: 60 * 1000, max: 10, message: 'Please wait a 
 const tableOf = (req) => kioskAccess.requireTable(req.params.token);
 
 // staff helpers (declared first so they are not mistaken for a token)
-router.get('/lan-ip', access.floor, (req, res) => res.json({ ip: cfg.DEPLOYMENT === 'local' ? kioskAccess.lanIp() : null }));
-router.post('/ensure-token', access.floor, handle((req, res) => {
+router.get('/lan-ip', access.floor, feature.of('kiosk'), (req, res) => res.json({ ip: cfg.DEPLOYMENT === 'local' ? kioskAccess.lanIp() : null }));
+router.post('/ensure-token', access.floor, feature.of('kiosk'), handle((req, res) => {
   const { table_id } = req.body || {};
   if (!table_id) fail(400, 'table_id required');
   res.json({ token: kioskAccess.ensureToken(req.restaurantId, table_id) });

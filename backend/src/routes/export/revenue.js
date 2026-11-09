@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const access = require('../../middleware/access');
+const feature = require('../../middleware/feature');
 const { offsetFromQuery } = require('../../lib/local-time');
 const revenue = require('../../services/billing/revenue-data');
 const { toCsv } = require('../../services/billing/revenue-csv');
@@ -8,7 +9,7 @@ const { toJson } = require('../../services/billing/revenue-json');
 
 const router = express.Router();
 
-router.get('/revenue', access.admin, (req, res) => {
+router.get('/revenue', access.admin, feature.of('export.revenue'), (req, res) => {
   const report = revenue.build({ from: req.query.from, to: req.query.to, offset: offsetFromQuery(req) });
   const range = `${report.period.from}_to_${report.period.to}`;
   if (req.query.format === 'csv') {

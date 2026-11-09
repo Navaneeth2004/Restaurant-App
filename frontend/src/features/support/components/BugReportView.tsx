@@ -5,7 +5,6 @@ import CategoryPicker from '../form/CategoryPicker';
 import SeverityPicker from '../form/SeverityPicker';
 import StepsRecorder from '../form/StepsRecorder';
 import { useBugReport } from '../hooks/useBugReport';
-import PastReportsPanel from '../past/PastReportsPanel';
 import DiagnosticsPreview from '../side/DiagnosticsPreview';
 import ScreenshotField from '../side/ScreenshotField';
 import SentNotice from './SentNotice';
@@ -33,7 +32,6 @@ export default function BugReportView() {
             <div><label className="label" htmlFor="bug-desc">What went wrong? <span className="text-red-400">*</span></label>
               <textarea id="bug-desc" className="input resize-none" rows={4} placeholder="Describe what you expected to happen and what actually happened." value={f.description} onChange={e => f.setDescription(e.target.value)} /></div>
             <div><p className="label mb-2">Steps to reproduce <span className="text-zinc-600 font-normal normal-case tracking-normal">(optional but very helpful)</span></p><StepsRecorder steps={f.steps} onChange={f.setSteps} /></div>
-            {f.role === 'admin' && <div className="pt-2"><PastReportsPanel /></div>}
           </div>
         </div>
         <div className="lg:w-80 xl:w-96 flex-shrink-0 overflow-y-auto border-t border-surface-border lg:border-t-0">

@@ -2,13 +2,14 @@
 /** POST /api/reset  Body: { confirm: "RESET EVERYTHING" }  (admin only) — wipes THIS restaurant only. */
 const express = require('express');
 const access = require('../middleware/access');
+const feature = require('../middleware/feature');
 const { handle } = require('../lib/http');
 const { factoryReset } = require('../services/catalog/reset');
 const { DEFAULT_SETTINGS } = require('../config/defaults');
 
 const router = express.Router();
 
-router.post('/', access.admin, handle((req, res) => {
+router.post('/', access.admin, feature.of('backup.reset'), handle((req, res) => {
   const message = factoryReset(req.restaurantId, (req.body || {}).confirm);
   const { brand_color, logo_url, tax_percent, currency_symbol, kitchen_overdue_mins, admin_lock_config } = DEFAULT_SETTINGS;
   ['tables_updated', 'menu_updated', 'categories_updated'].forEach(e => req.io.emit(e));

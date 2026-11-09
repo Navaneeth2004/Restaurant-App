@@ -4,4 +4,5 @@ module.exports = [
   require('./002-root-console'),
   require('./003-upgrade-old-schema'),
   require('./004-legacy-token-hash'),
+  require('./005-subscriptions-and-features'),
 ];

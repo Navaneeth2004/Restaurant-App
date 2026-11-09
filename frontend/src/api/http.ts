@@ -48,6 +48,7 @@ export function dispatchFailure(err: ApiError, scope: Scope): void {
   else if (err.status === 401 && err.code === 'staff_required') fire(WINDOW_EVENTS.staffRequired);
   else if (err.status === 403 && err.code === 'restaurant_suspended') fire(WINDOW_EVENTS.deviceLost);
   else if (err.status === 403 && err.code === 'forbidden') fire(WINDOW_EVENTS.forbidden);
+  else if (err.status === 403 && err.code === 'feature_disabled') fire(WINDOW_EVENTS.featureDisabled);
 }
 
 async function send(path: string, opts: RequestOptions): Promise<Response> {

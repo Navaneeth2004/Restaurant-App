@@ -1,16 +1,21 @@
 'use strict';
 /** Plan limits and "may this restaurant use the system right now?" in ONE place. */
 const cfg = require('../../config/env');
-const { PLANS, LIMIT_KEYS } = require('../../config/plans');
+const { LIMIT_KEYS } = require('../../config/plans');
+const { parseJson } = require('../../lib/json');
 const restaurants = require('../../repositories/central/restaurants.repo');
 const devices = require('../../repositories/central/devices.repo');
+const catalog = require('../features/catalog');
 
 const LIMIT_MSG = 'This restaurant has reached the number of devices its plan allows. Remove an old device first (Admin → Devices) or contact support.';
 
-function parse(json) { try { return json ? JSON.parse(json) : {}; } catch (_) { return {}; } }
+const parse = (json) => parseJson(json, {});
 
-/** Effective limits (plan defaults + per-restaurant overrides). null/undefined = unlimited. */
-const limitsFor = (r) => ({ ...(PLANS[r.plan] || {}), ...parse(r.limits_json) });
+/** Effective limits (the subscription's limits + per-restaurant overrides). null/undefined = unlimited. */
+function limitsFor(r) {
+  const sub = catalog.load().subs.get(r.plan);
+  return { ...(sub ? sub.limits : {}), ...parse(r.limits_json) };
+}
 
 /** { ok, limit } — ok is false once `current` has reached the limit. */
 function check(r, key, current) {

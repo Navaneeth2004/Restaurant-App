@@ -12,6 +12,7 @@ export interface RootOverview {
   server: { node: string; uptime_s: number; memory_mb: number; deployment: string };
 }
 
+/** `plans` are the short names of the subscriptions; `plan_defaults` the limits each one carries. */
 export interface RootConfig {
   plans: string[];
   limit_keys: { key: string; label: string }[];
@@ -19,6 +20,19 @@ export interface RootConfig {
   ticket_statuses: string[];
   enforce_trial: boolean;
 }
+
+/** One switchable part of the app (the backend registry config/features.js). */
+export interface FeatureDef { key: string; label: string; group: string }
+export interface FeatureSwitch { feature: string; message: string | null; updated_at: string }
+export interface FeatureAdmin { features: FeatureDef[]; switches: FeatureSwitch[] }
+export type FeatureSource = 'global' | 'restaurant' | 'plan' | null;
+
+export interface Subscription {
+  slug: string; name: string; description: string; limits: Record<string, number>;
+  /** Features switched OFF for everyone on this subscription. */
+  disabled: string[]; restaurants: number;
+}
+export interface SubscriptionInput { name: string; description: string; limits: Record<string, number | null>; disabled: string[] }
 
 export interface RestaurantSummary {
   id: string; name: string; status: string; plan: string; trial_ends_at: string | null; created_at: string;
@@ -40,6 +54,9 @@ export interface RestaurantDetail {
   id: string; name: string; status: string; plan: string; trial_ends_at: string | null; created_at: string; updated_at: string | null;
   notes: string; suspended_reason: string | null; suspended_at: string | null;
   limits_override: Record<string, number>; limits_effective: Record<string, number | undefined>;
+  /** This restaurant's own on/off exceptions to its subscription. */
+  feature_overrides: Record<string, boolean>;
+  features_effective: Record<string, { on: boolean; source: FeatureSource }>;
   owner: { id: string; phone: string; disabled: number; created_at: string } | undefined;
   devices: RootDevice[];
   live: { staff_sockets: number; device_sockets: number };
@@ -60,6 +77,8 @@ export interface CreatedRestaurant { id: string; name: string; owner_phone: stri
 
 export interface RestaurantPatch {
   name?: string; plan?: string; notes?: string; trial_ends_at?: string | null; limits?: Record<string, number | null>;
+  /** Replaces all of this restaurant's overrides: true = on, false = off, a missing key = inherit from the subscription. */
+  features?: Record<string, boolean | null>;
 }
 
 export interface TicketRow {

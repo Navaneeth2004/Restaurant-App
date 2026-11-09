@@ -1,8 +1,8 @@
 'use strict';
 /**
- * Plans and the limits they can carry.
+ * The limits a subscription can carry. Subscriptions themselves (names, limits, switched-off features) live in the
+ * central database and are managed in the root console (services/features/subscriptions.js).
  * To add a limit: add a key to LIMIT_KEYS, then call limits.check(restaurant, key, current) where it matters.
- * To add a plan: add it to PLANS ({} = no limits). Per-restaurant overrides always win.
  */
 const LIMIT_KEYS = {
   max_devices: { label: 'Max linked devices' },
@@ -10,10 +10,4 @@ const LIMIT_KEYS = {
   max_tables:  { label: 'Max tables' },
 };
 
-const PLANS = {
-  trial:    {},
-  standard: {},   // e.g. later: { max_devices: 5, max_staff: 15 }
-  premium:  {},
-};
-
-module.exports = { LIMIT_KEYS, PLANS };
+module.exports = { LIMIT_KEYS };

@@ -2,7 +2,7 @@
 const central = require('../../db/central');
 
 const WITH_OWNER = 'SELECT r.*, o.phone AS owner_phone FROM restaurants r JOIN owners o ON o.id = r.owner_id';
-const UPDATABLE = new Set(['name', 'plan', 'trial_ends_at', 'notes', 'limits_json', 'meta_json']);
+const UPDATABLE = new Set(['name', 'plan', 'trial_ends_at', 'notes', 'limits_json', 'meta_json', 'feature_overrides_json']);
 
 const byId = (id) => central.prepare('SELECT * FROM restaurants WHERE id = ?').get(id);
 const withOwner = (id) => central.prepare(`${WITH_OWNER} WHERE r.id = ?`).get(id);
@@ -14,7 +14,7 @@ const listForCli = () => central.prepare(`
 const activeForOwner = (ownerId) =>
   central.prepare("SELECT id, name FROM restaurants WHERE owner_id = ? AND status = 'active' ORDER BY created_at").all(ownerId);
 const accessRow = (id) => central.prepare(`
-  SELECT id, owner_id, name, status, plan, trial_ends_at, limits_json, meta_json, suspended_reason
+  SELECT id, owner_id, name, status, plan, trial_ends_at, limits_json, meta_json, feature_overrides_json, suspended_reason
   FROM restaurants WHERE id = ?`).get(id);
 const planRow = (id) => central.prepare('SELECT plan, limits_json FROM restaurants WHERE id = ?').get(id);
 
@@ -65,8 +65,9 @@ const recentlyActive = () => central.prepare(`
   GROUP BY r.id ORDER BY last_seen DESC LIMIT 8`).all();
 const countAll = () => central.prepare('SELECT COUNT(*) AS c FROM restaurants').get().c;
 const idsAndFiles = () => central.prepare('SELECT id FROM restaurants').all();
+const idsOnPlan = (slug) => central.prepare('SELECT id FROM restaurants WHERE plan = ?').all(slug).map(r => r.id);
 
 module.exports = {
   byId, withOwner, listWithOwner, listForCli, activeForOwner, accessRow, planRow, insert, update, suspend, activate,
-  deleteCentral, createWithOwner, countByStatus, trialEndingBefore, recentlyActive, countAll, idsAndFiles,
+  deleteCentral, createWithOwner, countByStatus, trialEndingBefore, recentlyActive, countAll, idsAndFiles, idsOnPlan,
 };

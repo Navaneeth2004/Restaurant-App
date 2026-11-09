@@ -20,10 +20,13 @@ export default function KioskPage() {
   if (boot.loading && !boot.data) return <PageSpinner />;
   if (boot.data) return <KioskApp token={token} boot={boot.data} />;
   const invalid = isApiError(boot.error) && boot.error.status === 404;
+  const switchedOff = isApiError(boot.error) && boot.error.code === 'feature_disabled';
+  const title = invalid ? 'Invalid QR code' : switchedOff ? 'Ordering from your phone is not available' : 'Could not load the menu';
   return (
     <div className="h-[100dvh] max-w-[480px] mx-auto flex flex-col bg-surface">
-      <MessageScreen icon="qr" title={invalid ? 'Invalid QR code' : 'Could not load the menu'} action={invalid ? undefined : { label: 'Try again', onClick: boot.reload }}>
-        {invalid ? 'This QR code is not valid or has expired. Please ask your waiter for a new one.' : errorMessage(boot.error, 'Please scan the QR code again.')}
+      <MessageScreen icon="qr" title={title} action={invalid || switchedOff ? undefined : { label: 'Try again', onClick: boot.reload }}>
+        {invalid ? 'This QR code is not valid or has expired. Please ask your waiter for a new one.'
+          : switchedOff ? 'Please ask your waiter to take your order.' : errorMessage(boot.error, 'Please scan the QR code again.')}
       </MessageScreen>
     </div>
   );

@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import ThemeToggle from 'components/ui/base/ThemeToggle';
 import AuditTab from '../audit/AuditTab';
+import SubscriptionsTab from '../access/components/SubscriptionsTab';
+import SwitchesTab from '../access/components/SwitchesTab';
 import OverviewTab from '../overview/OverviewTab';
 import RestaurantsTab from '../restaurants/components/RestaurantsTab';
 import TicketsTab from '../tickets/components/TicketsTab';
 
-type Tab = 'overview' | 'restaurants' | 'tickets' | 'audit';
-const TABS: { key: Tab; label: string }[] = [{ key: 'overview', label: 'Overview' }, { key: 'restaurants', label: 'Restaurants' }, { key: 'tickets', label: 'Tickets' }, { key: 'audit', label: 'Audit log' }];
+type Tab = 'overview' | 'restaurants' | 'subscriptions' | 'switches' | 'tickets' | 'audit';
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'overview', label: 'Overview' }, { key: 'restaurants', label: 'Restaurants' }, { key: 'subscriptions', label: 'Subscriptions' },
+  { key: 'switches', label: 'Screen switches' }, { key: 'tickets', label: 'Tickets' }, { key: 'audit', label: 'Audit log' },
+];
 
 export default function RootShell({ phone, onLogout }: { phone: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>('overview');
@@ -32,6 +37,8 @@ export default function RootShell({ phone, onLogout }: { phone: string; onLogout
       <main className="max-w-7xl mx-auto p-4 sm:p-6">
         {tab === 'overview' && <OverviewTab onOpen={openRestaurantTab} onTickets={() => { setTicketRestaurant(''); setTab('tickets'); }} />}
         {tab === 'restaurants' && <RestaurantsTab openId={openRestaurant} onOpenId={setOpenRestaurant} onViewTickets={id => { setTicketRestaurant(id); setTab('tickets'); }} />}
+        {tab === 'subscriptions' && <SubscriptionsTab />}
+        {tab === 'switches' && <SwitchesTab />}
         {tab === 'tickets' && <TicketsTab restaurantId={ticketRestaurant} onClearRestaurant={() => setTicketRestaurant('')} onOpenRestaurant={openRestaurantTab} />}
         {tab === 'audit' && <AuditTab />}
       </main>

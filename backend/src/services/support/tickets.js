@@ -48,15 +48,6 @@ function create(body = {}, who, meta) {
   return { success: true, email_sent: true, ticket_id: id };   // email_sent keeps the existing "Report sent!" screen
 }
 
-function listForRestaurant(restaurantId) {
-  return tickets.forRestaurant(restaurantId).map((r) => {
-    let steps = [];
-    try { steps = JSON.parse(r.steps_json || '[]'); } catch (_) { /* keep [] */ }
-    return { id: r.id, title: r.title, description: r.description, severity: r.severity, category: r.category || 'other',
-             status: r.status, email_sent: true, created_at: r.created_at, steps };
-  });
-}
-
 // ── root console ──
 function rootList(q = {}) {
   const where = [], vals = [];
@@ -105,4 +96,4 @@ function rootUpdate(id, body = {}) {
   return changed;
 }
 
-module.exports = { STATUSES, create, listForRestaurant, rootList, rootGet, screenshotPath, rootUpdate };
+module.exports = { STATUSES, create, rootList, rootGet, screenshotPath, rootUpdate };

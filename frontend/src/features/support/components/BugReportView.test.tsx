@@ -3,7 +3,7 @@ import { ApiError } from 'api/errors';
 import { submitBugReport } from 'api/office/support.api';
 import BugReportView from './BugReportView';
 
-jest.mock('api/office/support.api', () => ({ submitBugReport: jest.fn(), listBugReports: jest.fn().mockResolvedValue([]) }));
+jest.mock('api/office/support.api', () => ({ submitBugReport: jest.fn() }));
 jest.mock('state/nav/previous-view', () => ({ usePreviousView: () => 'waiter' }));
 jest.mock('state/auth/useAuth', () => ({ useAuth: () => ({ user: { id: 7, name: 'Wally', role: 'waiter' } }) }));
 const mockSubmit = submitBugReport as jest.Mock;
@@ -54,7 +54,7 @@ test('after sending, "Report another issue" gives a clean form', async () => {
   await waitFor(() => expect(screen.getByLabelText(/Bug title/)).toHaveValue(''));
 });
 
-test('only admins see past tickets', () => {
+test('tickets are read in the root console: no "past tickets" panel here, for any role', () => {
   render(<BugReportView />);
-  expect(screen.queryByText('Past Tickets')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Past Tickets/i)).not.toBeInTheDocument();
 });

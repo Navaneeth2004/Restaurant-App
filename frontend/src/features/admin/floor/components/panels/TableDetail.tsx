@@ -8,6 +8,7 @@ import type { Table } from 'types/restaurant/tables';
 import { tableHeat } from '../../hooks/floor-metrics';
 import { useTableStats } from '../../hooks/useTableStats';
 import { HEAT } from '../../floor-style';
+import StatTile from './StatTile';
 
 interface Props { table: Table; orders: ReadonlyArray<Order>; sym: string; nowMs: number; onClose: () => void }
 
@@ -40,15 +41,15 @@ export default function TableDetail({ table, orders, sym, nowMs, onClose }: Prop
             <Mini label="Status" value={statusLabel} color={c.pillText} />
           </div>
         )}
-        {empty && loading && <div className="flex items-center gap-2 py-2"><Spinner className="w-3.5 h-3.5" /><p className="fl-sub">Loading today's stats…</p></div>}
+        {empty && loading && <div className="flex items-center gap-2 mt-5 py-2"><Spinner className="w-3.5 h-3.5" /><p className="fl-sub">Loading today's stats…</p></div>}
         {empty && stats && (
-          <div>
-            <p className="fl-label mb-2">Today's performance</p>
-            <div className="grid grid-cols-2 gap-2">
-              <Mini label="Visits today" value={String(stats.orders_today)} color={stats.orders_today >= 4 ? 'var(--fl-green)' : stats.orders_today > 0 ? 'var(--fl-amber)' : 'var(--fl-muted)'} />
-              <Mini label="Revenue today" value={stats.revenue_today > 0 ? formatMoney(stats.revenue_today, sym) : '—'} color="var(--fl-indigo)" />
-              <Mini label="Avg per visit" value={stats.avg_order_value > 0 ? formatMoney(stats.avg_order_value, sym) : '—'} color="var(--fl-text)" />
-              <Mini label="Last order" value={stats.last_order_at ? formatTime(stats.last_order_at) : 'None today'} color="var(--fl-text2)" />
+          <div className="mt-5">
+            <p className="fl-label mb-3">Today's performance</p>
+            <div className="grid grid-cols-2 gap-2.5">
+              <StatTile label="Visits" value={String(stats.orders_today)} color={stats.orders_today >= 4 ? 'var(--fl-green)' : stats.orders_today > 0 ? 'var(--fl-amber)' : undefined} />
+              <StatTile label="Revenue" value={stats.revenue_today > 0 ? formatMoney(stats.revenue_today, sym) : '—'} color={stats.revenue_today > 0 ? 'var(--fl-indigo)' : undefined} />
+              <StatTile label="Avg / visit" value={stats.avg_order_value > 0 ? formatMoney(stats.avg_order_value, sym) : '—'} color={stats.avg_order_value > 0 ? 'var(--fl-text)' : undefined} />
+              <StatTile label="Last order" value={stats.last_order_at ? formatTime(stats.last_order_at) : 'None today'} color={stats.last_order_at ? 'var(--fl-text2)' : undefined} />
             </div>
           </div>
         )}

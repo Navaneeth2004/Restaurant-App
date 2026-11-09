@@ -1,12 +1,13 @@
 'use strict';
 /** Numbers for the root console dashboard. */
 const cfg = require('../../config/env');
-const { LIMIT_KEYS, PLANS } = require('../../config/plans');
+const { LIMIT_KEYS } = require('../../config/plans');
 const restaurants = require('../../repositories/central/restaurants.repo');
 const owners = require('../../repositories/central/owners.repo');
 const devices = require('../../repositories/central/devices.repo');
 const tickets = require('../../repositories/central/tickets.repo');
 const supportTickets = require('../support/tickets');
+const catalog = require('../features/catalog');
 const bus = require('../../realtime/bus');
 
 function overview() {
@@ -27,11 +28,13 @@ function overview() {
   };
 }
 
+/** `plans` are subscription short names; `plan_defaults` are the limits each one carries. */
 function consoleConfig() {
+  const subs = [...catalog.load().subs.values()];
   return {
-    plans: Object.keys(PLANS),
+    plans: subs.map(s => s.slug),
     limit_keys: Object.entries(LIMIT_KEYS).map(([key, v]) => ({ key, label: v.label })),
-    plan_defaults: PLANS,
+    plan_defaults: Object.fromEntries(subs.map(s => [s.slug, s.limits])),
     ticket_statuses: supportTickets.STATUSES,
     enforce_trial: cfg.ENFORCE_TRIAL,
   };

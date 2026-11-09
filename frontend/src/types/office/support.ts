@@ -18,7 +18,3 @@ export interface BugReportInput {
 /** The server stores the ticket for the operator's root console; `email_sent` is always true (kept for the old screen). */
 export interface BugReportResult { success?: boolean; ticket_id?: number }
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
-export interface SavedBugReport {
-  id: number; title: string; description: string; severity: string; category: string;
-  status: TicketStatus; created_at: string; steps: string[];
-}

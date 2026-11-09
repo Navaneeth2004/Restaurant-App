@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const cfg = require('../../config/env');
 const ctx = require('../../db/context');
+const { parseJson } = require('../../lib/json');
 const restaurants = require('../../repositories/central/restaurants.repo');
 const devices = require('../../repositories/central/devices.repo');
 const tickets = require('../../repositories/central/tickets.repo');
@@ -12,6 +13,7 @@ const overview = require('../../repositories/catalog/overview.repo');
 const settings = require('../../repositories/catalog/settings.repo');
 const rooms = require('../../realtime/rooms');
 const bus = require('../../realtime/bus');
+const { effectiveFor } = require('../features/resolve');
 const limits = require('./limits');
 
 const fileSize = (p) => { try { return fs.statSync(p).size; } catch (_) { return 0; } };
@@ -72,6 +74,7 @@ function detail(r) {
     created_at: r.created_at, updated_at: r.updated_at, notes: r.notes || '',
     suspended_reason: r.suspended_reason, suspended_at: r.suspended_at,
     limits_override: limits.parse(r.limits_json), limits_effective: limits.limitsFor(r), meta,
+    feature_overrides: parseJson(r.feature_overrides_json, {}), features_effective: effectiveFor(r),
     owner: owners.contact(r.owner_id),
     devices: devices.listActive(r.id),
     live: { staff_sockets: bus.roomSize(rooms.staff(r.id)), device_sockets: bus.roomSize(rooms.branding(r.id)) },

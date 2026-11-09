@@ -5,7 +5,7 @@
  */
 const rooms = require('./rooms');
 
-const PUBLIC_EVENTS = new Set(['settings_updated']);
+const PUBLIC_EVENTS = new Set(['settings_updated', 'features_updated']);
 let io = null;
 
 const attach = (server) => { io = server; };

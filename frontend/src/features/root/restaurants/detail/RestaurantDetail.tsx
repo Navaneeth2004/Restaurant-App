@@ -9,6 +9,7 @@ import { useRestaurantDetail } from '../hooks/useRestaurantDetail';
 import AccountSection from './AccountSection';
 import ActionsSection from './ActionsSection';
 import DevicesSection from './DevicesSection';
+import FeatureOverrides from './FeatureOverrides';
 import InfoSections from './InfoSections';
 
 interface Props { id: string; config: RootConfig; onClose: () => void; onChanged: () => void; onViewTickets: (id: string) => void }
@@ -33,6 +34,7 @@ export default function RestaurantDetail({ id, config, onClose, onChanged, onVie
         {d.status === 'suspended' && <div role="status" className="px-3 py-2.5 rounded-lg bg-red-500/10 border border-red-500/25 text-red-400 text-xs">Suspended {d.suspended_at ? timeAgo(d.suspended_at) : ''}{d.suspended_reason ? ` — ${d.suspended_reason}` : ''}</div>}
         <ErrorNotice error={a.error} onRetry={a.reload} fallback="Could not refresh" />
         <AccountSection data={d} config={config} form={a.form} onChange={a.setForm} problem={a.problem} busy={a.busy} onSave={() => void a.save()} />
+        <FeatureOverrides detail={d} busy={a.busy} onSave={f => void a.saveFeatures(f)} />
         <InfoSections d={d} />
         <DevicesSection devices={d.devices} />
         <Section title="Tickets"><div className="flex items-center gap-3 text-xs"><span className="text-zinc-300">{d.tickets.open} open · {d.tickets.total} total</span><button type="button" className="text-brand-400 hover:underline" onClick={() => { onClose(); onViewTickets(d.id); }}>View tickets</button></div></Section>

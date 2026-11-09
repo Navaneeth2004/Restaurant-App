@@ -1,11 +1,25 @@
 'use strict';
 /** Validates the root console's "edit restaurant" form and writes it. */
 const { fail } = require('../../lib/http');
-const { PLANS } = require('../../config/plans');
+const { KEYS } = require('../../config/features');
 const restaurants = require('../../repositories/central/restaurants.repo');
+const features = require('../../repositories/central/features.repo');
+const { notify } = require('../features/notify');
 const limits = require('./limits');
 
 const MAX_META = 8000;
+
+/** { "<feature>": true | false | null } from the form; null means "inherit" and is not stored. */
+function overridesFrom(input) {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) fail(400, 'features must be an object.');
+  const out = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!KEYS.has(key)) fail(400, `Unknown feature: ${key}`);
+    if (value === true || value === false) out[key] = value;
+    else if (value !== null) fail(400, 'Each feature must be on, off or inherit.');
+  }
+  return out;
+}
 
 /** @returns { fields: {column: value}, changed: {label: value} } */
 function buildPatch(body = {}) {
@@ -18,7 +32,7 @@ function buildPatch(body = {}) {
     set('name', n);
   }
   if (body.plan !== undefined) {
-    if (!PLANS[body.plan]) fail(400, 'Unknown plan.');
+    if (!features.subscriptionBySlug(body.plan)) fail(400, 'Unknown plan.');
     set('plan', body.plan);
   }
   if (body.trial_ends_at !== undefined) {
@@ -34,6 +48,7 @@ function buildPatch(body = {}) {
     try { set('limits_json', JSON.stringify(limits.validateLimits(body.limits)), 'limits'); }
     catch (e) { fail(400, e.message); }
   }
+  if (body.features !== undefined) set('feature_overrides_json', JSON.stringify(overridesFrom(body.features)), 'features');
   if (body.meta !== undefined) {
     if (typeof body.meta !== 'object' || body.meta === null || Array.isArray(body.meta)) fail(400, 'meta must be an object.');
     const s = JSON.stringify(body.meta);
@@ -47,6 +62,7 @@ function buildPatch(body = {}) {
 function applyPatch(id, body) {
   const { fields, changed } = buildPatch(body);
   restaurants.update(id, fields, new Date().toISOString());
+  if ('plan' in changed || 'features' in changed) notify([id]);
   return changed;
 }
 

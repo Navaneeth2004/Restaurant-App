@@ -32,7 +32,7 @@ export default function FloorDesktop({ f, sym }: { f: FloorState; sym: string })
           {m.parcels.length > 0 && (<><p className="fl-label mt-[18px] mb-2.5">Parcel / Takeaway slots</p><div style={grid}>{m.parcels.map(card)}</div></>)}
         </div>
       </div>
-      {f.selected && <div className="flex-shrink-0 w-[272px]"><TableDetail table={f.selected} orders={f.selectedOrders} sym={sym} nowMs={f.nowMs} onClose={f.clear} /></div>}
+      {f.selected && <div className="flex-shrink-0 w-[300px]"><TableDetail table={f.selected} orders={f.selectedOrders} sym={sym} nowMs={f.nowMs} onClose={f.clear} /></div>}
     </div>
   );
 }
