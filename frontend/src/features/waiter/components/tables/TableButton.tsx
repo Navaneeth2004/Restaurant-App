@@ -1,9 +1,9 @@
 import Icon from 'components/ui/base/Icon';
+import { minutesSince } from 'lib/format/local-time';
 import { isParcelTable } from 'lib/input/ids';
 import { FEATURE } from 'state/features/feature-keys';
 import { useFeatures } from 'state/features/useFeatures';
 import type { Table } from 'types/restaurant/tables';
-import TableTimer from './TableTimer';
 
 interface Props {
   table: Table; mobile: boolean; selected: boolean; nowMs: number;
@@ -17,19 +17,25 @@ const BADGES = {
   empty: { text: 'Empty', cls: 'text-zinc-700 bg-transparent border-zinc-700/40' },
 } as const;
 
-function look(t: Table, parcel: boolean) {
+/** Dot colour by how long the table has been occupied: green < 30m, amber < 60m, red after that. */
+function timeDot(mins: number): string {
+  return mins < 30 ? 'bg-emerald-400' : mins < 60 ? 'bg-amber-400' : 'bg-red-400';
+}
+
+function look(t: Table, parcel: boolean, mins: number) {
   const bill = t.status === 'waiting_bill';
   const busy = t.status === 'occupied';
+  const open = busy || bill;
   if (parcel) {
     return {
       frame: bill ? 'border-emerald-500/60 bg-emerald-500/8' : busy ? 'border-indigo-500/60 bg-indigo-500/8' : 'border-indigo-500/30 bg-indigo-500/5',
-      dot: bill ? 'bg-emerald-400' : busy ? 'bg-indigo-400' : 'bg-indigo-800',
+      dot: open ? timeDot(mins) : 'bg-indigo-800',
       badge: bill ? BADGES.bill : BADGES.parcel,
     };
   }
   return {
     frame: busy ? 'border-brand-500/60 bg-brand-500/8' : bill ? 'border-emerald-500/60 bg-emerald-500/8' : 'border-surface-border hover:border-zinc-600',
-    dot: busy ? 'bg-brand-400' : bill ? 'bg-emerald-400' : 'bg-zinc-800',
+    dot: open ? timeDot(mins) : 'bg-zinc-800',
     badge: busy ? BADGES.active : bill ? BADGES.bill : BADGES.empty,
   };
 }
@@ -37,28 +43,32 @@ function look(t: Table, parcel: boolean) {
 export default function TableButton({ table, mobile, selected, nowMs, onSelect, onRemoveParcel, onShowQr }: Props) {
   const { isOn } = useFeatures();
   const parcel = isParcelTable(table);
-  const occupied = !!table.occupied_since && table.status !== 'empty';
-  const v = look(table, parcel);
+  const mins = table.occupied_since ? minutesSince(table.occupied_since, nowMs) : 0;
+  const v = look(table, parcel, mins);
   const small = 'w-6 h-6 rounded-lg flex items-center justify-center text-zinc-500 bg-surface-card/80 transition-colors';
+  // Parcel slots: the dot gives way to the QR / X buttons on hover (always shown on touch screens, which cannot hover).
+  const dotCls = parcel ? 'transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:hidden' : '';
+  // Room for the buttons is reserved only while they are visible, so the name is not cut off at rest.
+  const nameRoom = parcel ? 'group-hover:pr-14 group-focus-within:pr-14 [@media(hover:none)]:pr-14' : '';
+  const actionsCls = 'absolute flex gap-1 transition-opacity opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto';
 
   return (
     <div className="relative group">
       <button type="button" onClick={() => onSelect(table)} style={{ minHeight: 108 }} aria-pressed={selected}
         className={`w-full rounded-2xl border text-left transition-all cursor-pointer select-none flex flex-col ${mobile ? 'p-4 active:scale-95' : 'p-3.5 duration-150'} ${v.frame} ${selected ? 'ring-2 ring-brand-500 ring-offset-1 ring-offset-surface-card' : ''}`}>
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
+          <div className={`min-w-0 flex-1 ${nameRoom}`}>
             <div className={`font-mono font-bold leading-none ${mobile ? 'text-2xl' : 'text-xl'} ${parcel ? 'text-indigo-300' : 'text-white'}`}>{table.id}</div>
             <div className="text-zinc-400 text-xs mt-1.5 truncate leading-snug">{table.label}</div>
           </div>
-          <span className={`block w-2.5 h-2.5 rounded-full mt-1 flex-shrink-0 ${v.dot}`} />
+          <span className={`block w-2.5 h-2.5 rounded-full mt-1 flex-shrink-0 ${v.dot} ${dotCls}`} />
         </div>
         <div className="mt-auto pt-3 flex items-center gap-1.5 flex-wrap">
           <span className={`inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${v.badge.cls}`}>{v.badge.text}</span>
-          {occupied && table.occupied_since && <TableTimer since={table.occupied_since} nowMs={nowMs} />}
         </div>
       </button>
       {parcel && (
-        <div className="absolute top-1.5 right-6 flex gap-1 opacity-70 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+        <div className={`${actionsCls} ${mobile ? 'top-3.5 right-3.5' : 'top-3 right-3'}`}>
           {isOn(FEATURE.kiosk) && <button type="button" aria-label="Show QR code" onClick={() => onShowQr(table)} className={`${small} hover:text-indigo-400 hover:bg-indigo-500/10`}><Icon name="qr" className="w-3.5 h-3.5" /></button>}
           <button type="button" aria-label="Remove parcel slot" onClick={() => onRemoveParcel(table)} className={`${small} hover:text-red-400 hover:bg-red-500/10`}><Icon name="x" className="w-3.5 h-3.5" strokeWidth={2.5} /></button>
         </div>

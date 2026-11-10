@@ -1,7 +1,12 @@
 /** Limit values by key (`max_devices`, …); a missing key or null means unlimited. */
 export type Limits = Record<string, number | null | undefined>;
 
-export interface PlanInfo { slug: string; name: string; description: string; limits: Limits; features_off: number }
+export interface PlanInfo {
+  slug: string; name: string; description: string; limits: Limits;
+  features_off: number;
+  /** Labels of the features this plan does not include. */
+  features_excluded: string[];
+}
 
 /** `GET /auth/subscription` (admin): this restaurant's own plan and the plans it could choose. */
 export interface SubscriptionInfo {
