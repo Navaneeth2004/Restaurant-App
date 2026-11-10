@@ -25,7 +25,8 @@ export default function CreateRestaurantModal({ config, onClose, onCreated }: Pr
 
   if (result) {
     return (
-      <Modal title="Restaurant created" className="max-w-md" onClose={onClose}>
+      <Modal title="Restaurant created" className="max-w-md" sheet showClose onClose={onClose}>
+        <h3 className="font-bold text-white text-base mb-1 pr-10">Restaurant created</h3>
         <p className="text-zinc-400 text-xs mb-3">Save these now — generated values are shown only once.</p>
         <KV rows={[['Restaurant', result.name], ['Owner phone', result.owner_phone], ['Owner password', result.temp_owner_password ?? '(the one you typed, or the existing account)'], ['Admin PIN', result.admin_pin ?? '(the one you typed)']]} />
         <button type="button" className="btn btn-brand w-full mt-4" onClick={onClose}>Done</button>
@@ -33,10 +34,11 @@ export default function CreateRestaurantModal({ config, onClose, onCreated }: Pr
     );
   }
   return (
-    <Modal title="New restaurant" className="max-w-md" onClose={onClose}>
+    <Modal title="New restaurant" className="max-w-md" sheet showClose onClose={onClose}>
       <form onSubmit={submit} className="space-y-3">
+        <h3 className="font-bold text-white text-base pr-10">New restaurant</h3>
         <Field label="Restaurant name" htmlFor="nr-name"><input id="nr-name" className="input" value={f.restaurant_name} onChange={e => set('restaurant_name', e.target.value)} autoFocus /></Field>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Owner phone" htmlFor="nr-phone"><input id="nr-phone" className="input" type="tel" value={f.owner_phone} onChange={e => set('owner_phone', e.target.value)} /></Field>
           <Field label="Owner password" htmlFor="nr-pass" hint="Empty = generate one (new owners only)"><input id="nr-pass" className="input" value={f.owner_password} onChange={e => set('owner_password', e.target.value)} /></Field>
           <Field label="Admin's name" htmlFor="nr-admin"><input id="nr-admin" className="input" placeholder="Admin" value={f.admin_name} onChange={e => set('admin_name', e.target.value)} /></Field>

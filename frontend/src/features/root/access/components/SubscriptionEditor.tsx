@@ -25,9 +25,9 @@ export default function SubscriptionEditor({ title, initial, features, limitKeys
   };
 
   return (
-    <Modal title={title} className="max-w-2xl max-h-[92vh] overflow-y-auto" onClose={onClose}>
+    <Modal title={title} className="max-w-2xl" sheet showClose onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
-        <h3 className="font-bold text-white text-base">{title}</h3>
+        <h3 className="font-bold text-white text-base pr-10">{title}</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Name" htmlFor="sub-name"><input id="sub-name" className="input" maxLength={60} value={form.name} onChange={e => set({ name: e.target.value })} autoFocus /></Field>
           <Field label="Description" htmlFor="sub-desc"><input id="sub-desc" className="input" maxLength={300} value={form.description} onChange={e => set({ description: e.target.value })} /></Field>

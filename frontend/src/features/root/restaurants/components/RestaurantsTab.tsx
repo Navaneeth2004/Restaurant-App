@@ -14,9 +14,9 @@ export default function RestaurantsTab({ openId, onOpenId, onViewTickets }: Prop
   const { reload } = r.list;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <input aria-label="Search restaurants" className="input max-w-xs" placeholder="Search name, id or phone…" value={r.q} onChange={e => r.setQ(e.target.value)} />
+        <input aria-label="Search restaurants" className="input sm:max-w-xs sm:flex-1" placeholder="Search name, id or phone…" value={r.q} onChange={e => r.setQ(e.target.value)} />
         <select aria-label="Status filter" className="input w-auto" value={r.status} onChange={e => r.setStatus(e.target.value)}>
           <option value="all">All statuses</option><option value="active">Active</option><option value="suspended">Suspended</option>
         </select>

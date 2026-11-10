@@ -20,6 +20,7 @@ router.post('/verify', access.device, handle(async (req, res) => {
     cookieValue: req.cookies[STAFF_COOKIE], device: ctx.get().device,
   });
   res.cookie(STAFF_COOKIE, out.cookieValue, cookieOptions(cfg.STAFF_COOKIE_DAYS));
+  res.locals.audit = { staff: { name: out.name, role: out.role } };
   res.json({ id: out.id, name: out.name, role: out.role, sessionToken: out.sessionToken });
 }));
 

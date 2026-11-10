@@ -17,19 +17,18 @@ interface Props { id: string; config: RootConfig; onClose: () => void; onChanged
 export default function RestaurantDetail({ id, config, onClose, onChanged, onViewTickets }: Props) {
   const a = useRestaurantDetail(id, config, onChanged);
   const d = a.data;
-  const wide = 'max-w-4xl max-h-[92vh] overflow-y-auto';
+  const wide = 'max-w-4xl';
 
   if (!d || !a.form) {
-    return <Modal title="Restaurant" className={wide} onClose={onClose}>{a.error ? <ErrorNotice error={a.error} onRetry={a.reload} fallback="Could not load the restaurant" /> : <PageSpinner />}</Modal>;
+    return <Modal title="Restaurant" className={wide} sheet showClose onClose={onClose}>{a.error ? <ErrorNotice error={a.error} onRetry={a.reload} fallback="Could not load the restaurant" /> : <PageSpinner />}</Modal>;
   }
   return (
-    <Modal title={d.name} className={wide} onClose={onClose}>
+    <Modal title={d.name} className={wide} sheet showClose onClose={onClose}>
       <div className="space-y-4">
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap pr-10">
           <h3 className="font-bold text-white text-base mr-1">{d.name}</h3><Badge tone={statusTone(d.status)}>{d.status}</Badge><Badge tone="indigo">{d.plan}</Badge>
           <button type="button" className="font-mono text-[11px] text-zinc-500 hover:text-white" title="Copy id" onClick={() => void navigator.clipboard?.writeText(d.id)}>{d.id}</button>
           <span className="text-zinc-600 text-[11px]">created {formatDateTime(d.created_at)}</span>
-          <button type="button" className="btn btn-sm ml-auto" onClick={onClose}>Close</button>
         </div>
         {d.status === 'suspended' && <div role="status" className="px-3 py-2.5 rounded-lg bg-red-500/10 border border-red-500/25 text-red-400 text-xs">Suspended {d.suspended_at ? timeAgo(d.suspended_at) : ''}{d.suspended_reason ? ` — ${d.suspended_reason}` : ''}</div>}
         <ErrorNotice error={a.error} onRetry={a.reload} fallback="Could not refresh" />

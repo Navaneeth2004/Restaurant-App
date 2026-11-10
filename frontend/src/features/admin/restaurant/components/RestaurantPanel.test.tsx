@@ -1,11 +1,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { getSubscription } from 'api/access/subscription.api';
 import { updateSettings } from 'api/restaurant/settings.api';
 import RestaurantPanel from './RestaurantPanel';
 
 jest.mock('api/restaurant/settings.api', () => ({ updateSettings: jest.fn(), uploadLogo: jest.fn() }));
+jest.mock('api/access/subscription.api', () => ({ getSubscription: jest.fn() }));
 const mockUpdate = updateSettings as jest.Mock;
 
-beforeEach(() => { mockUpdate.mockReset(); mockUpdate.mockResolvedValue(undefined); });
+beforeEach(() => {
+  mockUpdate.mockReset(); mockUpdate.mockResolvedValue(undefined);
+  (getSubscription as jest.Mock).mockReturnValue(new Promise(() => undefined));
+});
 
 test('Save is disabled until something changes, and re-disables after saving', async () => {
   render(<RestaurantPanel />);

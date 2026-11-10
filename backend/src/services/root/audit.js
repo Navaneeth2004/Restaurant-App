@@ -12,6 +12,12 @@ function record(actor, action, target, detail) {
   });
 }
 
-const list = (limit) => audit.list(Math.min(parseInt(limit, 10) || 200, 500));
+/** @param query { limit, offset, q, source } straight from the request */
+const list = (query = {}) => audit.list({
+  limit: Math.min(parseInt(query.limit, 10) || 200, 500),
+  offset: Math.max(parseInt(query.offset, 10) || 0, 0),
+  q: String(query.q || '').trim().slice(0, 60),
+  source: ['app', 'root'].includes(query.source) ? query.source : '',
+});
 
 module.exports = { record, list };

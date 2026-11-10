@@ -7,6 +7,6 @@ const audit = require('../../services/root/audit');
 const router = express.Router();
 
 router.get('/overview', access.root, (req, res) => res.json(overview()));
-router.get('/audit', access.root, (req, res) => res.json(audit.list(req.query.limit)));
+router.get('/audit', access.root, (req, res) => res.json(audit.list(req.query)));
 
 module.exports = router;

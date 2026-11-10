@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import Spinner from 'components/ui/feedback/Spinner';
 import { useSettingsForm } from '../hooks/useSettingsForm';
 import BrandSection from './sections/BrandSection';
@@ -6,11 +7,16 @@ import IdentitySection from './sections/IdentitySection';
 import LockSettings from './sections/LockSettings';
 import OverdueSection from './sections/OverdueSection';
 import TaxSection from './sections/TaxSection';
+import PlansScreen from './subscription/PlansScreen';
+import SubscriptionCard from './subscription/SubscriptionCard';
 
 export default function RestaurantPanel() {
   const s = useSettingsForm();
+  const [plans, setPlans] = useState(false);
+  if (plans) return <PlansScreen onBack={() => setPlans(false)} />;
   return (
     <form className="space-y-5 pb-2" onSubmit={e => { e.preventDefault(); if (s.dirty && !s.problem) void s.save(); }}>
+      <SubscriptionCard onPlans={() => setPlans(true)} />
       <IdentitySection s={s} />
       <TaxSection s={s} />
       <GstSection s={s} />

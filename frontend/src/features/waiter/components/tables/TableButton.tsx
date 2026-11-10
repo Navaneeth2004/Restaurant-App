@@ -1,5 +1,7 @@
 import Icon from 'components/ui/base/Icon';
 import { isParcelTable } from 'lib/input/ids';
+import { FEATURE } from 'state/features/feature-keys';
+import { useFeatures } from 'state/features/useFeatures';
 import type { Table } from 'types/restaurant/tables';
 import TableTimer from './TableTimer';
 
@@ -33,6 +35,7 @@ function look(t: Table, parcel: boolean) {
 }
 
 export default function TableButton({ table, mobile, selected, nowMs, onSelect, onRemoveParcel, onShowQr }: Props) {
+  const { isOn } = useFeatures();
   const parcel = isParcelTable(table);
   const occupied = !!table.occupied_since && table.status !== 'empty';
   const v = look(table, parcel);
@@ -57,7 +60,7 @@ export default function TableButton({ table, mobile, selected, nowMs, onSelect, 
       </button>
       {parcel && (
         <div className="absolute bottom-1.5 right-1.5 flex gap-1 opacity-70 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-          <button type="button" aria-label="Show QR code" onClick={() => onShowQr(table)} className={`${small} hover:text-indigo-400 hover:bg-indigo-500/10`}><Icon name="qr" className="w-3.5 h-3.5" /></button>
+          {isOn(FEATURE.kiosk) && <button type="button" aria-label="Show QR code" onClick={() => onShowQr(table)} className={`${small} hover:text-indigo-400 hover:bg-indigo-500/10`}><Icon name="qr" className="w-3.5 h-3.5" /></button>}
           <button type="button" aria-label="Remove parcel slot" onClick={() => onRemoveParcel(table)} className={`${small} hover:text-red-400 hover:bg-red-500/10`}><Icon name="x" className="w-3.5 h-3.5" strokeWidth={2.5} /></button>
         </div>
       )}

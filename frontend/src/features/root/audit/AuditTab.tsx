@@ -1,34 +1,41 @@
-import { useCallback } from 'react';
-import { rootAudit } from 'api/platform/root.api';
+import EmptyState from 'components/ui/feedback/EmptyState';
 import ErrorNotice from 'components/ui/feedback/ErrorNotice';
 import PageSpinner from 'components/ui/feedback/PageSpinner';
-import { useAsync } from 'hooks/async/useAsync';
-import { formatDateTime } from 'lib/format/local-time';
+import PillTabs from 'components/layout/PillTabs';
+import type { AuditSource } from 'types/office/audit';
+import AuditRow from './AuditRow';
+import { AUDIT_PAGE, useAudit } from './useAudit';
 
-const HEAD = ['When', 'Who', 'Action', 'Target', 'Details', 'IP'];
+const SOURCES: ReadonlyArray<{ key: AuditSource; label: string }> = [
+  { key: 'all', label: 'Everything' }, { key: 'app', label: 'Restaurants' }, { key: 'root', label: 'Root console' },
+];
 
 export default function AuditTab() {
-  const load = useCallback((s: AbortSignal) => rootAudit(s), []);
-  const { data, error, reload } = useAsync(load);
-  if (!data) return error ? <ErrorNotice error={error} onRetry={reload} fallback="Could not load the audit log" /> : <PageSpinner />;
+  const a = useAudit();
   return (
-    <div className="rounded-xl border border-surface-border bg-surface-card overflow-hidden">
-      <div className="px-4 py-3 border-b border-surface-border"><p className="text-sm font-bold text-white">Audit log</p><p className="text-zinc-500 text-xs mt-0.5">Everything done in the root console (newest first).</p></div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead><tr className="border-b border-surface-border text-left text-zinc-500">{HEAD.map(h => <th key={h} scope="col" className="px-4 py-2.5 font-bold uppercase tracking-widest text-[10px]">{h}</th>)}</tr></thead>
-          <tbody>
-            {data.map(a => (
-              <tr key={a.id} className="border-b border-surface-border/50">
-                <td className="px-4 py-2 text-zinc-400 whitespace-nowrap">{formatDateTime(a.at)}</td><td className="px-4 py-2 text-zinc-300">{a.owner_phone ?? '—'}</td>
-                <td className="px-4 py-2 text-white font-mono">{a.action}</td><td className="px-4 py-2 text-zinc-400 font-mono">{a.target ?? '—'}</td>
-                <td className="px-4 py-2 text-zinc-500 max-w-xs truncate" title={a.detail ?? ''}>{a.detail ?? ''}</td><td className="px-4 py-2 text-zinc-500 font-mono">{a.ip ?? ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {data.length === 0 && <p className="px-4 py-6 text-zinc-600 text-xs">Nothing yet.</p>}
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-white font-bold text-sm">Audit log</h2>
+        <p className="text-zinc-500 text-xs mt-0.5 max-w-xl leading-relaxed">Logins, changes and deletions, by restaurants and in this console. Newest first, {AUDIT_PAGE} per page.</p>
       </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <PillTabs tabs={SOURCES} active={a.source} label="Audit source" onSelect={k => { const s = SOURCES.find(x => x.key === k); if (s) a.setSource(s.key); }} />
+        <input aria-label="Search audit log" className="input sm:max-w-xs sm:flex-1" placeholder="Search action, phone, restaurant id, IP…" value={a.search} onChange={e => a.setSearch(e.target.value)} />
+        <button type="button" className="btn btn-sm ml-auto" onClick={a.reload} disabled={a.loading}>Refresh</button>
+      </div>
+      <ErrorNotice error={a.error} onRetry={a.reload} fallback="Could not load the audit log" />
+      {a.data === null ? (!a.error && <PageSpinner />) : a.rows.length === 0 ? <EmptyState title="Nothing found" hint="Try another search or filter." /> : (
+        <ul className={`rounded-xl border border-surface-border bg-surface-card overflow-hidden ${a.loading ? 'opacity-60' : ''}`} aria-busy={a.loading}>
+          {a.rows.map(r => <AuditRow key={r.id} entry={r} />)}
+        </ul>
+      )}
+      {a.data !== null && (a.page > 0 || a.hasOlder) && (
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" className="btn btn-sm" disabled={a.page === 0 || a.loading} onClick={() => a.setPage(a.page - 1)}>← Newer</button>
+          <span className="text-zinc-500 text-xs">Page {a.page + 1}</span>
+          <button type="button" className="btn btn-sm" disabled={!a.hasOlder || a.loading} onClick={() => a.setPage(a.page + 1)}>Older →</button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 'use strict';
-/** /api/auth — owner login, device linking, pairing codes, device list, switched-off features. */
+/** /api/auth — owner login, device linking, pairing codes, device list, switched-off features, subscription. */
 const express = require('express');
 const cfg = require('../../config/env');
 const access = require('../../middleware/access');
@@ -12,6 +12,7 @@ router.get('/config', access.public, (req, res) => {
 router.use(require('./owner'));
 router.use(require('./device'));
 router.use(require('./features'));
+router.use(require('./subscription'));
 router.use(require('./admin'));
 
 module.exports = router;

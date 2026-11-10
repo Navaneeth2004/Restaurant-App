@@ -2,7 +2,7 @@
 /**
  * Builds the HTTP app. Middleware ORDER matters:
  *   security headers/CORS -> health -> gate (device/staff/kiosk/root) -> body parsers -> tenant context
- *   -> req.io -> routes -> frontend -> API 404 -> error handler
+ *   -> req.io -> audit -> routes -> frontend -> API 404 -> error handler
  */
 const express = require('express');
 const http = require('http');
@@ -16,6 +16,7 @@ const gate = require('./middleware/gate');
 const bodyParsers = require('./middleware/body-parsers');
 const tenantContext = require('./middleware/tenant-context');
 const attachIo = require('./middleware/attach-io');
+const appAudit = require('./middleware/app-audit');
 const { apiNotFound, errorHandler } = require('./middleware/errors');
 const { createSocketServer } = require('./realtime/socket-server');
 const { mountRoutes } = require('./routes');
@@ -47,7 +48,7 @@ function createApp() {
   app.set('io', io);
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
-  app.use('/api', gate, bodyParsers, tenantContext, attachIo);
+  app.use('/api', gate, bodyParsers, tenantContext, attachIo, appAudit);
   app.use('/uploads/:rid', require('./routes/uploads'));
   mountRoutes(app);
 

@@ -1,4 +1,5 @@
 import { buildUrl, request } from '../http';
+import type { AuditFilter } from 'types/office/audit';
 import type {
   AuditRow, CreatedRestaurant, FeatureAdmin, NewRestaurantInput, RestaurantDetail, RestaurantPatch, RestaurantSummary, RootConfig, RootOverview,
   Subscription, SubscriptionInput, TicketDetail, TicketFilter, TicketRow,
@@ -14,7 +15,8 @@ export const rootLogout = () => send<{ success: boolean }>('/logout', 'POST');
 export const rootMe = (signal?: AbortSignal) => get<{ phone: string }>('/me', undefined, signal);
 export const rootConfig = (signal?: AbortSignal) => get<RootConfig>('/config', undefined, signal);
 export const rootOverview = (signal?: AbortSignal) => get<RootOverview>('/overview', undefined, signal);
-export const rootAudit = (signal?: AbortSignal) => get<AuditRow[]>('/audit', undefined, signal);
+export const rootAudit = (f: AuditFilter, signal?: AbortSignal) =>
+  get<AuditRow[]>('/audit', { limit: String(f.limit), offset: String(f.offset), ...(f.q ? { q: f.q } : {}), ...(f.source !== 'all' ? { source: f.source } : {}) }, signal);
 
 export const listRestaurants = (signal?: AbortSignal) => get<RestaurantSummary[]>('/restaurants', undefined, signal);
 export const getRestaurant = (id: string, signal?: AbortSignal) => get<RestaurantDetail>(`/restaurants/${id}`, undefined, signal);

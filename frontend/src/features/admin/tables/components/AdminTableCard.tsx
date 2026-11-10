@@ -1,5 +1,7 @@
 import Icon from 'components/ui/base/Icon';
 import type { SortableItemProps } from 'hooks/sortable/useSortable';
+import { FEATURE } from 'state/features/feature-keys';
+import { useFeatures } from 'state/features/useFeatures';
 import type { Table } from 'types/restaurant/tables';
 
 const STATUS: Record<Table['status'], { cls: string; label: string }> = {
@@ -15,6 +17,7 @@ interface Props {
 }
 
 export default function AdminTableCard({ table, props, dragging, over, onQr, onEdit, onDelete }: Props) {
+  const { isOn } = useFeatures();
   const btn = 'w-7 h-7 rounded-lg flex items-center justify-center transition-colors';
   const s = STATUS[table.status];
   return (
@@ -23,7 +26,7 @@ export default function AdminTableCard({ table, props, dragging, over, onQr, onE
         <div className="flex items-start justify-between gap-2">
           <div className="w-10 h-10 rounded-xl bg-surface-raised border border-surface-border flex items-center justify-center font-mono font-bold text-sm text-white">{table.id}</div>
           <div className="flex gap-1">
-            <button type="button" aria-label={`QR code for ${table.label}`} className={`${btn} text-zinc-500 hover:text-brand-400 hover:bg-brand-500/10`} onClick={() => onQr(table)}><Icon name="qr" className="w-3.5 h-3.5" /></button>
+            {isOn(FEATURE.kiosk) && <button type="button" aria-label={`QR code for ${table.label}`} className={`${btn} text-zinc-500 hover:text-brand-400 hover:bg-brand-500/10`} onClick={() => onQr(table)}><Icon name="qr" className="w-3.5 h-3.5" /></button>}
             <button type="button" aria-label={`Edit ${table.label}`} className={`${btn} text-zinc-500 hover:text-white hover:bg-surface-raised`} onClick={() => onEdit(table)}><Icon name="edit" className="w-3.5 h-3.5" /></button>
             <button type="button" aria-label={`Delete ${table.label}`} className={`${btn} text-red-500/40 hover:text-red-400 hover:bg-red-500/10`} onClick={() => onDelete(table)}><Icon name="trash" className="w-3.5 h-3.5" /></button>
           </div>
