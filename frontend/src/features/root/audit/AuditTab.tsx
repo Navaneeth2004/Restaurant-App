@@ -1,7 +1,8 @@
+import PillTabs from 'components/layout/PillTabs';
+import RefreshButton from 'components/ui/base/RefreshButton';
 import EmptyState from 'components/ui/feedback/EmptyState';
 import ErrorNotice from 'components/ui/feedback/ErrorNotice';
 import PageSpinner from 'components/ui/feedback/PageSpinner';
-import PillTabs from 'components/layout/PillTabs';
 import type { AuditSource } from 'types/office/audit';
 import AuditRow from './AuditRow';
 import { AUDIT_PAGE, useAudit } from './useAudit';
@@ -18,11 +19,11 @@ export default function AuditTab() {
         <h2 className="text-white font-bold text-sm">Audit log</h2>
         <p className="text-zinc-500 text-xs mt-0.5 max-w-xl leading-relaxed">Logins, changes and deletions, by restaurants and in this console. Newest first, {AUDIT_PAGE} per page.</p>
       </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <PillTabs tabs={SOURCES} active={a.source} label="Audit source" onSelect={k => { const s = SOURCES.find(x => x.key === k); if (s) a.setSource(s.key); }} />
-        <input aria-label="Search audit log" className="input sm:max-w-xs sm:flex-1" placeholder="Search action, phone, restaurant id, IP…" value={a.search} onChange={e => a.setSearch(e.target.value)} />
-        <button type="button" className="btn btn-sm ml-auto" onClick={a.reload} disabled={a.loading}>Refresh</button>
+      <div className="flex items-center gap-2">
+        <div className="min-w-0"><PillTabs tabs={SOURCES} active={a.source} label="Audit source" onSelect={k => { const s = SOURCES.find(x => x.key === k); if (s) a.setSource(s.key); }} /></div>
+        <RefreshButton onClick={a.reload} loading={a.loading} />
       </div>
+      <input aria-label="Search audit log" className="input w-full sm:w-80" placeholder="Search action, phone, restaurant id, IP…" value={a.search} onChange={e => a.setSearch(e.target.value)} />
       <ErrorNotice error={a.error} onRetry={a.reload} fallback="Could not load the audit log" />
       {a.data === null ? (!a.error && <PageSpinner />) : a.rows.length === 0 ? <EmptyState title="Nothing found" hint="Try another search or filter." /> : (
         <ul className={`rounded-xl border border-surface-border bg-surface-card overflow-hidden ${a.loading ? 'opacity-60' : ''}`} aria-busy={a.loading}>

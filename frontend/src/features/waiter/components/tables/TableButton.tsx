@@ -46,20 +46,19 @@ export default function TableButton({ table, mobile, selected, nowMs, onSelect, 
       <button type="button" onClick={() => onSelect(table)} style={{ minHeight: 108 }} aria-pressed={selected}
         className={`w-full rounded-2xl border text-left transition-all cursor-pointer select-none flex flex-col ${mobile ? 'p-4 active:scale-95' : 'p-3.5 duration-150'} ${v.frame} ${selected ? 'ring-2 ring-brand-500 ring-offset-1 ring-offset-surface-card' : ''}`}>
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className={`font-mono font-bold leading-none ${mobile ? 'text-2xl' : 'text-xl'} ${parcel ? 'text-indigo-300' : 'text-white'}`}>{table.id}</div>
             <div className="text-zinc-400 text-xs mt-1.5 truncate leading-snug">{table.label}</div>
           </div>
-          <div className="flex-shrink-0">
-            {occupied && table.occupied_since ? <TableTimer since={table.occupied_since} nowMs={nowMs} /> : <span className={`block w-2.5 h-2.5 rounded-full mt-1 ${v.dot}`} />}
-          </div>
+          <span className={`block w-2.5 h-2.5 rounded-full mt-1 flex-shrink-0 ${v.dot}`} />
         </div>
-        <div className="mt-auto pt-3">
+        <div className="mt-auto pt-3 flex items-center gap-1.5 flex-wrap">
           <span className={`inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${v.badge.cls}`}>{v.badge.text}</span>
+          {occupied && table.occupied_since && <TableTimer since={table.occupied_since} nowMs={nowMs} />}
         </div>
       </button>
       {parcel && (
-        <div className="absolute bottom-1.5 right-1.5 flex gap-1 opacity-70 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+        <div className="absolute top-1.5 right-6 flex gap-1 opacity-70 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           {isOn(FEATURE.kiosk) && <button type="button" aria-label="Show QR code" onClick={() => onShowQr(table)} className={`${small} hover:text-indigo-400 hover:bg-indigo-500/10`}><Icon name="qr" className="w-3.5 h-3.5" /></button>}
           <button type="button" aria-label="Remove parcel slot" onClick={() => onRemoveParcel(table)} className={`${small} hover:text-red-400 hover:bg-red-500/10`}><Icon name="x" className="w-3.5 h-3.5" strokeWidth={2.5} /></button>
         </div>

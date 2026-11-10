@@ -5,25 +5,28 @@ import { limitRows } from '../../hooks/subscription-view';
 
 interface Props { plan: PlanInfo; current: boolean; sym: string; onChoose: (p: PlanInfo) => void }
 
-function priceText(slug: string, sym: string): string {
-  const price = DEMO_PLAN_PRICES[slug];
-  if (price === undefined) return 'Contact us';
-  return price === 0 ? 'Free' : `${formatMoney(price, sym)} / month`;
+function price(slug: string, sym: string): { amount: string; unit: string } {
+  const p = DEMO_PLAN_PRICES[slug];
+  if (p === undefined) return { amount: 'Contact us', unit: '' };
+  return p === 0 ? { amount: 'Free', unit: '' } : { amount: formatMoney(p, sym).replace(/\.00$/, ''), unit: '/ month' };
 }
 
 export default function PlanCard({ plan, current, sym, onChoose }: Props) {
+  const { amount, unit } = price(plan.slug, sym);
   return (
-    <section className={`rounded-xl border p-4 flex flex-col ${current ? 'border-brand-500/50 bg-brand-500/5' : 'border-surface-border bg-surface-card'}`}>
-      <div className="flex items-center gap-2"><h4 className="text-white font-bold text-sm">{plan.name}</h4>{current && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-400 border border-brand-500/25">Current</span>}</div>
-      <p className="font-mono font-bold text-white text-lg mt-1">{priceText(plan.slug, sym)}</p>
-      {plan.description && <p className="text-zinc-500 text-xs mt-1">{plan.description}</p>}
-      <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-xs mt-3">
+    <section className={`rounded-xl border p-5 flex flex-col ${current ? 'border-brand-500/50 bg-brand-500/5' : 'border-surface-border bg-surface-card'}`}>
+      <h4 className="text-white font-bold text-sm">{plan.name}</h4>
+      <p className="mt-2 text-white"><span className="text-3xl font-extrabold tracking-tight">{amount}</span>{unit && <span className="text-zinc-500 text-xs ml-1.5">{unit}</span>}</p>
+      {plan.description && <p className="text-zinc-500 text-xs mt-2">{plan.description}</p>}
+      <dl className="text-xs mt-4 divide-y divide-surface-border/60 border-t border-surface-border/60">
         {limitRows(plan.limits).map(([label, text]) => (
-          <div key={label} className="contents"><dt className="text-zinc-500">{label}</dt><dd className="text-zinc-200 text-right">{text}</dd></div>
+          <div key={label} className="flex justify-between py-2"><dt className="text-zinc-500">{label}</dt><dd className="text-zinc-200">{text}</dd></div>
         ))}
       </dl>
       <p className="text-zinc-500 text-[11px] mt-2">{plan.features_off === 0 ? 'All features included' : `${plan.features_off} feature${plan.features_off === 1 ? '' : 's'} not included`}</p>
-      <button type="button" className="btn btn-brand btn-sm w-full pt-0 mt-4" disabled={current} onClick={() => onChoose(plan)}>{current ? 'Current plan' : 'Choose plan'}</button>
+      {current
+        ? <p className="mt-5 text-center text-xs font-bold text-brand-400 py-2.5 rounded-xl bg-brand-500/10 border border-brand-500/25">Your current plan</p>
+        : <button type="button" className="btn btn-brand w-full mt-5" onClick={() => onChoose(plan)}>Choose plan</button>}
     </section>
   );
 }

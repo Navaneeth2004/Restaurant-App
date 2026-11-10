@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import PillTabs from 'components/layout/PillTabs';
+import ChoicePills from 'components/ui/base/ChoicePills';
+import RefreshButton from 'components/ui/base/RefreshButton';
 import ErrorNotice from 'components/ui/feedback/ErrorNotice';
 import PageSpinner from 'components/ui/feedback/PageSpinner';
 import { timeAgo } from 'lib/format/local-time';
@@ -13,6 +15,10 @@ const STATUSES = [
   { key: 'active', label: 'Open + in progress' }, { key: 'open', label: 'Open' }, { key: 'in_progress', label: 'In progress' },
   { key: 'resolved', label: 'Resolved' }, { key: 'closed', label: 'Closed' }, { key: 'all', label: 'All' },
 ];
+const SEVERITIES = [
+  { value: '', label: 'Any' }, { value: 'critical', label: 'Critical' }, { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' }, { value: 'low', label: 'Low' },
+];
 const BAR: Record<string, string> = { critical: '#ef4444', high: '#f59e0b', medium: '#3b82f6', low: '#52525b' };
 
 export default function TicketsTab({ restaurantId, onClearRestaurant, onOpenRestaurant }: Props) {
@@ -21,14 +27,14 @@ export default function TicketsTab({ restaurantId, onClearRestaurant, onOpenRest
 
   return (
     <div className="space-y-3">
-      <PillTabs tabs={STATUSES} active={t.status} label="Ticket status" onSelect={t.setStatus} />
+      <div className="flex items-center gap-2">
+        <div className="min-w-0"><PillTabs tabs={STATUSES} active={t.status} label="Ticket status" onSelect={t.setStatus} /></div>
+        <RefreshButton onClick={t.reload} loading={t.loading} />
+      </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <input aria-label="Search tickets" className="input sm:max-w-xs sm:flex-1" placeholder="Search title, text or restaurant…" value={t.search} onChange={e => t.setSearch(e.target.value)} />
-        <select aria-label="Severity" className="input w-auto" value={t.severity} onChange={e => t.setSeverity(e.target.value)}>
-          <option value="">Any severity</option>{['critical', 'high', 'medium', 'low'].map(s => <option key={s}>{s}</option>)}
-        </select>
+        <input aria-label="Search tickets" className="input w-full sm:w-64" placeholder="Search title, text or restaurant…" value={t.search} onChange={e => t.setSearch(e.target.value)} />
+        <ChoicePills label="Severity" options={SEVERITIES} value={t.severity} onChange={t.setSeverity} />
         {restaurantId && <button type="button" onClick={onClearRestaurant} className="text-xs text-brand-400 border border-brand-500/30 rounded-full px-2.5 py-1">Restaurant filter ✕</button>}
-        <button type="button" className="btn btn-sm ml-auto" onClick={t.reload}>Refresh</button>
       </div>
       <ErrorNotice error={t.error} onRetry={t.reload} fallback="Could not load the tickets" />
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr),minmax(0,3fr)] gap-4 items-start">

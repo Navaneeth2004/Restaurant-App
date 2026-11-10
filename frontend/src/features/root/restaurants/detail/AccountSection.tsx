@@ -1,3 +1,4 @@
+import ChoicePills from 'components/ui/base/ChoicePills';
 import Spinner from 'components/ui/feedback/Spinner';
 import type { RestaurantDetail, RootConfig } from 'types/office/root';
 import { Field, Section } from '../../ui/Layout';
@@ -13,7 +14,7 @@ export default function AccountSection({ data, config, form, onChange, problem, 
     <Section title="Account">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Name (your label)" htmlFor="rd-name"><input id="rd-name" className="input" value={form.name} onChange={e => set({ name: e.target.value })} /></Field>
-        <Field label="Plan" htmlFor="rd-plan"><select id="rd-plan" className="input" value={form.plan} onChange={e => set({ plan: e.target.value })}>{config.plans.map(p => <option key={p}>{p}</option>)}</select></Field>
+        <Field label="Plan" htmlFor="rd-plan"><ChoicePills label="Plan" options={config.plans.map(p => ({ value: p, label: p }))} value={form.plan} onChange={plan => set({ plan })} /></Field>
         <Field label="Trial ends" htmlFor="rd-trial" hint={config.enforce_trial ? 'Trial limits are being enforced.' : 'Not enforced yet (ENFORCE_TRIAL=false).'}>
           <input id="rd-trial" className="input" type="date" value={form.trialEnds} onChange={e => set({ trialEnds: e.target.value })} /></Field>
         <Field label="Private notes" htmlFor="rd-notes"><textarea id="rd-notes" className="input resize-none" rows={2} value={form.notes} onChange={e => set({ notes: e.target.value })} /></Field>

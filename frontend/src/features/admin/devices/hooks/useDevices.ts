@@ -16,7 +16,10 @@ export function useDevices() {
   const secondsLeft = useCountdown(pairing?.expires_at ?? null);
   const { busy, run } = useToastAction();
 
-  useEffect(() => { if (pairing && secondsLeft === 0) setPairing(null); }, [pairing, secondsLeft]);
+  // The countdown reads 0 for one render right after a code appears, so check the real expiry time too.
+  useEffect(() => {
+    if (pairing && secondsLeft === 0 && Date.parse(pairing.expires_at) <= Date.now()) setPairing(null);
+  }, [pairing, secondsLeft]);
   useEffect(() => {          // while a code is showing, watch for the new device appearing in the list
     if (!pairing) return undefined;
     const id = setInterval(reload, POLL_WHILE_PAIRING_MS);

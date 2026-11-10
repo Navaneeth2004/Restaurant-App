@@ -35,11 +35,11 @@ export function useWaiterEvents({ selectedId, tables, reloadTables, reloadOrders
   useSocketEvent<OrderDeliveredEvent>(EVENTS.orderDelivered, ({ order }) => {
     touching(order.table_id);
     playDelivered();
-    toast(`🍽️ Order ready — ${tables.find(t => t.id === order.table_id)?.label ?? `Table ${order.table_id}`}`, 'success');
+    toast(`Order ready — ${tables.find(t => t.id === order.table_id)?.label ?? `Table ${order.table_id}`}`, 'success');
   });
   useSocketEvent<BillRequestedEvent>(EVENTS.billRequested, ({ tableLabel }) => {
     playBillRequest();
-    toast(`🧾 Bill requested — ${tableLabel}`, 'info');
+    toast(`Bill requested — ${tableLabel}`, 'info');
     reloadTables();
   });
 }

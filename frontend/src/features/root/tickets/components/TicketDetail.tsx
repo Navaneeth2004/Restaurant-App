@@ -1,4 +1,5 @@
 import { ticketScreenshotUrl } from 'api/platform/root.api';
+import ChoicePills from 'components/ui/base/ChoicePills';
 import ErrorNotice from 'components/ui/feedback/ErrorNotice';
 import PageSpinner from 'components/ui/feedback/PageSpinner';
 import Spinner from 'components/ui/feedback/Spinner';
@@ -9,6 +10,8 @@ import { useTicket } from '../hooks/useTicket';
 import TechnicalDetails from './TechnicalDetails';
 
 const STATUSES: TicketStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
+const LABEL: Record<TicketStatus, string> = { open: 'Open', in_progress: 'In progress', resolved: 'Resolved', closed: 'Closed' };
+const OPTIONS = STATUSES.map(s => ({ value: s, label: LABEL[s] }));
 
 export default function TicketDetail({ id, onChanged, onOpenRestaurant }: { id: number; onChanged: () => void; onOpenRestaurant: (id: string) => void }) {
   const t = useTicket(id, onChanged);
@@ -33,10 +36,10 @@ export default function TicketDetail({ id, onChanged, onOpenRestaurant }: { id: 
       {d.has_screenshot && <a href={ticketScreenshotUrl(d.id)} target="_blank" rel="noreferrer"><img src={ticketScreenshotUrl(d.id)} alt="Screenshot attached to the ticket" className="max-h-72 rounded-lg border border-surface-border" /></a>}
       <TechnicalDetails ticket={d} />
       <div className="border-t border-surface-border pt-4 space-y-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <label className="label mb-0" htmlFor="tk-status">Status</label>
-          <select id="tk-status" className="input w-auto" value={t.status} onChange={e => t.setStatus(STATUSES.find(s => s === e.target.value) ?? 'open')}>{STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}</select>
-          {d.resolved_at && <span className="text-zinc-600 text-[11px]">resolved {timeAgo(d.resolved_at)}</span>}
+        <div>
+          <span className="label">Status</span>
+          <ChoicePills label="Ticket status" options={OPTIONS} value={t.status} onChange={v => t.setStatus(STATUSES.find(s => s === v) ?? 'open')} />
+          {d.resolved_at && <span className="text-zinc-600 text-[11px] ml-2">resolved {timeAgo(d.resolved_at)}</span>}
         </div>
         <div><label className="label" htmlFor="tk-note">Your note (private)</label><textarea id="tk-note" className="input resize-none" rows={3} value={t.note} onChange={e => t.setNote(e.target.value)} /></div>
         <button type="button" className="btn btn-brand btn-sm" onClick={() => void t.save()} disabled={t.busy}>{t.busy ? <><Spinner />Saving…</> : 'Save'}</button>

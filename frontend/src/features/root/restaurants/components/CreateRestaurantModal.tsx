@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { createRestaurant } from 'api/platform/root.api';
 import { errorMessage } from 'api/errors';
+import ChoicePills from 'components/ui/base/ChoicePills';
 import Modal from 'components/ui/base/Modal';
 import Spinner from 'components/ui/feedback/Spinner';
 import { useBusy } from 'hooks/async/useBusy';
@@ -43,9 +44,9 @@ export default function CreateRestaurantModal({ config, onClose, onCreated }: Pr
           <Field label="Owner password" htmlFor="nr-pass" hint="Empty = generate one (new owners only)"><input id="nr-pass" className="input" value={f.owner_password} onChange={e => set('owner_password', e.target.value)} /></Field>
           <Field label="Admin's name" htmlFor="nr-admin"><input id="nr-admin" className="input" placeholder="Admin" value={f.admin_name} onChange={e => set('admin_name', e.target.value)} /></Field>
           <Field label="Admin PIN" htmlFor="nr-pin" hint="Empty = generate"><input id="nr-pin" className="input font-mono" inputMode="numeric" maxLength={6} value={f.admin_pin} onChange={e => set('admin_pin', e.target.value.replace(/\D/g, ''))} /></Field>
-          <Field label="Plan" htmlFor="nr-plan"><select id="nr-plan" className="input" value={f.plan} onChange={e => set('plan', e.target.value)}>{config.plans.map(p => <option key={p}>{p}</option>)}</select></Field>
           <Field label="Trial days" htmlFor="nr-days" hint="Only used for the trial plan"><input id="nr-days" className="input" type="number" min={0} value={f.trial_days} onChange={e => set('trial_days', e.target.value)} /></Field>
         </div>
+        <Field label="Plan" htmlFor="nr-plan"><ChoicePills label="Plan" options={config.plans.map(p => ({ value: p, label: p }))} value={f.plan} onChange={v => set('plan', v)} /></Field>
         <Field label="Private notes" htmlFor="nr-notes"><textarea id="nr-notes" className="input resize-none" rows={2} value={f.notes} onChange={e => set('notes', e.target.value)} /></Field>
         {error && <div role="alert" className="px-3 py-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">{error}</div>}
         <button type="submit" className="btn btn-brand w-full" disabled={busy || !f.restaurant_name.trim() || !f.owner_phone.trim()}>{busy ? <><Spinner />Creating…</> : 'Create restaurant'}</button>

@@ -26,10 +26,10 @@ export default function FloorDesktop({ f, sym }: { f: FloorState; sym: string })
         </div>
         <div className="grid grid-cols-2 gap-2.5"><HourChart bars={f.hourly} /><StatusBreakdown b={m.breakdown} /></div>
         <div className="grid grid-cols-2 gap-2.5"><TopItemsPanel summary={f.summary} sym={sym} /><TodayGlance summary={f.summary} sym={sym} tableCount={m.dineIn.length} /></div>
-        <div>
-          <p className="fl-label mb-2.5">Dine-in tables — tap to view order &amp; today's stats</p>
+        <div className="pt-3">
+          <p className="fl-label mb-4">Dine-in tables — tap to view order &amp; today's stats</p>
           <div style={grid}>{m.dineIn.map(card)}</div>
-          {m.parcels.length > 0 && (<><p className="fl-label mt-[18px] mb-2.5">Parcel / Takeaway slots</p><div style={grid}>{m.parcels.map(card)}</div></>)}
+          {m.parcels.length > 0 && (<><p className="fl-label mt-7 mb-4">Parcel / Takeaway slots</p><div style={grid}>{m.parcels.map(card)}</div></>)}
         </div>
       </div>
       {f.selected && <div className="flex-shrink-0 w-[300px]"><TableDetail table={f.selected} orders={f.selectedOrders} sym={sym} nowMs={f.nowMs} onClose={f.clear} /></div>}

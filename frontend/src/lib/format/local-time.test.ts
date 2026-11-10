@@ -23,6 +23,11 @@ test('elapsedLabel', () => {
   expect(elapsedLabel(60)).toBe('1h');
   expect(elapsedLabel(231)).toBe('3h 51m');
 });
+test('elapsedLabel switches to days once a table has been open a day or more', () => {
+  expect(elapsedLabel(1439)).toBe('23h 59m');
+  expect(elapsedLabel(1440)).toBe('1d');
+  expect(elapsedLabel(8829)).toBe('6d 3h');
+});
 test('minutesSince handles null and future', () => {
   const now = Date.parse('2026-01-01T10:00:00Z');
   expect(minutesSince(null, now)).toBe(0);

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import ConfirmDialog from 'components/ui/base/ConfirmDialog';
 import ThemeToggle from 'components/ui/base/ThemeToggle';
 import AuditTab from '../audit/AuditTab';
 import SubscriptionsTab from '../access/components/SubscriptionsTab';
@@ -17,10 +18,16 @@ export default function RootShell({ phone, onLogout }: { phone: string; onLogout
   const [tab, setTab] = useState<Tab>('overview');
   const [openRestaurant, setOpenRestaurant] = useState<string | null>(null);
   const [ticketRestaurant, setTicketRestaurant] = useState('');
+  const [confirming, setConfirming] = useState(false);
   const openRestaurantTab = (id: string | null): void => { setOpenRestaurant(id); if (id) setTab('restaurants'); };
 
   return (
     <div className="min-h-screen bg-surface">
+      {confirming && (
+        <ConfirmDialog title="Log Out" message="Log out of the root console? You will need your phone number and password to get back in."
+          confirmLabel="Log Out" cancelLabel="Stay Logged In"
+          onConfirm={() => { setConfirming(false); onLogout(); }} onCancel={() => setConfirming(false)} />
+      )}
       <header className="border-b border-surface-border bg-surface-card">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 md:py-0 md:h-14 flex flex-wrap md:flex-nowrap items-center gap-x-3 gap-y-2">
           <span className="font-display font-bold text-white text-sm whitespace-nowrap">Root console</span>
@@ -30,7 +37,7 @@ export default function RootShell({ phone, onLogout }: { phone: string; onLogout
           </nav>
           <div className="ml-auto flex items-center gap-2">
             <span className="text-zinc-500 text-xs hidden sm:block">{phone}</span><ThemeToggle />
-            <button type="button" onClick={onLogout} className="text-xs text-zinc-500 hover:text-white px-2.5 py-1.5 rounded-lg hover:bg-surface-raised whitespace-nowrap">Log out</button>
+            <button type="button" onClick={() => setConfirming(true)} className="text-xs text-zinc-500 hover:text-white px-2.5 py-1.5 rounded-lg hover:bg-surface-raised whitespace-nowrap">Log out</button>
           </div>
         </div>
       </header>

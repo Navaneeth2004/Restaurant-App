@@ -29,10 +29,15 @@ export function minutesSince(iso: string | null | undefined, nowMs: number = Dat
   return Number.isNaN(t) ? 0 : Math.max(0, Math.floor((nowMs - t) / 60000));
 }
 
-/** "< 1m", "47m", "3h 5m", "3h". */
+/** "< 1m", "47m", "3h 5m", "3h", "6d 3h", "2d". Days keep the label short for tables left open for ages. */
 export function elapsedLabel(mins: number): string {
   if (mins < 1) return '< 1m';
   if (mins < 60) return `${mins}m`;
+  if (mins >= 1440) {
+    const d = Math.floor(mins / 1440);
+    const h = Math.floor((mins % 1440) / 60);
+    return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  }
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
