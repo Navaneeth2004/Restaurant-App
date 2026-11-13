@@ -9,6 +9,7 @@ const cfg = require('../config/env');
 const access = require('../middleware/access');
 const feature = require('../middleware/feature');
 const { handle, fail } = require('../lib/http');
+const { ipKey } = require('../lib/ip');
 const { limit } = require('../middleware/rate-limit');
 const kioskAccess = require('../services/kiosk/access');
 const view = require('../services/kiosk/view');
@@ -16,8 +17,10 @@ const actions = require('../services/kiosk/actions');
 const events = require('../realtime/order-events');
 
 const router = express.Router();
-const orderLimit = limit({ windowMs: 60 * 1000, max: 20, message: 'Too many orders from this network. Please wait a moment.' });
-const billLimit = limit({ windowMs: 60 * 1000, max: 10, message: 'Please wait a moment before asking again.' });
+// per table AND network: guests on one venue Wi-Fi no longer share one budget with every other table
+const byTable = (req) => `${req.params.token}|${ipKey(req.ip)}`;
+const orderLimit = limit({ windowMs: 60 * 1000, max: 30, message: 'Too many orders from this table. Please wait a moment.', key: byTable });
+const billLimit = limit({ windowMs: 60 * 1000, max: 15, message: 'Please wait a moment before asking again.', key: byTable });
 const tableOf = (req) => kioskAccess.requireTable(req.params.token);
 
 // staff helpers (declared first so they are not mistaken for a token)
@@ -41,7 +44,7 @@ router.post('/:token/order', access.public, orderLimit, handle((req, res) => {
 
 router.post('/:token/bill', access.public, billLimit, handle((req, res) => {
   const table = tableOf(req);
-  actions.requestBill(table, req.body || {}).forEach(order => events.orderDelivered(req.io, order));
+  actions.requestBill(table, req.body || {});
   events.tablesChanged(req.io);
   events.billRequested(req.io, table);
   res.json({ success: true, message: 'Bill requested. Your waiter will be with you shortly.' });

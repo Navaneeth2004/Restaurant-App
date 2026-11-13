@@ -20,7 +20,7 @@ module.exports = async (t) => {
   r = await R.get('/api/root/restaurants');
   const rid = r.data[0].id;
   r = await R.get(`/api/root/restaurants/${rid}`);
-  check('restaurant detail', r.status === 200 && r.data.counts.orders_total >= 1 && r.data.database.schema_version === 3, r.data.database);
+  check('restaurant detail', r.status === 200 && r.data.counts.orders_total >= 1 && r.data.database.schema_version === 4, r.data.database);
   r = await R.post('/api/root/restaurants', { restaurant_name: 'Second', owner_phone: '9123456780' });
   check('root creates a restaurant', r.status === 201 && r.data.temp_owner_password && r.data.admin_pin, r);
   r = await R.patch(`/api/root/restaurants/${rid}`, { plan: 'standard', limits: { max_staff: 2 } });

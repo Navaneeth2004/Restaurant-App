@@ -22,26 +22,31 @@ function parseCookieValue(value) {
 
 const isExpired = (row) => Date.now() - new Date(row.created_at).getTime() > cfg.STAFF_SESSION_DAYS * 24 * HOUR;
 
-/** A session someone is actually using (not expired, active within STAFF_ACTIVE_HOURS). */
+/** A session someone is actually using (not expired, a real user action within STAFF_ACTIVE_HOURS). */
 function isLive(row) {
   if (!row || isExpired(row)) return false;
   return Date.now() - new Date(row.last_seen_at || row.created_at).getTime() < cfg.STAFF_ACTIVE_HOURS * HOUR;
 }
 
-/** { id, name, role } for a valid session, else null. Also records activity (at most once a minute). */
-function validateSession(staffId, token) {
+/**
+ * { id, name, role } for a valid session, else null. Records activity (at most once a minute) unless `touch` is
+ * false — the background heartbeat must not keep a forgotten tab "in use" forever.
+ */
+function validateSession(staffId, token, touch = true) {
   const row = repo.lookup(staffId, token);
   if (!row || isExpired(row)) return null;
-  const now = Date.now();
-  repo.touch(staffId, new Date(now - TOUCH_EVERY_MS).toISOString(), new Date(now).toISOString());
+  if (touch) {
+    const now = Date.now();
+    repo.touch(staffId, new Date(now - TOUCH_EVERY_MS).toISOString(), new Date(now).toISOString());
+  }
   return { id: row.id, name: row.name, role: row.role };
 }
 
-const validate = (staffId, token) => !!validateSession(staffId, token);
+const validate = (staffId, token, touch = true) => !!validateSession(staffId, token, touch);
 
-function resolveFromCookie(cookieValue) {
+function resolveFromCookie(cookieValue, touch = true) {
   const parsed = parseCookieValue(cookieValue);
-  return parsed ? validateSession(parsed.id, parsed.token) : null;
+  return parsed ? validateSession(parsed.id, parsed.token, touch) : null;
 }
 
 /** Creates a fresh session (replacing any older one) and drops the member's old live connections. */

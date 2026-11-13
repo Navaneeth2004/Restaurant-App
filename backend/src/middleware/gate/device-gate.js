@@ -7,6 +7,8 @@ const devices = require('../../services/devices/devices');
 const access = require('../../services/restaurants/access');
 const attachStaff = require('./staff-context');
 
+const HEARTBEAT = '/staff/session/validate';
+
 function suspendedMessage(reason) {
   if (reason === 'trial_expired') return 'The free trial has ended. Please contact support.';
   if (reason && reason !== 'suspended') return `This account is suspended: ${reason}`;
@@ -27,5 +29,5 @@ module.exports = (req, res, next) => {
   const store = { restaurantId: info.row.id, restaurant: info.row, device, staff: null };
   req.restaurantId = info.row.id;       // plain copy for code that runs outside the async context (e.g. multer)
   req._ctx = store;
-  return ctx.run(store, () => { attachStaff(store, req.cookies); next(); });
+  return ctx.run(store, () => { attachStaff(store, req.cookies, req.path !== HEARTBEAT); next(); });
 };

@@ -1,7 +1,7 @@
 'use strict';
 const ctx = require('../../db/context');
 const { fail } = require('../../lib/http');
-const { clip, toInt } = require('../../lib/input');
+const { clip, toInt, reorderRows } = require('../../lib/input');
 const tables = require('../../repositories/catalog/tables.repo');
 const orders = require('../../repositories/orders/orders.repo');
 const reports = require('../../repositories/orders/reports.repo');
@@ -9,6 +9,7 @@ const limits = require('../restaurants/limits');
 const { localToday } = require('../../lib/local-time');
 
 const STATUSES = ['empty', 'occupied', 'waiting_bill'];
+const seatsOf = (v, fallback) => { const n = toInt(v, fallback); return n === null ? null : Math.min(30, Math.max(1, n)); };
 
 const list = () => tables.listVisible();
 
@@ -39,20 +40,21 @@ function create({ label, seats }) {
   const lim = limits.check(ctx.get().restaurant, 'max_tables', tables.countVisible());
   if (!lim.ok) fail(403, `Your plan allows up to ${lim.limit} tables.`, { code: 'plan_limit' });
   const id = nextTableId();
-  tables.insert({ id, label: clean, seats: toInt(seats, 4) || 4, sortOrder: tables.maxSort() + 1 });
+  tables.insert({ id, label: clean, seats: seatsOf(seats, 4) || 4, sortOrder: tables.maxSort() + 1 });
   return tables.byId(id);
 }
 
 function update(id, { label, seats, status }) {
   if (!tables.byId(id)) fail(404, 'Table not found');
   if (status && !STATUSES.includes(status)) fail(400, 'Invalid status');
-  tables.update(id, { label: label ? clip(label, 40) : null, seats: seats ? toInt(seats) : null, status: status || null });
+  tables.update(id, { label: label ? clip(label, 40) : null, seats: seats ? seatsOf(seats) : null, status: status || null });
   return tables.byId(id);
 }
 
 function reorder(order) {
-  if (!Array.isArray(order)) fail(400, 'order array required');
-  tables.reorder(order);
+  const rows = reorderRows(order);
+  if (!rows) fail(400, 'order array required');
+  tables.reorder(rows);
   return { success: true };
 }
 

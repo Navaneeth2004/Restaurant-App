@@ -8,8 +8,9 @@ export const verifyPin = (pin: string, currentSessionToken?: string | null) =>
 export const checkPin = async (pin: string): Promise<boolean> =>
   (await request<{ valid: boolean }>('/staff/check-pin', { method: 'POST', json: { pin } })).valid === true;
 
+/** POST with a body: the session token must never appear in a URL (it would end up in server logs). */
 export const validateSession = (staffId: number, sessionToken: string, signal?: AbortSignal) =>
-  request<{ valid: boolean }>('/staff/session/validate', { query: { staffId, sessionToken }, signal });
+  request<{ valid: boolean }>('/staff/session/validate', { method: 'POST', json: { staffId, sessionToken }, signal });
 
 export const logoutStaff = (staffId: number, sessionToken: string) =>
   request<void>('/staff/logout', { method: 'POST', json: { staffId, sessionToken } });

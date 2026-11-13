@@ -1,5 +1,5 @@
 'use strict';
-/** multer that stores into the CURRENT restaurant's folder, with friendly JSON errors. */
+/** multer that stores into the CURRENT restaurant's folder, with friendly JSON errors and a per-restaurant quota. */
 const multer = require('multer');
 const path = require('path');
 const ctx = require('../../db/context');
@@ -12,7 +12,9 @@ const resume = (req, next) => (req._ctx ? ctx.run(req._ctx, next) : next());
 function makeUploader(prefix, maxMb) {
   const m = multer({
     storage: multer.diskStorage({
-      destination: (req, file, cb) => { try { cb(null, paths.uploadsDir(req.restaurantId)); } catch (e) { cb(e); } },
+      destination: (req, file, cb) => {
+        try { paths.assertQuota(req.restaurantId); cb(null, paths.uploadsDir(req.restaurantId)); } catch (e) { cb(e); }
+      },
       filename: (req, file, cb) => cb(null, paths.newName(prefix, path.extname(file.originalname))),
     }),
     limits: { fileSize: maxMb * 1024 * 1024 },

@@ -6,7 +6,7 @@ const { loadRange } = require('./gst-data');
 const bump = (map, key, init) => map[key] || (map[key] = init);
 
 function build({ from, to, offset }) {
-  const d = loadRange({ from, to, offset, defaultFrom: '2020-01-01', withItems: true });
+  const d = loadRange({ from, to, offset, withItems: true });
   const daily = {}, itemMap = {}, payMap = {};
   const types = { dine_in: { count: 0, revenue: 0 }, parcel: { count: 0, revenue: 0 } };
   let totalItems = 0;

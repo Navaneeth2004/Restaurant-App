@@ -13,7 +13,7 @@ const router = express.Router();
 
 router.post('/delete-records', access.admin, feature.of('orders.delete_records'), handle(async (req, res) => {
   const { order_ids, pin } = req.body || {};
-  const admin = pin ? await pinGuard.adminByPin(`chk:${ctx.get().device.id}`, pin) : null;
+  const admin = pin ? await pinGuard.adminByPin(`dev:${ctx.get().device.id}`, pin) : null;
   if (!admin) fail(403, 'Incorrect admin PIN');
   const deleted = deleteClosedVisits(order_ids, admin.name);
   console.log(`[Orders] ${admin.name} deleted ${deleted.length} closed order(s) from history`);

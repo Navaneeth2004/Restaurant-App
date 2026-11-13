@@ -1,9 +1,12 @@
 'use strict';
-/** Revenue report as a CSV (Excel-friendly, UTF-8 with BOM). */
+/** Revenue report as a CSV (Excel-friendly, UTF-8 with BOM). Text that could run as a spreadsheet formula is defused. */
 const { round2 } = require('../../lib/money');
 const { localDMY, localTimeOf } = require('../../lib/local-time');
 
-const quote = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+const FORMULA = /^[=+\-@\t\r]/;
+const NUMBER_OR_PHONE = /^[-+]?[\d.]+$|^\+[\d\s()-]+$/;
+const safe = (s) => (FORMULA.test(s) && !NUMBER_OR_PHONE.test(s) ? `'${s}` : s);
+const quote = (v) => `"${safe(String(v ?? '')).replace(/"/g, '""')}"`;
 const row = (...cols) => cols.map(quote).join(',');
 const diffText = (n) => (n === 0 ? '0.00' : n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2));
 

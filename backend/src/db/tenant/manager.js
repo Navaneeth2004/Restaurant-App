@@ -1,8 +1,8 @@
 'use strict';
 /**
  * Tenant manager: one SQLite file per restaurant (DATA_DIR/tenants/<id>.db).
- * Handles are opened on demand, migrated, cached (with a prepared-statement cache) and the
- * least recently used are closed once more than MAX_OPEN_TENANTS are open.
+ * Handles are opened on demand, migrated, cached (with a prepared-statement cache) and the least recently used
+ * are closed once more than MAX_OPEN_TENANTS are open (never one that is "held", e.g. while a backup runs).
  */
 const fs = require('fs');
 const path = require('path');
@@ -13,7 +13,7 @@ const { migrate } = require('./migrations');
 const { seedNewRestaurant } = require('./seed');
 
 const STATEMENT_CACHE_MAX = 400;
-const open = new Map(); // restaurantId -> { id, raw, lastUsed, prepared(sql) }
+const open = new Map(); // restaurantId -> { id, raw, lastUsed, busy, prepared(sql) }
 
 function openRaw(file) {
   const raw = new Database(file);
@@ -21,13 +21,14 @@ function openRaw(file) {
   raw.pragma('synchronous = NORMAL');
   raw.pragma('busy_timeout = 5000');
   raw.pragma('foreign_keys = ON');
+  raw.pragma('trusted_schema = OFF');
   return raw;
 }
 
 function makeHandle(id, raw) {
   const statements = new Map();
   return {
-    id, raw, lastUsed: Date.now(),
+    id, raw, lastUsed: Date.now(), busy: 0,
     prepared(sql) {
       let st = statements.get(sql);
       if (!st) {
@@ -43,7 +44,7 @@ function makeHandle(id, raw) {
 function evictIfNeeded(keepId) {
   while (open.size > cfg.MAX_OPEN_TENANTS) {
     let oldest = null;
-    for (const h of open.values()) if (h.id !== keepId && (!oldest || h.lastUsed < oldest.lastUsed)) oldest = h;
+    for (const h of open.values()) if (h.id !== keepId && !h.busy && (!oldest || h.lastUsed < oldest.lastUsed)) oldest = h;
     if (!oldest) return;
     try { oldest.raw.close(); } catch (_) { /* already closed */ }
     open.delete(oldest.id);
@@ -64,6 +65,14 @@ function get(id) {
   open.set(id, h);
   evictIfNeeded(id);
   return h;
+}
+
+/** Keeps a restaurant's handle open (not evictable) until the returned function is called. */
+function hold(id) {
+  const h = get(id);
+  if (!h) return () => undefined;
+  h.busy += 1;
+  return () => { h.busy = Math.max(0, h.busy - 1); };
 }
 
 /** Creates the database file for a new restaurant. Returns the file name. */
@@ -98,4 +107,4 @@ function closeAll() {
   open.clear();
 }
 
-module.exports = { get, create, remove, close, closeAll, openRaw };
+module.exports = { get, hold, create, remove, close, closeAll, openRaw };

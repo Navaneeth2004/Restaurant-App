@@ -1,5 +1,7 @@
 'use strict';
-/** Fixed-window request limiter. `key(req)` defaults to the client IP. Stale buckets are swept every minute. */
+const { ipKey } = require('../lib/ip');
+
+/** Fixed-window request limiter. `key(req)` defaults to the client IP (IPv6 reduced to its /64). Stale buckets are swept every minute. */
 function limit({ windowMs, max, message, key }) {
   const buckets = new Map();
   setInterval(() => {
@@ -9,7 +11,7 @@ function limit({ windowMs, max, message, key }) {
 
   return (req, res, next) => {
     const now = Date.now();
-    const id = key ? key(req) : (req.ip || req.socket.remoteAddress || 'unknown');
+    const id = key ? key(req) : ipKey(req.ip || req.socket.remoteAddress);
     let bucket = buckets.get(id);
     if (!bucket || bucket.startedAt + windowMs <= now) { bucket = { count: 0, startedAt: now }; buckets.set(id, bucket); }
     if (bucket.count >= max) {

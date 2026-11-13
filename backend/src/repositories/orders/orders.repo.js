@@ -24,7 +24,7 @@ const latestSessionId = (tableId) => (db.prepare(
 const sessionOrders = (tableId, sessionId) => items.attachTo(db.prepare(
   'SELECT * FROM orders WHERE table_id = ? AND session_id IS ? ORDER BY created_at ASC').all(tableId, sessionId));
 const sessionRows = (tableId, sessionId) =>
-  db.prepare('SELECT id, created_at, delivered_at FROM orders WHERE table_id = ? AND session_id IS ?').all(tableId, sessionId);
+  db.prepare('SELECT id, created_at, delivered_at, closed_at FROM orders WHERE table_id = ? AND session_id IS ?').all(tableId, sessionId);
 const openInSession = (tableId, sessionId) =>
   db.prepare(`SELECT id, total FROM orders WHERE table_id = ? AND session_id IS ? AND ${OPEN}`).all(tableId, sessionId);
 const closedInSession = (tableId, sessionId) =>
@@ -46,15 +46,26 @@ const deleteById = (id) => db.prepare('DELETE FROM orders WHERE id = ?').run(id)
 const deleteAll = () => db.prepare('DELETE FROM orders').run();
 
 const closeSession = (tableId, sessionId, f) => db.prepare(`
-  UPDATE orders SET status = 'closed', customer_name = ?, customer_phone = ?, customer_gstin = ?, order_type = ?, tax_percent_snapshot = ?
+  UPDATE orders SET status = 'closed', customer_name = ?, customer_phone = ?, customer_gstin = ?, order_type = ?,
+    tax_percent_snapshot = ?, closed_at = ?
   WHERE table_id = ? AND session_id IS ? AND ${OPEN}`)
-  .run(f.customerName, f.customerPhone, f.customerGstin, f.orderType, f.taxPercent, tableId, sessionId);
+  .run(f.customerName, f.customerPhone, f.customerGstin, f.orderType, f.taxPercent, f.closedAt, tableId, sessionId);
 
 const setPaymentOnClose = (id, f) => db.prepare(
   'UPDATE orders SET payment_method = ?, payment_details = ?, change_amount = ?, amount_paid = ? WHERE id = ?')
   .run(f.method, f.details, f.change, f.amountPaid, id);
 
-const nextInvoiceNo = () => db.prepare('SELECT COALESCE(MAX(invoice_no), 0) + 1 AS n FROM orders').get().n;
+/**
+ * The next invoice number. A counter kept in settings (never derived from existing rows alone), so a number is never
+ * issued twice even after the visit that held the highest number was deleted or the data was reset.
+ */
+function nextInvoiceNo() {
+  const cur = db.prepare("SELECT value FROM settings WHERE key = 'invoice_seq'").get();
+  const max = db.prepare('SELECT COALESCE(MAX(invoice_no), 0) AS n FROM orders').get().n;
+  const n = Math.max(cur ? parseInt(cur.value, 10) || 0 : 0, max) + 1;
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('invoice_seq', ?)").run(String(n));
+  return n;
+}
 const setInvoiceNo = (id, n) => db.prepare('UPDATE orders SET invoice_no = ? WHERE id = ?').run(n, id);
 
 /** Edit of payment/customer info on the session's main row (admin, after closing). */
@@ -65,17 +76,22 @@ const editPayment = (id, f) => db.prepare(`
   WHERE id = ?`)
   .run(f.method, f.details, f.change, f.customerName, f.customerPhone, f.customerGstin, f.amountPaid, f.orderType, f.editedAt, id);
 
+/** A visit has ONE order type: keep every round in step (reports read it from the first round). */
+const setOrderTypeForSession = (tableId, sessionId, type) =>
+  db.prepare('UPDATE orders SET order_type = ? WHERE table_id = ? AND session_id IS ?').run(type, tableId, sessionId);
+
 /** After an edit, the other rows of the session must not carry payment data (it lives on one row only). */
 const clearPaymentElsewhere = (tableId, sessionId, keepId) => db.prepare(`
   UPDATE orders SET payment_method = NULL, payment_details = NULL, change_amount = 0, amount_paid = NULL
   WHERE table_id = ? AND session_id IS ? AND id != ?`).run(tableId, sessionId, keepId);
 
-const setDates = (id, createdAt, deliveredAt) =>
-  db.prepare('UPDATE orders SET created_at = ?, delivered_at = ? WHERE id = ?').run(createdAt, deliveredAt, id);
+const setDates = (id, createdAt, deliveredAt, closedAt) =>
+  db.prepare('UPDATE orders SET created_at = ?, delivered_at = ?, closed_at = ? WHERE id = ?').run(createdAt, deliveredAt, closedAt, id);
 
 module.exports = {
   byId, withItems, listActive, activeForTable, lastDeliveredForTable, activeIdsForTable, history,
   latestSessionId, sessionOrders, sessionRows, openInSession, closedInSession, countOpenAtTable,
   sessionHasInvoice, canonicalOfSession, insert, recalcTotal, markDelivered, deleteById, deleteAll,
-  closeSession, setPaymentOnClose, nextInvoiceNo, setInvoiceNo, editPayment, clearPaymentElsewhere, setDates,
+  closeSession, setPaymentOnClose, nextInvoiceNo, setInvoiceNo, editPayment, setOrderTypeForSession,
+  clearPaymentElsewhere, setDates,
 };

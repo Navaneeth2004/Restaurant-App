@@ -19,8 +19,8 @@ const DEFAULT_SETTINGS = {
   admin_lock_config: JSON.stringify({ enabled: false, timeout_mins: 5 }),
 };
 
-/** Never sent to the browser and never writable through the settings API. */
-const SECRET_SETTING_KEYS = new Set(['gdrive_credentials', 'gdrive_tokens']);
+/** Never sent to the browser and never writable through the settings API (invoice_seq = the never-reused invoice counter). */
+const SECRET_SETTING_KEYS = new Set(['invoice_seq']);
 
 const DEFAULT_CATEGORIES = ['Starters', 'Mains', 'Sides', 'Drinks', 'Desserts'];
 

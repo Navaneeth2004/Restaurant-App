@@ -23,4 +23,15 @@ const dateOrNull = (v) => {
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 
-module.exports = { clip, toInt, limitParam, dateOrNull, isNum };
+/** [{ id, sort_order }] with at most 1000 well-formed rows, or null. */
+function reorderRows(v) {
+  if (!Array.isArray(v) || v.length === 0 || v.length > 1000) return null;
+  const out = [];
+  for (const e of v) {
+    if (!e || (typeof e.id !== 'string' && typeof e.id !== 'number') || !Number.isInteger(e.sort_order)) return null;
+    out.push({ id: e.id, sort_order: e.sort_order });
+  }
+  return out;
+}
+
+module.exports = { clip, toInt, limitParam, dateOrNull, isNum, reorderRows };

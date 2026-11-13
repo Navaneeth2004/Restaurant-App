@@ -23,5 +23,6 @@ const cookieOptions = (days) => ({
 const DEVICE_COOKIE = 'pos_device';
 const STAFF_COOKIE = 'pos_staff';
 const ROOT_COOKIE = 'pos_root';
+const ADMIN_COOKIE = 'pos_admin_ok';
 
-module.exports = { parseCookies, cookieOptions, DEVICE_COOKIE, STAFF_COOKIE, ROOT_COOKIE };
+module.exports = { parseCookies, cookieOptions, DEVICE_COOKIE, STAFF_COOKIE, ROOT_COOKIE, ADMIN_COOKIE };

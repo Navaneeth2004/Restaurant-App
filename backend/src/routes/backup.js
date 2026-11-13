@@ -1,10 +1,11 @@
 'use strict';
 /**
  * /api/backup (admin only): download / restore THIS restaurant as a zip (restaurant.db + uploads/).
- * Google Drive and server-folder backups are not offered in the cloud version; back up DATA_DIR on the server.
+ * Both need a recent admin-PIN confirmation when the restaurant enabled the admin lock.
  */
 const express = require('express');
 const access = require('../middleware/access');
+const adminLock = require('../middleware/admin-lock');
 const feature = require('../middleware/feature');
 const { handle, fail } = require('../lib/http');
 const { createBackupArchive } = require('../services/backup/snapshot');
@@ -16,15 +17,16 @@ const upload = makeMemoryUploader(60, isZip, 'ZIP files only');
 
 router.get('/info', access.admin, feature.of('backup.download', 'backup.restore'), (req, res) => res.json({ mode: 'cloud', manual: true, local: false, drive: false }));
 
-router.get('/download', access.admin, feature.of('backup.download'), handle(async (req, res) => {
-  const { filename, archive } = await createBackupArchive(req.restaurantId);
+router.get('/download', access.admin, feature.of('backup.download'), adminLock.guard, handle(async (req, res) => {
+  const { filename, archive, cleanup } = await createBackupArchive(req.restaurantId);
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   archive.on('error', (e) => { console.error('[Backup]', e.message); res.end(); });
+  res.on('close', () => { if (!res.writableFinished) archive.abort(); cleanup(); });   // client gone: stop and delete the temp copy
   archive.pipe(res);
 }));
 
-router.post('/restore', access.admin, feature.of('backup.restore'), upload.single('backup'), handle((req, res) => {
+router.post('/restore', access.admin, feature.of('backup.restore'), adminLock.guard, upload.single('backup'), handle((req, res) => {
   if (!req.file) fail(400, 'No file uploaded');
   const { imagesRestored } = restoreFromZip(req.restaurantId, req.file.buffer);
   ['tables_updated', 'menu_updated', 'categories_updated'].forEach(e => req.io.emit(e));

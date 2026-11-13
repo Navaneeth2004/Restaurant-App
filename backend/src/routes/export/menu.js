@@ -2,6 +2,7 @@
 /** Menu backup/move (admin): zip with menu.json + images/. */
 const express = require('express');
 const access = require('../../middleware/access');
+const adminLock = require('../../middleware/admin-lock');
 const feature = require('../../middleware/feature');
 const { handle } = require('../../lib/http');
 const { createMenuArchive } = require('../../services/backup/menu-export');
@@ -12,7 +13,7 @@ const router = express.Router();
 const upload = makeMemoryUploader(25, isZip, 'ZIP files only');
 const on = feature.of('menu.transfer');
 
-router.get('/menu', access.admin, on, (req, res) => {
+router.get('/menu', access.admin, on, adminLock.guard, (req, res) => {
   const { filename, archive } = createMenuArchive(req.restaurantId);
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -21,7 +22,7 @@ router.get('/menu', access.admin, on, (req, res) => {
 });
 
 // a zip upload (field "menuzip") or a plain JSON body
-router.post('/menu/import', access.admin, on, upload.single('menuzip'), handle((req, res) => {
+router.post('/menu/import', access.admin, on, adminLock.guard, upload.single('menuzip'), handle((req, res) => {
   const results = importMenu(req.restaurantId, req.file ? { buffer: req.file.buffer } : { body: req.body });
   req.io.emit('menu_updated');
   req.io.emit('categories_updated');

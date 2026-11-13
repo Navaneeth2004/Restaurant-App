@@ -22,6 +22,7 @@ module.exports = {
   TICKETS_DIR: path.join(DATA_DIR, 'tickets'),
 
   COOKIE_SECURE: bool(process.env.COOKIE_SECURE, IS_PROD),
+  ALLOW_INSECURE_COOKIES: bool(process.env.ALLOW_INSECURE_COOKIES, false),
   TRUST_PROXY: tp ? (Number.isNaN(Number(tp)) ? tp : Number(tp)) : 0,
   PUBLIC_URL: (process.env.PUBLIC_URL || '').replace(/\/$/, ''),
   CORS_ORIGINS: (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
@@ -37,6 +38,6 @@ module.exports = {
   DEVICE_COOKIE_DAYS: 365,
   STAFF_COOKIE_DAYS: 7,
   STAFF_SESSION_DAYS: 7,       // enforced on the server, not just by the cookie
-  STAFF_ACTIVE_HOURS: 12,      // a session idle longer than this no longer blocks a login elsewhere
+  STAFF_ACTIVE_HOURS: 4,       // a session with no real user action for this long no longer blocks a login elsewhere
   PAIRING_CODE_MINUTES: 10,
 };

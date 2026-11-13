@@ -41,7 +41,7 @@ async function pinLogin({ pin, currentSessionToken, cookieValue, device }) {
       if (!sameDevice) fail(409, `"${member.name}" is already logged in on another device. Log out there first.`, { staffName: member.name });
     }
 
-    pinGuard.pinFails.reset(key);
+    pinGuard.recordSuccess(key);
     endPreviousMemberOnThisDevice(cookieValue, member.id);
     const sessionToken = sessions.start(member.id);
     bus.promoteDevice(ctx.restaurantId(), device.id, member.id);
@@ -51,7 +51,7 @@ async function pinLogin({ pin, currentSessionToken, cookieValue, device }) {
     };
   }
 
-  pinGuard.pinFails.fail(key);
+  pinGuard.recordFail(key);
   return fail(401, 'Invalid PIN');
 }
 

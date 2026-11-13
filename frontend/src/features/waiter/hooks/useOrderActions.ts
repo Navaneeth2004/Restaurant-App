@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { cancelOrder, cancelOrderItem, deliverOrder, directBill, listTableOrders, submitOrder } from 'api/restaurant/orders.api';
 import { errorMessage } from 'api/errors';
 import { useBusy } from 'hooks/async/useBusy';
@@ -18,16 +18,29 @@ interface Args {
   onSent: () => void;
 }
 
+/** crypto.randomUUID needs a secure context; restaurants often run on plain http inside the LAN. */
+const newId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+
 export function useOrderActions({ table, cart, hasActiveRound, clearCart, refresh, ask, onSent }: Args) {
   const [busy, run] = useBusy();
   const toast = useToast();
+  const attempt = useRef<{ sig: string; id: string } | null>(null);
+
+  /** The same cart keeps the same request id until it succeeded, so a retry after a timeout is applied only once. */
+  const requestIdFor = (lines: ReadonlyArray<CartLine>): string => {
+    const sig = JSON.stringify(lines);
+    if (!attempt.current || attempt.current.sig !== sig) attempt.current = { sig, id: newId() };
+    return attempt.current.id;
+  };
 
   /** Sends ONLY this device's new items; the server merges them into the table's order. */
   const sendToKitchen = useCallback(() => {
     if (!table || cart.length === 0) { toast('Add items first', 'error'); return Promise.resolve(); }
     return run(async () => {
       try {
-        await submitOrder(table.id, cart);
+        const id = requestIdFor(cart);
+        await submitOrder(table.id, cart, id);
+        attempt.current = null;
         clearCart();
         toast(`Order sent for ${table.label}`, 'success');
         onSent();
@@ -45,7 +58,9 @@ export function useOrderActions({ table, cart, hasActiveRound, clearCart, refres
     return run(async (): Promise<Order[] | null> => {
       try {
         if (cart.length > 0) {
-          await (hasActiveRound ? submitOrder(table.id, cart) : directBill(table.id, cart));
+          const id = requestIdFor(cart);
+          await (hasActiveRound ? submitOrder(table.id, cart, id) : directBill(table.id, cart, id));
+          attempt.current = null;
           clearCart();
         }
         let orders = await listTableOrders(table.id);

@@ -6,6 +6,8 @@ const { isParcelId, newKioskToken } = require('../../lib/ids');
 const tables = require('../../repositories/catalog/tables.repo');
 const orders = require('../../repositories/orders/orders.repo');
 
+const MAX_ACTIVE_SLOTS = 50;
+
 function nextParcelId() {
   const used = new Set(tables.parcelIds());   // includes archived slots so ids never collide
   for (let n = 1; n <= 999; n++) if (!used.has(`P${n}`)) return `P${n}`;
@@ -13,6 +15,7 @@ function nextParcelId() {
 }
 
 function createSlot(rid, { customer_name, customer_phone } = {}) {
+  if (tables.listParcels().length >= MAX_ACTIVE_SLOTS) fail(403, 'Too many open parcel slots. Close or remove some first.');
   const id = nextParcelId();
   const name = clip(customer_name, 60);
   tables.insertParcel({

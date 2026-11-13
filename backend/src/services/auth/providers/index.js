@@ -11,7 +11,7 @@ const methods = Object.freeze({
       return null;
     },
     hash: (value) => password.hash(value),
-    verify: (owner, credentials) => (owner ? password.verify(credentials.password, owner.password_hash) : false),
+    verify: (owner, credentials) => password.verify(credentials.password, owner ? owner.password_hash : null),
   }),
 });
 

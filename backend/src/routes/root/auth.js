@@ -4,6 +4,7 @@ const express = require('express');
 const cfg = require('../../config/env');
 const access = require('../../middleware/access');
 const { handle, clientMeta } = require('../../lib/http');
+const { ipKey } = require('../../lib/ip');
 const { ROOT_COOKIE } = require('../../lib/cookies');
 const rootAuth = require('../../services/root/auth');
 const rootSessions = require('../../services/root/sessions');
@@ -14,7 +15,7 @@ const { actorOf } = require('./helpers');
 const router = express.Router();
 
 router.post('/login', access.public, handle(async (req, res) => {
-  const owner = await rootAuth.login(req.body || {}, req.ip);
+  const owner = await rootAuth.login(req.body || {}, ipKey(req.ip));
   const { token, maxAgeMs } = rootSessions.create(owner, clientMeta(req));
   res.cookie(ROOT_COOKIE, token, { httpOnly: true, secure: cfg.COOKIE_SECURE, sameSite: 'strict', path: '/api/root', maxAge: maxAgeMs });
   audit.record({ ip: req.ip, owner: { id: owner.id, phone: owner.phone } }, 'root.login');

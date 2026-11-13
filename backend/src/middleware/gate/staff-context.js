@@ -3,4 +3,5 @@
 const { STAFF_COOKIE } = require('../../lib/cookies');
 const sessions = require('../../services/staff/sessions');
 
-module.exports = (store, cookies) => { store.staff = sessions.resolveFromCookie(cookies[STAFF_COOKIE]); };
+/** `touch` false = do not count this request as user activity (the background heartbeat). */
+module.exports = (store, cookies, touch = true) => { store.staff = sessions.resolveFromCookie(cookies[STAFF_COOKIE], touch); };

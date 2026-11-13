@@ -2,6 +2,7 @@
 /** PIN login, logout, heartbeat and admin-PIN confirmation (barrier 2). Needs a linked device, not a PIN session. */
 const express = require('express');
 const access = require('../../middleware/access');
+const adminLock = require('../../middleware/admin-lock');
 const ctx = require('../../db/context');
 const cfg = require('../../config/env');
 const { handle, fail } = require('../../lib/http');
@@ -34,23 +35,21 @@ router.post('/logout', access.device, handle((req, res) => {
   res.json({ success: true });
 }));
 
-// heartbeat
-router.get('/session/validate', access.device, (req, res) => {
-  const staffId = Number(req.query.staffId);
-  const token = req.query.sessionToken;
+// heartbeat. POST with a body: the session token must never sit in a URL (proxy and access logs). It does not count as activity.
+router.post('/session/validate', access.device, (req, res) => {
+  const staffId = Number((req.body || {}).staffId);
+  const token = (req.body || {}).sessionToken;
   if (!staffId || !token) return res.json({ valid: false });
-  const valid = sessions.validate(staffId, token);
-  const cookie = sessions.cookieValueOf(staffId, token);
-  // Self-heal: the session is still good but this browser lost its cookie
-  if (valid && req.cookies[STAFF_COOKIE] !== cookie) res.cookie(STAFF_COOKIE, cookie, cookieOptions(cfg.STAFF_COOKIE_DAYS));
-  return res.json({ valid });
+  return res.json({ valid: sessions.validate(staffId, String(token), false) });
 });
 
-// confirm an ADMIN PIN without touching sessions
+// confirm an ADMIN PIN. When correct, this device also gets a short-lived grant for the routes behind the admin lock.
 router.post('/check-pin', access.device, handle(async (req, res) => {
   const { pin } = req.body || {};
   if (!pin) fail(400, 'PIN required');
-  const admin = await pinGuard.adminByPin(`chk:${ctx.get().device.id}`, pin);
+  const device = ctx.get().device;
+  const admin = await pinGuard.adminByPin(`dev:${device.id}`, pin);
+  if (admin) adminLock.issue(res, device.id);
   res.json({ valid: !!admin });
 }));
 

@@ -1,6 +1,6 @@
 'use strict';
 const { fail } = require('../../lib/http');
-const { clip } = require('../../lib/input');
+const { clip, reorderRows } = require('../../lib/input');
 const categories = require('../../repositories/catalog/categories.repo');
 
 const list = () => categories.list();
@@ -21,13 +21,14 @@ function update(id, { name, sort_order }) {
   if (!categories.byId(id)) fail(404, 'Category not found');
   const clean = name ? clip(name, 60) : null;
   if (clean) assertNameFree(clean, id);
-  categories.update(id, clean, sort_order ?? null);
+  categories.update(id, clean, Number.isInteger(sort_order) ? sort_order : null);
   return { success: true };
 }
 
 function reorder(order) {
-  if (!Array.isArray(order)) fail(400, 'order array required');
-  categories.reorder(order);
+  const rows = reorderRows(order);
+  if (!rows) fail(400, 'order array required');
+  categories.reorder(rows);
   return { success: true };
 }
 

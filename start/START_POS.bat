@@ -27,8 +27,8 @@ if not exist "%APP_ROOT%\frontend\build\index.html" (
     exit /b 1
 )
 
-REM ── Clear a stale server from a previous crash/close ───────────────────
-for /f "tokens=5" %%p in ('netstat -aon ^| findstr ":4000" ^| findstr "LISTENING"') do (
+REM ── Clear a stale server from a previous crash/close (exactly port 4000, not 40001 or 14000) ──
+for /f "tokens=5" %%p in ('netstat -aon ^| findstr /C:":4000 " ^| findstr "LISTENING"') do (
     echo  [CLEANUP] Stopping a previous POS server still using port 4000...
     taskkill /PID %%p /F >nul 2>&1
 )

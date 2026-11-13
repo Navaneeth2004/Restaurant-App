@@ -1,16 +1,19 @@
 'use strict';
 /**
  * Per-restaurant file storage:  DATA_DIR/files/<restaurantId>/uploads/<name>   ->  public URL /uploads/<restaurantId>/<name>
- * Only JPG / PNG / WEBP / GIF are accepted (never SVG, which can carry scripts).
+ * Only JPG / PNG / WEBP / GIF are accepted (never SVG, which can carry scripts). Each restaurant has a storage quota.
  */
 const fs = require('fs');
 const path = require('path');
 const cfg = require('../../config/env');
+const { HttpError } = require('../../lib/http');
 const { isRestaurantId } = require('../../lib/ids');
 const { randomHex } = require('../../lib/crypto');
 
 const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const MAX_FILES = 3000;
+const MAX_BYTES = 300 * 1024 * 1024;
 
 function assertId(rid) {
   if (!isRestaurantId(rid)) throw new Error('Invalid restaurant id');
@@ -23,6 +26,17 @@ function uploadsDir(rid) {
   const dir = path.join(restaurantRoot(rid), 'uploads');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/** Throws 413 when the restaurant already holds its maximum number of photos or bytes. */
+function assertQuota(rid) {
+  const dir = uploadsDir(rid);
+  let files = 0, bytes = 0;
+  for (const f of fs.readdirSync(dir)) {
+    files++;
+    try { bytes += fs.statSync(path.join(dir, f)).size; } catch (_) { /* gone */ }
+  }
+  if (files >= MAX_FILES || bytes >= MAX_BYTES) throw new HttpError(413, 'This restaurant has reached its photo storage limit.');
 }
 
 /** The uploads folder only if it already exists (public file serving must never create folders). */
@@ -62,6 +76,6 @@ function clearUploads(rid) {
 const removeRestaurantFiles = (rid) => fs.rmSync(restaurantRoot(rid), { recursive: true, force: true });
 
 module.exports = {
-  ALLOWED_EXT, ALLOWED_MIME, uploadsDir, existingUploadsDir, newName, publicUrl, isAllowedName,
+  ALLOWED_EXT, ALLOWED_MIME, uploadsDir, existingUploadsDir, assertQuota, newName, publicUrl, isAllowedName,
   resolveUpload, removeUpload, clearUploads, removeRestaurantFiles,
 };

@@ -56,9 +56,21 @@ function onConnection(socket) {
   socket.on('leave_staff', () => socket.leave(rooms.staff(rid)));
 }
 
+/** Browsers always send Origin on a WebSocket: only the site itself (or a configured origin) may connect. */
+function originAllowed(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true;                       // non-browser clients (tests, native apps) have no Origin
+  try {
+    return new URL(origin).host === req.headers.host || cfg.CORS_ORIGINS.includes(origin);
+  } catch (_) { return false; }
+}
+
 function createSocketServer(httpServer) {
   const corsOn = cfg.CORS_ORIGINS.length > 0;
-  const io = new Server(httpServer, { cors: corsOn ? { origin: cfg.CORS_ORIGINS, credentials: true } : undefined });
+  const io = new Server(httpServer, {
+    cors: corsOn ? { origin: cfg.CORS_ORIGINS, credentials: true } : undefined,
+    allowRequest: (req, cb) => cb(null, originAllowed(req)),
+  });
   io.use(authenticate);
   io.on('connection', onConnection);
   bus.attach(io);

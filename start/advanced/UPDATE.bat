@@ -27,7 +27,7 @@ for %%I in ("%SCRIPT_DIR%\..\..") do set "APP_ROOT=%%~fI"
 
 echo.
 echo  [1/6] Stopping any running POS server...
-for /f "tokens=5" %%p in ('netstat -aon ^| findstr ":4000" ^| findstr "LISTENING"') do (
+for /f "tokens=5" %%p in ('netstat -aon ^| findstr /C:":4000 " ^| findstr "LISTENING"') do (
     taskkill /PID %%p /F >nul 2>&1
 )
 echo  [OK] Port 4000 is clear
@@ -46,9 +46,10 @@ if not exist "%APP_ROOT%\backend\data" (
     echo  [INFO] No data folder found yet — nothing to backup
 ) else (
     if not exist "%APP_ROOT%\backups" mkdir "%APP_ROOT%\backups"
-    for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set TODAY=%%c-%%a-%%b
-    xcopy "%APP_ROOT%\backend\data" "%APP_ROOT%\backups\data_%TODAY%" /E /I /Q >nul 2>&1
-    echo  [OK] Data backed up to backups\data_%TODAY%
+    REM locale-independent date (date /t differs between Windows regions)
+    for /f %%d in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmm"') do set TODAY=%%d
+    xcopy "%APP_ROOT%\backend\data" "%APP_ROOT%\backups\data_!TODAY!" /E /I /Q >nul 2>&1
+    echo  [OK] Data backed up to backups\data_!TODAY!
 )
 
 echo  [4/6] Pulling latest code from GitHub...

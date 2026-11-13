@@ -5,11 +5,12 @@ const orders = require('../../repositories/orders/orders.repo');
 const orderItems = require('../../repositories/orders/order-items.repo');
 const tables = require('../../repositories/catalog/tables.repo');
 
-/** After removing an order: free the table if its visit has no open orders left. */
+/** After removing an order: empty table if no open round is left, "waiting for bill" if only delivered rounds remain. */
 function freeTableIfDone(order) {
-  const tableNowEmpty = orders.openInSession(order.table_id, order.session_id).length === 0;
-  if (tableNowEmpty) tables.setStatus(order.table_id, 'empty');
-  return tableNowEmpty;
+  const open = orders.openInSession(order.table_id, order.session_id);
+  if (open.length === 0) { tables.setStatus(order.table_id, 'empty'); return true; }
+  if (!orders.activeForTable(order.table_id)) tables.setStatus(order.table_id, 'waiting_bill');
+  return false;
 }
 
 function loadOpenOrder(orderId) {

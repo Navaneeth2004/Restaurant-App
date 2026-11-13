@@ -20,7 +20,7 @@ module.exports = async (t) => {
   check('kitchen can read active orders', r.status === 200 && Array.isArray(r.data));
   r = await B.get('/api/menu');
   check('kitchen cannot read menu (403)', r.status === 403);
-  r = await B.get('/api/staff/session/validate?staffId=0&sessionToken=x');
+  r = await B.post('/api/staff/session/validate', { staffId: 0, sessionToken: 'x' });
   check('kitchen may call heartbeat (was blocked before)', r.status === 200);
   r = await B.get('/api/settings');
   check('kitchen can read settings', r.status === 200 && r.data.restaurant_name === 'Test Diner');

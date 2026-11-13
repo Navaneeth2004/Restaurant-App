@@ -16,12 +16,15 @@ export interface Order {
   /** Tax rate in force when the visit was closed (null on legacy rows). */
   tax_percent_snapshot?: number | null;
   invoice_no?: number | null;
+  closed_at?: string | null;
 }
 export interface NewOrderItem { menu_item_id: number; name: string; price: number; quantity: number; note: string }
 export interface PaymentInput {
   payment_method: string; payment_details?: SplitPayment[] | { received: number; change: number } | null;
   change_amount?: number; customer_name?: string; customer_phone?: string; customer_gstin?: string;
   amount_paid?: number; order_type?: OrderType;
+  /** The rounds the bill was built from: the server refuses to close if another round was added meanwhile. */
+  order_ids?: string[];
 }
 export interface PaymentEditInput extends PaymentInput { created_at?: string }
 export interface DeletedRecord {

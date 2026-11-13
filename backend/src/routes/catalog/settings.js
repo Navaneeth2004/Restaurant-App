@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const access = require('../../middleware/access');
+const adminLock = require('../../middleware/admin-lock');
 const feature = require('../../middleware/feature');
 const { handle } = require('../../lib/http');
 const settings = require('../../services/catalog/settings');
@@ -12,13 +13,13 @@ const upload = makeUploader('logo', 2);
 // readable before the PIN is entered (branding for the PIN screen) and by the kitchen screen
 router.get('/', access.device, (req, res) => res.json(settings.listForClient()));
 
-router.put('/', access.admin, feature.of('admin.restaurant'), handle((req, res) => {
+router.put('/', access.admin, feature.of('admin.restaurant'), adminLock.guard, handle((req, res) => {
   const accepted = settings.update(req.body);
   req.io.emit('settings_updated', accepted);
   res.json({ success: true });
 }));
 
-router.post('/logo', access.admin, feature.of('admin.restaurant'), upload.single('logo'), handle((req, res) => {
+router.post('/logo', access.admin, feature.of('admin.restaurant'), adminLock.guard, upload.single('logo'), handle((req, res) => {
   const url = settings.setLogo(req.restaurantId, req.file);
   req.io.emit('settings_updated', { logo_url: url });
   res.json({ logo_url: url });

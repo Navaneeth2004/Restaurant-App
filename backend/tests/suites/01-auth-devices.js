@@ -22,6 +22,6 @@ module.exports = async (t) => {
   r = await A.post('/api/staff/verify', { pin: '4826' });
   check('admin PIN login', r.status === 200 && r.data.role === 'admin', r);
   const adminSession = r.data; S.adminSession = adminSession;
-  r = await A.get(`/api/staff/session/validate?staffId=${adminSession.id}&sessionToken=${adminSession.sessionToken}`);
-  check('heartbeat valid', r.data.valid === true);
+  r = await A.post('/api/staff/session/validate', { staffId: adminSession.id, sessionToken: adminSession.sessionToken });
+  check('heartbeat valid (POST, token not in the URL)', r.data.valid === true);
 };

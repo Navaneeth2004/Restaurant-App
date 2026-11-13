@@ -45,6 +45,7 @@ function logVisit(visit, adminName, now) {
   const payer = newestFirst.find(o => o.payment_method);
   const pick = (f) => (visit.find(o => o[f]) || {})[f] || null;
   const editedAt = visit.map(o => o.edited_at).filter(Boolean).sort().pop() || null;
+  const invoice = visit.find(o => o.invoice_no);
 
   deleted.insert({
     deletedAt: now, deletedBy: adminName, tableId: first.table_id,
@@ -53,7 +54,7 @@ function logVisit(visit, adminName, now) {
     amountPaid: paid ? paid.amount_paid : null, paymentMethod: payer ? payer.payment_method : null,
     orderType: pick('order_type'), customerName: pick('customer_name'), customerPhone: pick('customer_phone'),
     customerGstin: pick('customer_gstin'), wasEdited: editedAt ? 1 : 0, editedAt,
-    itemsJson: JSON.stringify(mergeItems(visit)),
+    itemsJson: JSON.stringify(mergeItems(visit)), invoiceNo: invoice ? invoice.invoice_no : null,
   });
 }
 

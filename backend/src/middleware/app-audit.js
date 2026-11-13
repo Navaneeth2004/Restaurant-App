@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Writes what restaurants do (logins, changes, deletions) into the audit log once the response has gone out.
+ * Writes what restaurants do (logins, changes, deletions, money actions) into the audit log once the response has gone out.
  * To log one more action, add a line to RULES. It must never break a request, so every error is swallowed.
  */
 const audit = require('../services/root/audit');
@@ -14,6 +14,7 @@ const RULES = [
   ['POST', /^\/auth\/pairing-code\/?$/, 'app.device.pairing_code', false],
   ['DELETE', /^\/auth\/devices\/([^/]+)\/?$/, 'app.device.remove', false],
   ['POST', /^\/staff\/verify\/?$/, 'app.staff.login', true],
+  ['POST', /^\/staff\/check-pin\/?$/, 'app.staff.check_pin', true],
   ['POST', /^\/staff\/logout\/?$/, 'app.staff.logout', false],
   ['POST', /^\/staff\/?$/, 'app.staff.create', false],
   ['PUT', /^\/staff\/([^/]+)\/?$/, 'app.staff.update', false],
@@ -29,6 +30,10 @@ const RULES = [
   ['PUT', /^\/tables\/([^/]+)\/?$/, 'app.table.update', false],
   ['DELETE', /^\/tables\/([^/]+)\/?$/, 'app.table.delete', false],
   ['PATCH', /^\/orders\/([^/]+)\/payment\/?$/, 'app.payment.edit', false],
+  ['PATCH', /^\/orders\/([^/]+)\/close\/?$/, 'app.order.close', true],
+  ['PATCH', /^\/orders\/([^/]+)\/cancel\/?$/, 'app.order.cancel_round', false],
+  ['PATCH', /^\/orders\/([^/]+)\/cancel-item\/?$/, 'app.order.cancel_item', false],
+  ['POST', /^\/orders\/direct-bill\/?$/, 'app.order.direct_bill', false],
   ['POST', /^\/orders\/delete-records\/?$/, 'app.records.delete', true],
   ['GET', /^\/backup\/download\/?$/, 'app.backup.download', false],
   ['POST', /^\/backup\/restore\/?$/, 'app.backup.restore', false],
@@ -49,8 +54,10 @@ function record(req, res, rule) {
     by: staff ? staff.name : undefined,
     role: staff ? staff.role : undefined,
     item: (req.path.match(pattern) || [])[1],
+    item_id: /cancel-item/.test(req.path) ? body.item_id : undefined,
     status: ok ? undefined : res.statusCode,
     phone: !ok && typeof body.phone === 'string' ? body.phone.slice(0, 20) : undefined,
+    ...(mine.detail || {}),
   };
   audit.record({ ip: req.ip }, ok ? action : `${action}_failed`, restaurant ? restaurant.id : undefined, detail);
 }

@@ -1,5 +1,5 @@
 'use strict';
-/** The one way an image gets into a restaurant's uploads folder (menu import, restore, legacy import). */
+/** The one way an image gets into a restaurant's uploads folder (menu import, legacy import). */
 const fs = require('fs');
 const path = require('path');
 const paths = require('./paths');
@@ -7,10 +7,11 @@ const paths = require('./paths');
 const MAX_ITEM_IMAGE = 5 * 1024 * 1024;
 const MAX_LOGO_IMAGE = 2 * 1024 * 1024;
 
-/** Saves image bytes under a fresh name (never overwrites). @returns public URL, or null when rejected */
+/** Saves image bytes under a fresh name (never overwrites). @returns public URL, or null when rejected. Throws 413 over quota. */
 function storeImageBuffer(rid, originalName, buffer, { prefix = 'item', maxBytes = MAX_ITEM_IMAGE } = {}) {
   const base = path.basename(String(originalName));
   if (!paths.isAllowedName(base) || buffer.length > maxBytes) return null;
+  paths.assertQuota(rid);
   const stored = paths.newName(prefix, path.extname(base));
   fs.writeFileSync(path.join(paths.uploadsDir(rid), stored), buffer);
   return paths.publicUrl(rid, stored);

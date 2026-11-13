@@ -32,7 +32,9 @@ router.patch('/:id/deliver', access.any, feature.of('kitchen', 'waiter'), handle
 router.patch('/:id/close', access.floor, feature.of('waiter'), handle((req, res) => {
   const result = closeSession(req.params.id, req.body || {});
   if (result.alreadyClosed) return res.json({ success: true, note: 'Order was already closed by another device.' });
-  events.billClosed(req.io, req.params.id, result.tableId);
+  // every round that was closed is announced, so kitchen screens and customer phones drop all of them
+  result.closedIds.forEach(id => events.orderClosed(req.io, id, result.tableId));
+  events.tablesChanged(req.io);
   return res.json({ success: true });
 }));
 

@@ -20,5 +20,7 @@ function clearLinkCookies(res) {
 
 const ipLimit = limit({ windowMs: 15 * 60 * 1000, max: 40, message: 'Too many attempts. Please wait a few minutes.' });
 const registerLimit = limit({ windowMs: 60 * 60 * 1000, max: 5, message: 'Too many accounts created from this network. Try again later.' });
+// one budget for the whole platform: a botnet (or an IPv6 range) cannot create unlimited restaurants
+const globalRegisterLimit = limit({ windowMs: 60 * 60 * 1000, max: 100, message: 'Sign-ups are busy right now. Please try again later.', key: () => 'global' });
 
-module.exports = { linkAndSetCookie, clearLinkCookies, ipLimit, registerLimit };
+module.exports = { linkAndSetCookie, clearLinkCookies, ipLimit, registerLimit, globalRegisterLimit };

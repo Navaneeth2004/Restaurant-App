@@ -1,18 +1,22 @@
 'use strict';
 /** Menu items. Photos arrive already stored by the uploader; this module only links/unlinks them. */
 const { fail } = require('../../lib/http');
-const { clip, toInt, isNum } = require('../../lib/input');
+const { clip, toInt, isNum, reorderRows } = require('../../lib/input');
+const { round2 } = require('../../lib/money');
 const menu = require('../../repositories/catalog/menu.repo');
 const categories = require('../../repositories/catalog/categories.repo');
 const files = require('../files/paths');
+
+const MAX_PRICE = 1000000;
+const MAX_ITEMS = 3000;
 
 const list = () => menu.list();
 const byCategory = (catId) => menu.byCategory(catId);
 
 function parsePrice(value) {
   const price = parseFloat(value);
-  if (!isNum(price) || price < 0) fail(400, 'Price must be a number that is 0 or more.');
-  return price;
+  if (!isNum(price) || price < 0 || price > MAX_PRICE) fail(400, `Price must be a number between 0 and ${MAX_PRICE}.`);
+  return round2(price);
 }
 
 /** @param file multer file (or undefined) */
@@ -23,6 +27,7 @@ function create(rid, body, file) {
     if (!name || price === undefined || price === '' || !category_id) fail(400, 'name, price, category_id required');
     const categoryId = toInt(category_id);
     if (!categories.byId(categoryId)) fail(400, 'Category not found');
+    if (menu.list().length >= MAX_ITEMS) fail(403, `A menu can have at most ${MAX_ITEMS} items.`);
     const id = menu.insert({
       name: clip(name, 80), description: clip(description, 500), price: parsePrice(price), categoryId,
       imagePath: file ? files.publicUrl(rid, file.filename) : null, sortOrder: menu.maxSort(categoryId) + 1,
@@ -58,8 +63,9 @@ function update(rid, id, body, file) {
 }
 
 function reorder(items) {
-  if (!Array.isArray(items) || !items.length) fail(400, 'items array required');
-  menu.reorder(items);
+  const rows = reorderRows(items);
+  if (!rows) fail(400, 'items array required');
+  menu.reorder(rows);
   return { ok: true };
 }
 

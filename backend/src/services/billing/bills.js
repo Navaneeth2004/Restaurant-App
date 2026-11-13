@@ -36,12 +36,14 @@ function buildBill(rows, currentRate, offset) {
   const paid = newest.find(o => o.amount_paid != null);
   const invoiceRow = rows.find(o => o.invoice_no);
   const pick = (f) => (newest.find(o => o[f]) || {})[f] || null;
+  // the instant the visit was closed = the invoice date (older rows without it fall back to the visit start)
+  const closedAt = (newest.find(o => o.closed_at) || {}).closed_at || first.created_at;
 
   return {
     key: first.session_id ? `${first.table_id}|${first.session_id}` : `single|${first.id}`,
     rows, orderIds: rows.map(o => o.id), mainId: (invoiceRow || payer || newest[0]).id,
     sessionId: first.session_id || null, tableId: first.table_id, tableLabel: first.table_label || first.table_id,
-    createdAt: first.created_at, localDay: localDayOf(first.created_at, offset),
+    createdAt: first.created_at, closedAt, localDay: localDayOf(closedAt, offset),
     orderType: first.order_type === 'parcel' ? 'parcel' : 'dine_in',
     customerName: pick('customer_name'), customerPhone: pick('customer_phone'),
     gstin: gstinRow ? gstinRow.customer_gstin.trim().toUpperCase() : '',

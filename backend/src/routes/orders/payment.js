@@ -7,6 +7,10 @@ const { updatePayment } = require('../../services/orders/payment-update');
 
 const router = express.Router();
 
-router.patch('/:id/payment', access.admin, feature.of('orders.payment_edit'), handle((req, res) => res.json(updatePayment(req.params.id, req.body || {}))));
+router.patch('/:id/payment', access.admin, feature.of('orders.payment_edit'), handle((req, res) => {
+  const { audit, ...result } = updatePayment(req.params.id, req.body || {});
+  res.locals.audit = { detail: audit };      // before/after values go to the audit log, not to the client
+  res.json(result);
+}));
 
 module.exports = router;

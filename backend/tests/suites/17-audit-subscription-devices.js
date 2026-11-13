@@ -1,7 +1,7 @@
 'use strict';
 /** Suite: restaurant activity in the audit log (paging, search), subscription info, removing a device ends its PIN session */
 module.exports = async (t) => {
-  const { A, base, check, Client } = t;
+  const { A, base, check, Client, S } = t;
   let r;
 
   console.log('\n[audit, subscription info, device removal]');
@@ -9,6 +9,7 @@ module.exports = async (t) => {
   check('admin sees the subscription and the plans', r.status === 200 && typeof r.data.plan.slug === 'string' && r.data.plans.length >= 3, r.data);
 
   const C = new Client(base);
+  S.C = C;                                   // the admin session left over for the next suite
   await C.post('/api/auth/owner/login', { phone: '9876543210', password: 'password123' });
   r = await C.get('/api/auth/subscription');
   check('a device without a PIN session cannot read it', r.status === 401, r);

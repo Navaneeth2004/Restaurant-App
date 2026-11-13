@@ -4,6 +4,7 @@ import { getReportHistory, getReportToday } from 'api/office/reports.api';
 import { listTables } from 'api/restaurant/tables.api';
 import { EVENTS } from 'config/events';
 import { useAsync } from 'hooks/async/useAsync';
+import { useDebouncedCallback } from 'hooks/async/useDebouncedCallback';
 import { useNow } from 'hooks/time/useNow';
 import { useTableOrders } from 'hooks/async/useTableOrders';
 import { hourBuckets } from 'lib/format/hours';
@@ -17,6 +18,8 @@ import { computeFloorMetrics } from './floor-metrics';
 const NO_TABLES: Table[] = [];
 const NO_ORDERS: Order[] = [];
 const HOURS = 12;
+/** A burst of order events (a busy kitchen) triggers ONE refresh, not one per event: reports are heavy on the server. */
+const EVENT_SETTLE_MS = 500;
 
 export function useFloor() {
   const nowMs = useNow(15_000);
@@ -39,14 +42,17 @@ export function useFloor() {
   const { reload: reloadSelected } = selectedOrders;
   const refreshLive = useCallback(() => { reloadTables(); reloadActive(); reloadSummary(); reloadSelected(); }, [reloadTables, reloadActive, reloadSummary, reloadSelected]);
   const refreshAll = useCallback(() => { refreshLive(); reloadHistory(); }, [refreshLive, reloadHistory]);
+  const refreshLiveSoon = useDebouncedCallback(refreshLive, EVENT_SETTLE_MS);
+  const refreshAllSoon = useDebouncedCallback(refreshAll, EVENT_SETTLE_MS);
+  const reloadTablesSoon = useDebouncedCallback(reloadTables, EVENT_SETTLE_MS);
 
-  useSocketEvent(EVENTS.newOrder, refreshLive);
-  useSocketEvent(EVENTS.orderUpdated, refreshLive);
-  useSocketEvent(EVENTS.orderDelivered, refreshLive);
-  useSocketEvent(EVENTS.orderItemCancelled, refreshLive);
-  useSocketEvent(EVENTS.orderRoundCancelled, refreshLive);
-  useSocketEvent(EVENTS.orderClosed, refreshAll);
-  useSocketEvent(EVENTS.tablesUpdated, reloadTables);
+  useSocketEvent(EVENTS.newOrder, refreshLiveSoon);
+  useSocketEvent(EVENTS.orderUpdated, refreshLiveSoon);
+  useSocketEvent(EVENTS.orderDelivered, refreshLiveSoon);
+  useSocketEvent(EVENTS.orderItemCancelled, refreshLiveSoon);
+  useSocketEvent(EVENTS.orderRoundCancelled, refreshLiveSoon);
+  useSocketEvent(EVENTS.orderClosed, refreshAllSoon);
+  useSocketEvent(EVENTS.tablesUpdated, reloadTablesSoon);
   useRefetchOnReconnect(refreshAll);
 
   const tableList = tables.data ?? NO_TABLES;
